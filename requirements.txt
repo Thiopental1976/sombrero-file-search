@@ -1,0 +1,7 @@
+# GUI. Traz consigo QtMultimedia (player de mídia) na maioria dos wheels.
+PySide6>=6.5
+
+# Os motores de busca NÃO são pacotes Python — instale pelo sistema (ou use ./install.sh):
+#   ripgrep, fd            (busca de nome/conteúdo; sem eles há fallback em Python puro)
+#   ripgrep-all, pandoc    (opcional: busca dentro de PDF/docx/epub/odt)
+#   poppler-utils          (opcional: texto de PDF)

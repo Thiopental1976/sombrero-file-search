@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2740"/>
+      <stop offset="1" stop-color="#0d1420"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5aa9ff"/>
+      <stop offset="1" stop-color="#37e0c8"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="51.5" fill="none" stroke="#3a4a66" stroke-width="1.5"/>
+  <!-- linhas de "arquivo" -->
+  <g stroke="url(#accent)" stroke-width="11" stroke-linecap="round" opacity="0.35">
+    <line x1="60" y1="86" x2="196" y2="86"/>
+    <line x1="60" y1="120" x2="196" y2="120"/>
+    <line x1="60" y1="154" x2="150" y2="154"/>
+  </g>
+  <!-- lupa -->
+  <g fill="none" stroke="url(#accent)" stroke-width="16" stroke-linecap="round">
+    <circle cx="118" cy="120" r="52"/>
+    <line x1="158" y1="160" x2="198" y2="200"/>
+  </g>
+  <circle cx="118" cy="120" r="52" fill="#5aa9ff" opacity="0.10"/>
+</svg>

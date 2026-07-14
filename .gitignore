@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Ambientes virtuais
+venv/
+.venv/
+env/
+
+# Config/estado local do app
+*.log
+
+# Editores / SO
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Notas internas de desenvolvimento (referências ao sistema pessoal) — não publicar
+ARRANQUE_SEGUNDA_JANELA.md
+PROJETO_Linux_File_Search.md
