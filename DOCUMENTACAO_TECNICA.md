@@ -409,8 +409,7 @@ python3 lfs/app.py     # GUI    |    python3 lfs/cli.py --help    # CLI
 - `rga` pré-compilado só para `x86_64`; em outras arquiteturas, instalar pelo gerenciador.
 - Realce de preview e destaque só valem para termos **literais**; regex de conteúdo não é realçado.
 - Ordenação por coluna é habilitada ao fim da busca (durante a busca, ordem de chegada).
-- **Otimizações restantes** (§3 da auditoria; a #1 e a #2 já foram feitas — ver §13/§14):
-  #3 fd multi-glob → uma regex alternada quando >3 padrões;
+- **Otimizações restantes** (§3 da auditoria; #1, #2 e #3 já foram feitas — ver §13/§14):
   #4 callback `on_phase` no booleano ("passo 2/4: termo 'paciente'").
 - Contador de "inacessíveis" só é atualizado ao fim de cada processo (no `_reap`), e o
   modo **booleano** ainda não recebe `stats` (fica 0 nesse modo) — plumbing pendente (N2).
@@ -421,7 +420,7 @@ python3 lfs/app.py     # GUI    |    python3 lfs/cli.py --help    # CLI
 
 | Módulo | Símbolos-chave |
 |---|---|
-| `engine.py` | `Query`, `Match`, `search`, `engine_info`, `_which`, `_iter_content_rg`, `_iter_names_fd`, `_iter_content_python`, `_iter_names_python`, `_passes_meta`, `_name_matcher` |
+| `engine.py` | `Query`, `Match`, `search`, `engine_info`, `_which`, `_iter_content_rg`, `_iter_names_fd`, `_iter_content_python`, `_iter_names_python`, `_passes_meta`, `_name_matcher`, `_glob_to_regex`, `_merge_globs`, `_reap` |
 | `boolean.py` | `parse`, `tokenize`, `search_boolean`, `positive_terms`, `_eval`, `_files_with_term`, `_universe`, `_display_lines`, `_term_set`, `_or_operands`, `_max_workers`, `_under_mount`, `BooleanError`, `Term/Not/And/Or` |
 | `cli.py` | `main` (argparse) |
 | `app.py` | `MainWindow`, `SearchWorker`, `ResultModel`, `THEMES`, `build_style`, `media_kind`, `_build_preview`, `_show_media`, `_nav_media`, `apply_theme` |
@@ -515,6 +514,30 @@ então rodam em paralelo num `ThreadPoolExecutor` — mas **só quando o disco a
   fora, `/mntx` não conta, um path em `/mnt` serializa a busca toda) e
   `test_or_parallel_correctness` (OR paralelo == OR serial, inclusive OR dentro de AND/NOT).
 
+### 13.4 Otimização #3 — fd multi-glob → uma regex alternada (implementada)
+
+No modo **só-nome**, o `fd` era chamado **uma vez por glob** (loop em `name_patterns`),
+com dedup por `seen`. Com N globs, isso varria a árvore **N vezes** — N× o I/O, ruim
+inclusive no SMR. Agora, quando há **>3 globs** (`_MERGE_GLOBS_MIN = 4`), eles são
+fundidos numa **única regex alternada** e roda **um só `fd`**.
+
+- **Onde**: `engine._glob_to_regex` (glob de basename → regex ancorada `^…$`,
+  equivalente ao `fnmatch`: `*`→`.*`, `?`→`.`, classes `[...]` com `!`→`^`),
+  `engine._merge_globs` (junta com `(?:a|b|…)`) e `engine._iter_names_fd` (decide
+  fundir e troca `--glob` por regex).
+- **Correção**: a regex é ancorada nos dois lados, então casa o **basename inteiro**
+  como o glob. `test_glob_to_regex` compara caso a caso com `fnmatch.fnmatchcase`.
+- **Guardas de segurança**: só funde globs **de basename** (sem `/` — glob de caminho
+  fica no modo multi-fd, onde o `fd` casa a path toda); e a regex fundida é
+  **validada com `re.compile`** antes — se falhar, cai no caminho antigo (um fd por
+  glob). Nunca degrada silenciosamente para "nada encontrado".
+- **`rg` não precisava**: no modo nome+conteúdo, o `rg` já recebe todos os `--glob`
+  num **único processo** (uma passada); o problema das N varreduras era só do `fd`.
+- **Ganho**: buscar `*.jpg *.png *.gif *.webp *.heic` num acervo passa de **5
+  varreduras** para **1** — 5× menos I/O de diretório (ver §14).
+- **Testes**: `test_glob_to_regex` (equivalência a fnmatch + recusa de glob com `/`) e
+  `test_fd_merge_single_pass` (5 globs → **1 só** processo `fd`, união correta).
+
 ---
 
 ## 14. Cuidado com discos SMR (e a diferença para CMR)
@@ -556,6 +579,9 @@ nunca deixar I/O pendurado**. Na prática:
 - **AND com restrição progressiva** (opt#1, §13.2): o segundo termo de um `AND`
   lê **só os arquivos que o primeiro já selecionou**, não a árvore toda. Menos
   arquivos abertos = menos I/O = menos castigo no SMR.
+- **Multi-glob fundido** (opt#3, §13.4): buscar por vários tipos de arquivo
+  (`*.jpg *.png *.gif …`) faz **uma única varredura** do `fd`, não uma por padrão —
+  N× menos I/O de diretório num disco que odeia *seek*.
 - **`--one-file-system` / chip "1 disco"**: evita que a varredura **cruze para
   outro ponto de montagem** sem querer (respeitado inclusive no fallback Python — B9).
   Útil para manter a busca dentro de um único USB e não acordar todos os discos.

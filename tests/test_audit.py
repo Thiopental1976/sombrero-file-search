@@ -229,6 +229,55 @@ def test_and_progressive_restricts():
         shutil.rmtree(d, ignore_errors=True)
 
 
+# ------------------------------------------------------------------ opt#3 fd multi-glob -> 1 regex
+def test_glob_to_regex():
+    """A tradução glob->regex bate com fnmatch (é o que garante mesmo resultado)."""
+    import re as _re, fnmatch
+    casos = [("*.py", ["a.py", "x.y.py"], ["a.pyc", "py", "a.PY"]),
+             ("doc?.log", ["doc1.log", "docA.log"], ["doc.log", "doc12.log"]),
+             ("[ab]*.txt", ["a1.txt", "b.txt"], ["c.txt", "ab.doc"]),
+             ("v[!0-9].dat", ["vx.dat"], ["v3.dat"])]
+    for glob, sim, nao in casos:
+        rx = _re.compile(engine._glob_to_regex(glob))     # sensível a caixa
+        for s in sim:
+            assert rx.match(s) and fnmatch.fnmatchcase(s, glob), f"{glob} devia casar {s}"
+        for s in nao:
+            assert not rx.match(s) and not fnmatch.fnmatchcase(s, glob), f"{glob} NÃO devia casar {s}"
+    assert engine._merge_globs(["*.py", "src/*.c"]) is None, "glob com '/' não deve fundir"
+    print("ok  opt#3  _glob_to_regex equivale a fnmatch (e recusa glob de caminho)")
+
+
+def test_fd_merge_single_pass():
+    """Opt#3: >3 globs viram UMA regex -> um único fd (não um por padrão),
+    e o resultado é a UNIÃO correta dos padrões."""
+    if not engine.FD:
+        print("--  opt#3  (pulado: sem fd)"); return
+    d = tempfile.mkdtemp(prefix="lfs_merge_")
+    try:
+        alvo = ["a.txt", "b.log", "c.py", "d.md", "e.csv"]   # 5 extensões
+        ruido = ["z.bin", "w.dat"]
+        for name in alvo + ruido:
+            open(os.path.join(d, name), "w").close()
+        pats = ["*.txt", "*.log", "*.py", "*.md", "*.csv"]   # >3 -> funde
+        real_popen = subprocess.Popen
+        n_popen = {"fd": 0}
+        def spy(cmd, *a, **k):
+            if cmd and os.path.basename(str(cmd[0])) in ("fd", "fdfind"):
+                n_popen["fd"] += 1
+            return real_popen(cmd, *a, **k)
+        subprocess.Popen = spy
+        try:
+            got = {os.path.basename(m.path) for m in
+                   engine._iter_names_fd(Query(paths=[d], name_patterns=pats), lambda: False)}
+        finally:
+            subprocess.Popen = real_popen
+        assert got == set(alvo), f"união errada: {got}"
+        assert n_popen["fd"] == 1, f"esperava 1 fd (regex fundida), rodou {n_popen['fd']}"
+        print("ok  opt#3  5 globs -> 1 só fd, união correta (uma varredura)")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # ------------------------------------------------------------------ opt#2 trava SMR /mnt
 def test_mnt_serializes():
     """Opt#2: em /mnt (e /media, /run/media) a busca SERIALIZA (1 worker) —
@@ -291,6 +340,7 @@ def main():
            test_display_lines_batched, test_one_file_system_fallback,
            test_boolean_parser, test_fd_case_sensitive,
            test_and_progressive_correctness, test_and_progressive_restricts,
+           test_glob_to_regex, test_fd_merge_single_pass,
            test_mnt_serializes, test_or_parallel_correctness]
     fail = 0
     for fn in fns:

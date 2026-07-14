@@ -195,9 +195,67 @@ def _iter_names_python(q: Query):
                 yield Match(fp, st.st_size, st.st_mtime)
 
 
+_MERGE_GLOBS_MIN = 4                      # opt#3: >3 globs -> funde numa regex só
+
+def _glob_to_regex(glob: str) -> str:
+    """Converte um glob de basename numa regex ANCORADA (^...$), equivalente ao
+    fnmatch. `*`->`.*`, `?`->`.`, `[...]` preservado (com `!`->`^`), resto literal."""
+    out = ["^"]
+    i, n = 0, len(glob)
+    while i < n:
+        c = glob[i]
+        if c == "*":
+            out.append(".*")
+        elif c == "?":
+            out.append(".")
+        elif c == "[":
+            j = i + 1
+            if j < n and glob[j] in "!^":
+                j += 1
+            if j < n and glob[j] == "]":         # ']' logo no início é literal
+                j += 1
+            while j < n and glob[j] != "]":
+                j += 1
+            if j >= n:                           # '[' sem fechamento -> literal
+                out.append(r"\[")
+            else:
+                inner = glob[i + 1:j]
+                if inner.startswith("!"):
+                    inner = "^" + inner[1:]
+                out.append("[" + inner + "]")
+                i = j
+        else:
+            out.append(re.escape(c))
+        i += 1
+    out.append("$")
+    return "".join(out)
+
+
+def _merge_globs(pats) -> Optional[str]:
+    """Opt#3: funde vários globs de basename numa única regex alternada, p/ rodar
+    UM só fd em vez de um por padrão (menos varreduras = menos I/O, bom p/ SMR).
+    Só funde globs simples (sem '/'); valida a regex antes. Devolve None p/ recusar."""
+    if any("/" in p for p in pats):              # glob de caminho: fd casa a path toda
+        return None
+    merged = "(?:" + "|".join(_glob_to_regex(p) for p in pats) + ")"
+    try:
+        re.compile(merged)                       # sanidade (se falhar, cai no multi-fd)
+    except re.error:
+        return None
+    return merged
+
+
 def _iter_names_fd(q: Query, cancel, stats=None):
-    """fd/fdfind quando disponível (rápido). Multi-glob -> um fd por padrão."""
+    """fd/fdfind quando disponível (rápido). Multi-glob: >3 padrões viram UMA regex
+    alternada (opt#3, 1 só fd); até 3, um fd por padrão."""
     pats = q.name_patterns or ["."]
+    use_glob = bool(q.name_patterns) and not q.name_is_regex
+    # opt#3: muitos globs -> funde numa regex única (uma varredura só)
+    if use_glob and len(pats) >= _MERGE_GLOBS_MIN:
+        merged = _merge_globs(pats)
+        if merged is not None:
+            pats = [merged]
+            use_glob = False                      # agora é regex, não glob
     seen = set() if len(pats) > 1 else None   # dedup só faz sentido com múltiplos padrões
     for pat in pats:
         cmd = [FD, "--absolute-path", "--type", "f"]
@@ -213,7 +271,7 @@ def _iter_names_fd(q: Query, cancel, stats=None):
             cmd += ["--max-depth", "1"]
         elif q.max_depth is not None:
             cmd += ["--max-depth", str(q.max_depth)]
-        if q.name_patterns and not q.name_is_regex:
+        if use_glob:
             cmd += ["--glob"]
         if q.name_patterns and not q.case_sensitive:
             cmd.append("--ignore-case")
