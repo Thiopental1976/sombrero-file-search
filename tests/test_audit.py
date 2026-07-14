@@ -229,12 +229,69 @@ def test_and_progressive_restricts():
         shutil.rmtree(d, ignore_errors=True)
 
 
+# ------------------------------------------------------------------ opt#2 trava SMR /mnt
+def test_mnt_serializes():
+    """Opt#2: em /mnt (e /media, /run/media) a busca SERIALIZA (1 worker) —
+    poupa SMR de seek concorrente. Fora dali, usa o pool cheio."""
+    old = boolean._WORKERS
+    boolean._WORKERS = 3
+    try:
+        assert boolean._max_workers(Query(paths=["/mnt/DiscoL/x"])) == 1, "não serializou em /mnt"
+        assert boolean._max_workers(Query(paths=["/media/rodrigo/HD"])) == 1, "não serializou em /media"
+        assert boolean._max_workers(Query(paths=["/run/media/rodrigo/HD"])) == 1, "não serializou em /run/media"
+        assert boolean._max_workers(Query(paths=["/mnt"])) == 1, "não serializou no próprio /mnt"
+        assert boolean._max_workers(Query(paths=[os.path.expanduser("~")])) == 3, "devia paralelizar no ~"
+        assert boolean._max_workers(Query(paths=["/tmp"])) == 3, "devia paralelizar no /tmp"
+        # /mntx NÃO é /mnt: só casa o componente inteiro de caminho
+        assert boolean._max_workers(Query(paths=["/mntx/foo"])) == 3, "casou /mnt por prefixo solto"
+        # basta UM caminho em /mnt p/ serializar tudo (cabeças do MESMO disco brigam)
+        assert boolean._max_workers(Query(paths=["/tmp", "/mnt/DiscoL"])) == 1, "misto não serializou"
+        boolean._WORKERS = 1
+        assert boolean._max_workers(Query(paths=["/tmp"])) == 1, "WORKERS=1 devia serializar sempre"
+        print("ok  opt#2  trava SMR: serializa em /mnt|/media|/run/media, paraleliza fora")
+    finally:
+        boolean._WORKERS = old
+
+
+def test_or_parallel_correctness():
+    """Opt#2: OR em paralelo (pool) dá o MESMO resultado que serial. Roda no tmp,
+    que paraleliza; força também o caminho serial p/ comparar."""
+    d = _tree()
+    try:
+        def run(expr):
+            got = set()
+            boolean.search_boolean(Query(paths=[d]), expr,
+                                   lambda m: got.add(os.path.basename(m.path)), lambda: False)
+            return got
+        old = boolean._WORKERS
+        try:
+            boolean._WORKERS = 3                          # paralelo (tmp não é /mnt)
+            par = run("assinatura OR rascunho OR ausente")
+            boolean._WORKERS = 1                          # serial
+            ser = run("assinatura OR rascunho OR ausente")
+        finally:
+            boolean._WORKERS = old
+        esperado = {"N1.TXT", "n2.txt", "doc42.log"}      # assinatura:N1,n2 · rascunho:doc42 · ausente:n2
+        assert par == ser == esperado, f"par={par} ser={ser} esperado={esperado}"
+        # OR aninhado com AND/NOT continua certo sob paralelismo
+        boolean._WORKERS = 3
+        try:
+            mix = run("(assinatura OR rascunho) AND paciente NOT ausente")
+        finally:
+            boolean._WORKERS = old
+        assert mix == {"N1.TXT", "doc42.log"}, f"OR+AND+NOT paralelo errado: {mix}"
+        print("ok  opt#2  OR paralelo == OR serial (inclui OR dentro de AND/NOT)")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def main():
     fns = [test_parse_size, test_reap_kills_process, test_no_orphan_on_cancel,
            test_glob_case_insensitive, test_boolean_name_regex,
            test_display_lines_batched, test_one_file_system_fallback,
            test_boolean_parser, test_fd_case_sensitive,
-           test_and_progressive_correctness, test_and_progressive_restricts]
+           test_and_progressive_correctness, test_and_progressive_restricts,
+           test_mnt_serializes, test_or_parallel_correctness]
     fail = 0
     for fn in fns:
         try:

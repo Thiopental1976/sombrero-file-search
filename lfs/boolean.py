@@ -15,7 +15,8 @@ Estratégia (casada com o desenho do Fable):
 Sem Qt aqui. O motor devolve Matches iguais aos de engine.py (a GUI/CLI reaproveitam).
 """
 from __future__ import annotations
-import os, re, json, subprocess
+import os, re, json, subprocess, threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional
 
@@ -243,50 +244,110 @@ def _universe(q: engine.Query, cancel) -> set[str]:
     return {os.path.abspath(m.path) for m in engine._iter_names_python(q)}
 
 
+# ------------------------------------------------------------------ concorrência (opt#2)
+_cache_lock = threading.Lock()               # protege cache/universo entre threads
+_WORKERS = int(os.environ.get("LFS_WORKERS", "3") or "3")   # afinável por env
+# Pontos de montagem onde discos SMR/USB do acervo costumam viver: seek concorrente
+# os castiga, então buscas AQUI são SERIALIZADAS (1 processo por vez).
+_MNT_PREFIXES = ("/mnt", "/media", "/run/media")
+
+
+def _under_mount(ap: str) -> bool:
+    return any(ap == pre or ap.startswith(pre + os.sep) for pre in _MNT_PREFIXES)
+
+
+def _max_workers(q: engine.Query) -> int:
+    """Opt#2: paraleliza scans independentes (OR) no i7, MAS serializa em /mnt —
+    os SMR/USB do acervo odeiam seek concorrente."""
+    if _WORKERS <= 1:
+        return 1
+    if any(_under_mount(os.path.abspath(p)) for p in q.paths):
+        return 1                             # trava SMR: uma varredura por vez
+    return _WORKERS
+
+
 # ------------------------------------------------------------------ avaliação do AST
 def _universe_cached(q, cancel, universe_box):
-    if universe_box[0] is None:
-        universe_box[0] = _universe(q, cancel)
-    return universe_box[0]
+    with _cache_lock:
+        if universe_box[0] is not None:
+            return universe_box[0]
+    u = _universe(q, cancel)                 # I/O fora do lock
+    with _cache_lock:
+        if universe_box[0] is None:
+            universe_box[0] = u
+        return universe_box[0]
 
 
 def _term_set(term, q, cancel, cache, restrict):
     """Conjunto de arquivos que contêm o termo.
     Sem restrição: usa/preenche o cache com o conjunto CHEIO (reuso entre nós).
     Com restrição (opt#1): intersecta o cache se já houver, senão varre SÓ os
-    arquivos de `restrict` — o resultado é subconjunto e NÃO polui o cache."""
+    arquivos de `restrict` — o resultado é subconjunto e NÃO polui o cache.
+    Thread-safe (opt#2): o I/O roda fora do lock; numa corrida, o pior caso é
+    recalcular o mesmo conjunto (idempotente) e `setdefault` mantém um só."""
     if restrict is None:
-        if term not in cache:
-            cache[term] = _files_with_term(term, q, cancel)
-        return cache[term]
-    if term in cache:
-        return cache[term] & restrict
+        with _cache_lock:
+            hit = cache.get(term)
+        if hit is None:
+            hit = _files_with_term(term, q, cancel)
+            with _cache_lock:
+                cache.setdefault(term, hit)
+                hit = cache[term]
+        return hit
+    with _cache_lock:
+        hit = cache.get(term)
+    if hit is not None:
+        return hit & restrict
     return _files_with_term(term, q, cancel, restrict=restrict)
 
 
-def _eval(node, q, cancel, cache, universe_box, restrict=None):
+def _or_operands(node):
+    """Achata uma cadeia de OR em operandos independentes (p/ avaliar em paralelo)."""
+    if isinstance(node, Or):
+        return _or_operands(node.a) + _or_operands(node.b)
+    return [node]
+
+
+def _eval(node, q, cancel, cache, universe_box, restrict=None, pool=None):
     """Avalia o AST -> conjunto de arquivos.
 
     Opt#1 (AND com restrição progressiva): o lado esquerdo de um AND vira o
     `restrict` do lado direito, que passa a varrer só esses arquivos em vez da
     árvore inteira. É correto para AND/OR/NOT porque a interseção distribui:
-    (X∘Y)∩R = (X∩R)∘(Y∩R). O termo mais à esquerda é a única varredura cheia."""
+    (X∘Y)∩R = (X∩R)∘(Y∩R). O termo mais à esquerda é a única varredura cheia.
+
+    Opt#2 (termos independentes em paralelo): os operandos de um OR são
+    independentes e rodam concorrentes num ThreadPool — EXCETO em /mnt, onde o
+    `pool` chega None (serializado). Subtarefas submetidas recebem pool=None:
+    só o nível de OR alcançado pela recursão na thread principal paraleliza,
+    o que evita fome de workers (deadlock de pool aninhado)."""
     if isinstance(node, Term):
         return _term_set(node.text, q, cancel, cache, restrict)
     if isinstance(node, And):
-        sa = _eval(node.a, q, cancel, cache, universe_box, restrict)
+        sa = _eval(node.a, q, cancel, cache, universe_box, restrict, pool)
         if not sa:
             return set()                     # curto-circuito: nada satisfaz o AND
-        return _eval(node.b, q, cancel, cache, universe_box, restrict=sa)
+        return _eval(node.b, q, cancel, cache, universe_box, restrict=sa, pool=pool)
     if isinstance(node, Or):
-        return (_eval(node.a, q, cancel, cache, universe_box, restrict)
-                | _eval(node.b, q, cancel, cache, universe_box, restrict))
+        ops = _or_operands(node)
+        if pool is not None and len(ops) > 1 and not cancel():
+            futs = [pool.submit(_eval, op, q, cancel, cache, universe_box, restrict, None)
+                    for op in ops]
+            out = set()
+            for f in futs:
+                out |= f.result()            # aguarda todas (cada uma respeita cancel/_reap)
+            return out
+        out = set()
+        for op in ops:
+            if cancel(): break
+            out |= _eval(op, q, cancel, cache, universe_box, restrict, pool)
+        return out
     if isinstance(node, Not):
         if restrict is None:                 # NOT no topo: universo − termo (varredura cheia)
             univ = _universe_cached(q, cancel, universe_box)
-            return univ - _eval(node.node, q, cancel, cache, universe_box, restrict=None)
+            return univ - _eval(node.node, q, cancel, cache, universe_box, restrict=None, pool=pool)
         # NOT dentro de um AND: já restrito ao acumulado, subtrai o que casa nele
-        return restrict - _eval(node.node, q, cancel, cache, universe_box, restrict=restrict)
+        return restrict - _eval(node.node, q, cancel, cache, universe_box, restrict=restrict, pool=pool)
     raise BooleanError("nó desconhecido")
 
 
@@ -300,7 +361,12 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     ast = parse(expr)
     cache: dict = {}
     universe_box = [None]
-    files = _eval(ast, q, cancel, cache, universe_box)
+    workers = _max_workers(q)                # opt#2: paraleliza OR fora de /mnt
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            files = _eval(ast, q, cancel, cache, universe_box, pool=pool)
+    else:
+        files = _eval(ast, q, cancel, cache, universe_box)
     # B3: filtro de nome por REGEX (o glob já vai pro rg; regex é pós-filtro no basename)
     if q.name_is_regex and q.name_patterns:
         nrx = re.compile(q.name_patterns[0], 0 if q.case_sensitive else re.IGNORECASE)

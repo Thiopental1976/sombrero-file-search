@@ -409,9 +409,8 @@ python3 lfs/app.py     # GUI    |    python3 lfs/cli.py --help    # CLI
 - `rga` pré-compilado só para `x86_64`; em outras arquiteturas, instalar pelo gerenciador.
 - Realce de preview e destaque só valem para termos **literais**; regex de conteúdo não é realçado.
 - Ordenação por coluna é habilitada ao fim da busca (durante a busca, ordem de chegada).
-- **Otimizações restantes** (§3 da auditoria; a #1 já foi feita — ver §13/§14):
-  #2 termos independentes em paralelo (2–3 subprocessos, **serializando em `/mnt`** —
-  ver §14 sobre SMR); #3 fd multi-glob → uma regex alternada quando >3 padrões;
+- **Otimizações restantes** (§3 da auditoria; a #1 e a #2 já foram feitas — ver §13/§14):
+  #3 fd multi-glob → uma regex alternada quando >3 padrões;
   #4 callback `on_phase` no booleano ("passo 2/4: termo 'paciente'").
 - Contador de "inacessíveis" só é atualizado ao fim de cada processo (no `_reap`), e o
   modo **booleano** ainda não recebe `stats` (fica 0 nesse modo) — plumbing pendente (N2).
@@ -423,7 +422,7 @@ python3 lfs/app.py     # GUI    |    python3 lfs/cli.py --help    # CLI
 | Módulo | Símbolos-chave |
 |---|---|
 | `engine.py` | `Query`, `Match`, `search`, `engine_info`, `_which`, `_iter_content_rg`, `_iter_names_fd`, `_iter_content_python`, `_iter_names_python`, `_passes_meta`, `_name_matcher` |
-| `boolean.py` | `parse`, `tokenize`, `search_boolean`, `positive_terms`, `_eval`, `_files_with_term`, `_universe`, `_display_lines`, `BooleanError`, `Term/Not/And/Or` |
+| `boolean.py` | `parse`, `tokenize`, `search_boolean`, `positive_terms`, `_eval`, `_files_with_term`, `_universe`, `_display_lines`, `_term_set`, `_or_operands`, `_max_workers`, `_under_mount`, `BooleanError`, `Term/Not/And/Or` |
 | `cli.py` | `main` (argparse) |
 | `app.py` | `MainWindow`, `SearchWorker`, `ResultModel`, `THEMES`, `build_style`, `media_kind`, `_build_preview`, `_show_media`, `_nav_media`, `apply_theme` |
 
@@ -489,6 +488,33 @@ cheia; os seguintes leem apenas o conjunto acumulado.
 - **Testes**: `test_and_progressive_correctness` (mesmos resultados em AND/OR/NOT) e
   `test_and_progressive_restricts` (prova que a 2ª parte varreu 1 arquivo, não 51).
 
+### 13.3 Otimização #2 — termos independentes em paralelo, com trava SMR (implementada)
+
+Os operandos de um `OR` são varreduras **independentes** (nenhum depende do outro),
+então rodam em paralelo num `ThreadPoolExecutor` — mas **só quando o disco aguenta**.
+
+- **Onde**: `boolean._eval` ganhou o parâmetro `pool`; o ramo `Or` achata a cadeia
+  (`_or_operands`) e faz `pool.submit` de cada operando. `search_boolean` cria o pool
+  só quando `_max_workers(q) > 1`.
+- **Trava SMR** (`_max_workers` + `_under_mount`): se **qualquer** path da busca estiver
+  sob `/mnt`, `/media` ou `/run/media`, retorna **1 worker** (serial) — as cabeças do
+  mesmo disco brigariam por *seek*. Fora dali (`~`, `/tmp`, SSD), usa `_WORKERS` (3 por
+  padrão, afinável por `LFS_WORKERS`). O casamento é por **componente inteiro** de
+  caminho, então `/mntx` não conta como `/mnt`.
+- **Sem deadlock de pool aninhado**: as subtarefas submetidas recebem `pool=None`, então
+  só o nível de `OR` alcançado pela thread principal paraleliza; um `OR` aninhado dentro
+  de outro não tenta pegar mais workers (o que poderia travar o pool com todos os
+  workers esperando por workers).
+- **Thread-safe**: cache e universo são protegidos por `_cache_lock`; o I/O pesado
+  (`_files_with_term`/`_universe`) roda **fora** do lock e a escrita usa `setdefault`
+  (no pior caso de corrida, recalcula idêntico — idempotente).
+- **Correção preservada**: cada `_files_with_term` paralelo ainda dá `_reap` no seu
+  processo (B1), e a opt#1 (restrição do AND) segue intacta — o pool só distribui os
+  irmãos de `OR`.
+- **Testes**: `test_mnt_serializes` (serializa em `/mnt|/media|/run/media`, paraleliza
+  fora, `/mntx` não conta, um path em `/mnt` serializa a busca toda) e
+  `test_or_parallel_correctness` (OR paralelo == OR serial, inclusive OR dentro de AND/NOT).
+
 ---
 
 ## 14. Cuidado com discos SMR (e a diferença para CMR)
@@ -540,10 +566,11 @@ nunca deixar I/O pendurado**. Na prática:
 - **Metadados por `os.stat`** só nos candidatos que já passaram no filtro de nome —
   não se faz `stat` de tudo.
 
-### 14.3 Backlog SMR-consciente
+### 14.3 Paralelismo consciente (opt#2, implementada)
 
-A otimização **#2 (termos independentes em paralelo)** só será ligada **quando os
-paths NÃO estiverem em `/mnt`**: em CMR/SSD, 2–3 `rg` concorrentes aproveitam a CPU;
-em SMR/USB, o *seek* concorrente faria mais mal que bem, então lá a busca continua
-**serializada** de propósito. Essa é a regra de ouro do projeto: paralelizar onde o
-disco aguenta, serializar onde ele sofre.
+A otimização **#2 (termos independentes em paralelo)** já está no código (§13.3) e é
+ligada **só quando os paths NÃO estão em `/mnt` / `/media` / `/run/media`**: em CMR/SSD,
+2–3 `rg` concorrentes aproveitam a CPU do i7; em SMR/USB, o *seek* concorrente faria mais
+mal que bem, então lá a busca continua **serializada** de propósito (`_max_workers`
+devolve 1). Essa é a regra de ouro do projeto: **paralelizar onde o disco aguenta,
+serializar onde ele sofre**. O grau de paralelismo é afinável por `LFS_WORKERS` (default 3).

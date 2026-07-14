@@ -107,8 +107,10 @@ esses discos:
   lendo bem menos do disco;
 - **`--one-file-system`** ("1 disco") evita cruzar para outro mount sem querer;
 - **imagens grandes** não são decodificadas na hora (evita travar num SMR);
-- a busca é **serializada** por padrão — o paralelismo só será ligado onde o disco
-  aguenta (CMR/SSD), nunca no `/mnt` do acervo. Detalhes na §14 da documentação técnica.
+- o **paralelismo é consciente do disco**: termos independentes (`OR`) rodam em
+  paralelo no SSD/CMR, mas a busca é **serializada** automaticamente quando algum
+  caminho está em `/mnt` (ou `/media`, `/run/media`), poupando o SMR de *seek*
+  concorrente. Detalhes na §14 da documentação técnica.
 
 ## Licença
 
