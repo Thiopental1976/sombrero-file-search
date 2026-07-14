@@ -10,7 +10,7 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3776ab)
 ![PySide6](https://img.shields.io/badge/GUI-PySide6-41cd52)
 ![ripgrep](https://img.shields.io/badge/engine-ripgrep%20%2B%20fd-orange)
-![License](https://img.shields.io/badge/license-MIT-blue)
+![License](https://img.shields.io/badge/license-aberto%20e%20gratuito-blue)
 
 </div>
 
@@ -94,4 +94,6 @@ install.sh      # instalador universal (multi-distro)
 
 ## Licença
 
-MIT — veja [LICENSE](LICENSE).
+**Aberto e gratuito** — baseada na MIT, porém **sem direito de revenda**: o software pode ser
+usado, copiado, modificado, publicado e distribuído livremente, mas **não pode ser vendido** como
+produto ou serviço pago; deve permanecer gratuito. Veja [LICENSE](LICENSE).

@@ -19,12 +19,22 @@ APPDIR="$HOME/.local/share/applications"
 ICONS="$HOME/.local/share/icons/hicolor"
 SRC="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 ARCH="$(uname -m)"
+ASSUME_YES=0
+for a in "$@"; do case "$a" in -y|--yes) ASSUME_YES=1;; -h|--help)
+  echo "uso: ./install.sh [-y|--yes]   (-y = não perguntar, instala tudo)"; exit 0;; esac; done
 
 c()  { printf "\033[1;36m%s\033[0m\n" "$*"; }
 ok() { printf "  \033[32m✓\033[0m %s\n" "$*"; }
 wn() { printf "  \033[33m!\033[0m %s\n" "$*"; }
 er() { printf "  \033[31m✗\033[0m %s\n" "$*"; }
 has(){ command -v "$1" >/dev/null 2>&1; }
+# pergunta S/n (default Sim); respeita -y e ambiente não-interativo
+ask(){ # ask "pergunta"
+  [ "$ASSUME_YES" = 1 ] && return 0
+  [ -t 0 ] || return 0
+  local r; printf "  \033[1;36m?\033[0m %s [S/n] " "$1"; read -r r
+  case "$r" in [nN]|[nN][aãoOÃ]*) return 1;; *) return 0;; esac
+}
 
 # -------------------------------------------------- gerenciador de pacotes
 PM=""; INSTALL=""
@@ -43,6 +53,11 @@ pkg() {
     poppler:apt|poppler:dnf) echo poppler-utils;;
     poppler:pacman) echo poppler;;  poppler:zypper) echo poppler-tools;;
     ripgrep:*) echo ripgrep;;
+    pandoc:*) echo pandoc;;
+    rga:pacman) echo ripgrep-all;;  rga:*) echo ripgrep-all;;
+    pyside6:apt) echo python3-pyside6;;   pyside6:dnf) echo python3-pyside6;;
+    pyside6:pacman) echo pyside6;;        pyside6:zypper) echo python3-PySide6;;
+    pyside6:*) echo python3-pyside6;;
     *) echo "$key";;
   esac
 }
@@ -106,7 +121,15 @@ setup_python() {
   if python3 -c "import PySide6" >/dev/null 2>&1; then
     PYBIN="$(command -v python3)"; ok "PySide6 do sistema OK"; return
   fi
-  c "PySide6 ausente no sistema — criando ambiente próprio (venv)…"
+  # tenta o pacote PySide6 da distro (traz QtMultimedia p/ o player)
+  if [ -n "$PM" ] && ask "Instalar PySide6 pelo gerenciador ($(pkg pyside6))?"; then
+    $INSTALL "$(pkg pyside6)" || true
+    if python3 -c "import PySide6" >/dev/null 2>&1; then
+      PYBIN="$(command -v python3)"; ok "PySide6 do sistema OK"; return
+    fi
+    wn "PySide6 do sistema não ficou disponível — caindo para venv."
+  fi
+  c "Criando ambiente próprio (venv) com PySide6…"
   if ! python3 -m venv --help >/dev/null 2>&1; then
     sys_install python3-venv python3    # Debian/Mint: pacote separado
   fi
@@ -167,6 +190,25 @@ EOF
   ok "atalho de menu instalado (Linux File Search)"
 }
 
+# mostra o plano de dependências (nome de pacote resolvido p/ ESTA distro) e pede OK
+plan_and_confirm() {
+  c "Dependências do projeto (para $PM):"
+  printf "  %-16s %-22s %s\n" "COMPONENTE" "PACOTE ($PM)" "PAPEL"
+  printf "  %-16s %-22s %s\n" "ripgrep"     "$(pkg ripgrep)" "busca de conteúdo"
+  printf "  %-16s %-22s %s\n" "fd"          "$(pkg fd)"      "busca por nome"
+  printf "  %-16s %-22s %s\n" "poppler"     "$(pkg poppler)" "texto de PDF (opcional)"
+  printf "  %-16s %-22s %s\n" "pandoc"      "$(pkg pandoc)"  "docx/epub/odt (opcional)"
+  printf "  %-16s %-22s %s\n" "ripgrep-all" "$(pkg rga)"     "buscar dentro de documentos"
+  printf "  %-16s %-22s %s\n" "PySide6"     "$(pkg pyside6)" "interface gráfica (ou venv)"
+  echo "  (rga/pandoc: se o repositório não tiver, baixo o binário estático. App vai em ~/.local, sem root.)"
+  echo
+  if ! ask "Instalar/verificar essas dependências agora?"; then
+    wn "Instalação de dependências pulada a pedido. O app será copiado, mas pode faltar motor."
+    return 1
+  fi
+  return 0
+}
+
 # ============================================================ fluxo
 c "== Linux File Search — instalador =="
 echo "  destino: $PREFIX"
@@ -174,6 +216,10 @@ echo "  arch:    $ARCH"
 detect_pm; [ -n "$PM" ] && echo "  pacotes: $PM" || wn "gerenciador de pacotes não detectado"
 echo
 
+DEPS_OK=1; plan_and_confirm || DEPS_OK=0
+echo
+
+if [ "$DEPS_OK" = 1 ]; then
 c "[1/5] Dependências de busca (ripgrep, fd, poppler)"
 sys_install ripgrep rg
 sys_install fd "$(has fdfind && echo fdfind || echo fd)"
@@ -185,6 +231,8 @@ echo
 c "[3/5] pandoc (docx/epub/odt)"
 install_pandoc
 echo
+fi   # fim do bloco de dependências (DEPS_OK)
+
 c "[4/5] Python + PySide6 (GUI)"
 setup_python
 echo
