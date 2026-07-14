@@ -113,7 +113,8 @@ class SearchWorker(QThread):
         try:
             if self.boolexpr:
                 tot, dt = boolean.search_boolean(self.q, self.boolexpr, on_result,
-                                                 lambda: self._cancel, on_prog, on_phase)
+                                                 lambda: self._cancel, on_prog, on_phase,
+                                                 stats=self.stats)      # N2: conta inacessíveis
             else:
                 tot, dt = engine.search(self.q, on_result, lambda: self._cancel, on_prog,
                                         stats=self.stats)

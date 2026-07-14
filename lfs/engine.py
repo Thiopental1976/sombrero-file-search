@@ -153,8 +153,17 @@ def _passes_meta(q: Query, st: os.stat_result) -> bool:
 
 
 # ---------------------------------------------------------------- busca por NOME
-def _iter_names_python(q: Query):
-    """Fallback universal: os.walk com profundidade/hidden/symlink/meta/one-fs."""
+def _walk_onerror(stats):
+    """N2: os.walk engolia erros silenciosamente; agora conta os inacessíveis."""
+    def cb(err):
+        if stats is not None and isinstance(err, PermissionError):
+            stats["denied"] = stats.get("denied", 0) + 1
+    return cb
+
+
+def _iter_names_python(q: Query, stats=None):
+    """Fallback universal: os.walk com profundidade/hidden/symlink/meta/one-fs.
+    N2: `stats` recebe 'denied' de diretórios sem permissão (onerror do os.walk)."""
     match_name = _name_matcher(q)
     for root in q.paths:
         root = os.path.abspath(os.path.expanduser(root))
@@ -163,7 +172,8 @@ def _iter_names_python(q: Query):
         if q.one_file_system:                       # B9: não cruzar mounts no fallback
             try: root_dev = os.stat(root).st_dev
             except OSError: root_dev = None
-        for dp, dns, fns in os.walk(root, followlinks=q.follow_symlinks):
+        for dp, dns, fns in os.walk(root, followlinks=q.follow_symlinks,
+                                    onerror=_walk_onerror(stats)):
             depth = dp.rstrip("/").count("/") - base_depth
             if not q.include_hidden:
                 dns[:] = [d for d in dns if not d.startswith(".")]
@@ -395,8 +405,9 @@ def _iter_content_rg(q: Query, cancel, stats=None):
         _reap(proc, errf, stats)                    # B1/B8
 
 
-def _iter_content_python(q: Query, cancel):
-    """Fallback: varre nomes e faz grep em Python (blocos, ignora binário)."""
+def _iter_content_python(q: Query, cancel, stats=None):
+    """Fallback: varre nomes e faz grep em Python (blocos, ignora binário).
+    N2: conta 'denied' de diretórios (os.walk) e de arquivos sem permissão."""
     if q.case_sensitive:
         rx = re.compile(q.content if q.content_is_regex else re.escape(q.content))
     else:
@@ -404,7 +415,7 @@ def _iter_content_python(q: Query, cancel):
     if q.whole_word and not q.content_is_regex:
         rx = re.compile(r"\b" + re.escape(q.content) + r"\b",
                         0 if q.case_sensitive else re.IGNORECASE)
-    for m in _iter_names_python(q):
+    for m in _iter_names_python(q, stats):
         if cancel():
             return
         try:
@@ -421,6 +432,10 @@ def _iter_content_python(q: Query, cancel):
                             m.lines.append((i, line.rstrip("\n")))
                 if hit is not None:
                     yield m
+        except PermissionError:
+            if stats is not None:                     # N2: arquivo sem permissão de leitura
+                stats["denied"] = stats.get("denied", 0) + 1
+            continue
         except (OSError, UnicodeError):
             continue
 
@@ -439,9 +454,9 @@ def search(q: Query, on_result: Callable[[Match], None],
         if RG or (q.documents and RGA):
             it = _iter_content_rg(q, cancel, stats)
         else:
-            it = _iter_content_python(q, cancel)
+            it = _iter_content_python(q, cancel, stats)
     else:
-        it = _iter_names_fd(q, cancel, stats) if FD else _iter_names_python(q)
+        it = _iter_names_fd(q, cancel, stats) if FD else _iter_names_python(q, stats)
     for m in it:
         if cancel():
             break

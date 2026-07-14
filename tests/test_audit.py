@@ -210,9 +210,9 @@ def test_and_progressive_restricts():
                 f.write("comum\n")
         calls = []
         orig = boolean._files_with_term
-        def spy(term, q, cancel, restrict=None):
+        def spy(term, q, cancel, restrict=None, stats=None):
             calls.append((term, None if restrict is None else len(restrict)))
-            return orig(term, q, cancel, restrict)
+            return orig(term, q, cancel, restrict, stats)
         boolean._files_with_term = spy
         try:
             got = set()
@@ -227,6 +227,52 @@ def test_and_progressive_restricts():
         print("ok  opt#1  2ª parte do AND varreu só o acumulado (1 arquivo, não 51)")
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+# ------------------------------------------------------------------ N2 stats de inacessíveis
+def _make_denied_tree():
+    """Árvore com um subdiretório SEM permissão (000) p/ gerar 'denied'."""
+    d = tempfile.mkdtemp(prefix="lfs_deny_")
+    with open(os.path.join(d, "ok.txt"), "w") as f:
+        f.write("laudo do paciente\n")
+    sub = os.path.join(d, "secreto")
+    os.mkdir(sub)
+    with open(os.path.join(sub, "dentro.txt"), "w") as f:
+        f.write("laudo paciente\n")
+    os.chmod(sub, 0o000)                        # inacessível
+    return d, sub
+
+
+def test_walk_onerror_counts_denied():
+    """N2 (fallback Python): os.walk num diretório sem permissão conta 'denied'."""
+    if os.geteuid() == 0:
+        print("--  N2  (pulado: root ignora permissões)"); return
+    d, sub = _make_denied_tree()
+    try:
+        st = {"denied": 0}
+        list(engine._iter_names_python(Query(paths=[d], name_patterns=["*.txt"]), st))
+        assert st["denied"] >= 1, f"não contou o diretório inacessível: {st}"
+        print("ok  N2  fallback os.walk conta diretório inacessível")
+    finally:
+        os.chmod(sub, 0o755); shutil.rmtree(d, ignore_errors=True)
+
+
+def test_boolean_stats_denied():
+    """N2: o modo booleano agora preenche stats['denied'] (antes ficava 0)."""
+    if os.geteuid() == 0:
+        print("--  N2  (pulado: root ignora permissões)"); return
+    d, sub = _make_denied_tree()
+    try:
+        st = {"denied": 0}
+        got = set()
+        boolean.search_boolean(Query(paths=[d]), "laudo AND paciente",
+                               lambda m: got.add(os.path.basename(m.path)), lambda: False,
+                               stats=st)
+        assert "ok.txt" in got, f"devia achar o arquivo acessível: {got}"
+        assert st["denied"] >= 1, f"booleano não contou inacessível (N2): {st}"
+        print("ok  N2  modo booleano conta inacessíveis em stats['denied']")
+    finally:
+        os.chmod(sub, 0o755); shutil.rmtree(d, ignore_errors=True)
 
 
 # ------------------------------------------------------------------ opt#4 on_phase
@@ -381,7 +427,8 @@ def main():
            test_and_progressive_correctness, test_and_progressive_restricts,
            test_glob_to_regex, test_fd_merge_single_pass,
            test_mnt_serializes, test_or_parallel_correctness,
-           test_on_phase_reports, test_on_phase_optional]
+           test_on_phase_reports, test_on_phase_optional,
+           test_walk_onerror_counts_denied, test_boolean_stats_denied]
     fail = 0
     for fn in fns:
         try:

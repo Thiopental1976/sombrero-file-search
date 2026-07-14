@@ -15,7 +15,7 @@ Estratégia (casada com o desenho do Fable):
 Sem Qt aqui. O motor devolve Matches iguais aos de engine.py (a GUI/CLI reaproveitam).
 """
 from __future__ import annotations
-import os, re, json, subprocess, threading
+import os, re, json, subprocess, threading, tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional
@@ -177,15 +177,16 @@ def _rg_base(q: engine.Query):
 _BATCH = 400   # caminhos por invocação do rg (evita estourar ARG_MAX — B4 e opt#1)
 
 
-def _files_with_term(term: str, q: engine.Query, cancel, restrict=None) -> set[str]:
+def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=None) -> set[str]:
     """Arquivos que CONTÊM o termo (rg -l). Fallback Python se rg ausente.
 
     Opt#1 (AND progressivo): se `restrict` (lista de caminhos) é dado, varre SÓ
     esses arquivos — em lotes p/ não estourar o argv — em vez da árvore inteira.
     Retorna sempre um subconjunto de `restrict` quando ele é dado.
+    N2: `stats` recebe 'denied' (inacessíveis) contados do stderr do rg.
     """
     if not engine.RG:
-        res = _files_with_term_py(term, q, cancel)
+        res = _files_with_term_py(term, q, cancel, stats)
         return res & set(restrict) if restrict is not None else res
     base = _rg_base(q) + ["-l"]
     if not q.content_is_regex: base.append("--fixed-strings")
@@ -200,12 +201,14 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None) -> set[s
         if cancel(): break
         if not roots: continue
         cmd = base + ["--"] + roots
+        errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr p/ contar denied
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, text=True, errors="replace")
+                                    stderr=errf, text=True, errors="replace")
         except OSError:
+            errf.close()
             if restrict is None:
-                return _files_with_term_py(term, q, cancel)
+                return _files_with_term_py(term, q, cancel, stats)
             continue                              # lote isolado falhou; segue os outros
         try:
             for line in proc.stdout:
@@ -213,24 +216,28 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None) -> set[s
                 fp = line.rstrip("\n")
                 if fp: out.add(os.path.abspath(fp))
         finally:
-            engine._reap(proc)                    # B1: nunca deixar rg órfão
+            _reap_stats(proc, errf, stats)        # B1 + N2: mata órfão e conta inacessíveis
     return out
 
 
-def _files_with_term_py(term: str, q: engine.Query, cancel) -> set[str]:
+def _files_with_term_py(term: str, q: engine.Query, cancel, stats=None) -> set[str]:
     sub = engine.Query(**{**q.__dict__, "content": term})
-    return {os.path.abspath(m.path) for m in engine._iter_content_python(sub, cancel)}
+    local = {} if stats is not None else None     # N2: conta no local e mescla sob lock
+    res = {os.path.abspath(m.path) for m in engine._iter_content_python(sub, cancel, local)}
+    _merge_denied(stats, local)
+    return res
 
 
-def _universe(q: engine.Query, cancel) -> set[str]:
+def _universe(q: engine.Query, cancel, stats=None) -> set[str]:
     """Todos os arquivos candidatos (p/ resolver NOT). rg --files ou fd/os.walk."""
     if engine.RG:
         cmd = _rg_base(q) + ["--files", "--"] + q.paths
+        errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, text=True, errors="replace")
+                                    stderr=errf, text=True, errors="replace")
         except OSError:
-            proc = None
+            errf.close(); proc = None
         if proc:
             out = set()
             try:
@@ -239,9 +246,12 @@ def _universe(q: engine.Query, cancel) -> set[str]:
                     fp = line.rstrip("\n")
                     if fp: out.add(os.path.abspath(fp))
             finally:
-                engine._reap(proc)                # B1
+                _reap_stats(proc, errf, stats)    # B1 + N2
             return out
-    return {os.path.abspath(m.path) for m in engine._iter_names_python(q)}
+    local = {} if stats is not None else None
+    res = {os.path.abspath(m.path) for m in engine._iter_names_python(q, local)}
+    _merge_denied(stats, local)
+    return res
 
 
 # ------------------------------------------------------------------ concorrência (opt#2)
@@ -254,6 +264,29 @@ _MNT_PREFIXES = ("/mnt", "/media", "/run/media")
 
 def _under_mount(ap: str) -> bool:
     return any(ap == pre or ap.startswith(pre + os.sep) for pre in _MNT_PREFIXES)
+
+
+# ------------------------------------------------------------------ contagem de inacessíveis (N2)
+def _merge_denied(stats, local):
+    """Soma o 'denied' contado num dict LOCAL no `stats` compartilhado, sob lock
+    (thread-safe p/ o paralelismo da opt#2)."""
+    if stats is None or not local:
+        return
+    d = local.get("denied", 0)
+    if d:
+        with _cache_lock:
+            stats["denied"] = stats.get("denied", 0) + d
+
+
+def _reap_stats(proc, errf, stats):
+    """Como engine._reap (mata órfão + conta 'denied' do stderr), mas thread-safe:
+    conta num dict LOCAL e mescla no compartilhado sob o _cache_lock (N2 + opt#2)."""
+    if stats is None:
+        engine._reap(proc, errf)                  # fecha errf, sem contar
+        return
+    local = {}
+    engine._reap(proc, errf, local)               # conta no local (isolado por thread)
+    _merge_denied(stats, local)
 
 
 def _max_workers(q: engine.Query) -> int:
@@ -318,20 +351,20 @@ def _all_terms(node):
 
 
 # ------------------------------------------------------------------ avaliação do AST
-def _universe_cached(q, cancel, universe_box, phase=None):
+def _universe_cached(q, cancel, universe_box, phase=None, stats=None):
     with _cache_lock:
         if universe_box[0] is not None:
             return universe_box[0]
     if phase is not None:
         phase.note("listando arquivos (NOT)")
-    u = _universe(q, cancel)                 # I/O fora do lock
+    u = _universe(q, cancel, stats)          # I/O fora do lock
     with _cache_lock:
         if universe_box[0] is None:
             universe_box[0] = u
         return universe_box[0]
 
 
-def _term_set(term, q, cancel, cache, restrict, phase=None):
+def _term_set(term, q, cancel, cache, restrict, phase=None, stats=None):
     """Conjunto de arquivos que contêm o termo.
     Sem restrição: usa/preenche o cache com o conjunto CHEIO (reuso entre nós).
     Com restrição (opt#1): intersecta o cache se já houver, senão varre SÓ os
@@ -344,7 +377,7 @@ def _term_set(term, q, cancel, cache, restrict, phase=None):
             hit = cache.get(term)
         if hit is None:
             if phase is not None: phase.term(term)
-            hit = _files_with_term(term, q, cancel)
+            hit = _files_with_term(term, q, cancel, stats=stats)
             with _cache_lock:
                 cache.setdefault(term, hit)
                 hit = cache[term]
@@ -354,7 +387,7 @@ def _term_set(term, q, cancel, cache, restrict, phase=None):
     if hit is not None:
         return hit & restrict
     if phase is not None: phase.term(term)
-    return _files_with_term(term, q, cancel, restrict=restrict)
+    return _files_with_term(term, q, cancel, restrict=restrict, stats=stats)
 
 
 def _or_operands(node):
@@ -364,7 +397,7 @@ def _or_operands(node):
     return [node]
 
 
-def _eval(node, q, cancel, cache, universe_box, restrict=None, pool=None, phase=None):
+def _eval(node, q, cancel, cache, universe_box, restrict=None, pool=None, phase=None, stats=None):
     """Avalia o AST -> conjunto de arquivos.
 
     Opt#1 (AND com restrição progressiva): o lado esquerdo de um AND vira o
@@ -378,16 +411,16 @@ def _eval(node, q, cancel, cache, universe_box, restrict=None, pool=None, phase=
     só o nível de OR alcançado pela recursão na thread principal paraleliza,
     o que evita fome de workers (deadlock de pool aninhado)."""
     if isinstance(node, Term):
-        return _term_set(node.text, q, cancel, cache, restrict, phase)
+        return _term_set(node.text, q, cancel, cache, restrict, phase, stats)
     if isinstance(node, And):
-        sa = _eval(node.a, q, cancel, cache, universe_box, restrict, pool, phase)
+        sa = _eval(node.a, q, cancel, cache, universe_box, restrict, pool, phase, stats)
         if not sa:
             return set()                     # curto-circuito: nada satisfaz o AND
-        return _eval(node.b, q, cancel, cache, universe_box, restrict=sa, pool=pool, phase=phase)
+        return _eval(node.b, q, cancel, cache, universe_box, restrict=sa, pool=pool, phase=phase, stats=stats)
     if isinstance(node, Or):
         ops = _or_operands(node)
         if pool is not None and len(ops) > 1 and not cancel():
-            futs = [pool.submit(_eval, op, q, cancel, cache, universe_box, restrict, None, phase)
+            futs = [pool.submit(_eval, op, q, cancel, cache, universe_box, restrict, None, phase, stats)
                     for op in ops]
             out = set()
             for f in futs:
@@ -396,26 +429,28 @@ def _eval(node, q, cancel, cache, universe_box, restrict=None, pool=None, phase=
         out = set()
         for op in ops:
             if cancel(): break
-            out |= _eval(op, q, cancel, cache, universe_box, restrict, pool, phase)
+            out |= _eval(op, q, cancel, cache, universe_box, restrict, pool, phase, stats)
         return out
     if isinstance(node, Not):
         if restrict is None:                 # NOT no topo: universo − termo (varredura cheia)
-            univ = _universe_cached(q, cancel, universe_box, phase)
-            return univ - _eval(node.node, q, cancel, cache, universe_box, restrict=None, pool=pool, phase=phase)
+            univ = _universe_cached(q, cancel, universe_box, phase, stats)
+            return univ - _eval(node.node, q, cancel, cache, universe_box, restrict=None, pool=pool, phase=phase, stats=stats)
         # NOT dentro de um AND: já restrito ao acumulado, subtrai o que casa nele
-        return restrict - _eval(node.node, q, cancel, cache, universe_box, restrict=restrict, pool=pool, phase=phase)
+        return restrict - _eval(node.node, q, cancel, cache, universe_box, restrict=restrict, pool=pool, phase=phase, stats=stats)
     raise BooleanError("nó desconhecido")
 
 
 # ------------------------------------------------------------------ API pública
 def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
-                   on_progress=lambda n: None, on_phase=None):
+                   on_progress=lambda n: None, on_phase=None, stats=None):
     """Resolve a expressão booleana -> arquivos, então emite Matches com linhas
     dos termos positivos. Retorna (total, segundos).
 
     Opt#4: `on_phase(done, total, label)` relata a etapa atual — 'passo 2/4:
     termo "paciente"' e, por fim, 'passo 4/4: extraindo linhas'. Cada termo
-    DISTINTO é um passo; a extração de linhas dos positivos é o passo final."""
+    DISTINTO é um passo; a extração de linhas dos positivos é o passo final.
+    N2: `stats` (dict) recebe 'denied' — inacessíveis vistos no stderr do rg e
+    nos fallbacks Python — de forma thread-safe (compatível com a opt#2)."""
     import time
     t0 = time.time()
     ast = parse(expr)
@@ -428,9 +463,9 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     workers = _max_workers(q)                # opt#2: paraleliza OR fora de /mnt
     if workers > 1:
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            files = _eval(ast, q, cancel, cache, universe_box, pool=pool, phase=phase)
+            files = _eval(ast, q, cancel, cache, universe_box, pool=pool, phase=phase, stats=stats)
     else:
-        files = _eval(ast, q, cancel, cache, universe_box, phase=phase)
+        files = _eval(ast, q, cancel, cache, universe_box, phase=phase, stats=stats)
     # B3: filtro de nome por REGEX (o glob já vai pro rg; regex é pós-filtro no basename)
     if q.name_is_regex and q.name_patterns:
         nrx = re.compile(q.name_patterns[0], 0 if q.case_sensitive else re.IGNORECASE)
@@ -441,7 +476,7 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     files_sorted = sorted(files)
     if pos and not cancel():
         phase.finish_display()               # opt#4: último passo
-    lines_by_file = _display_lines(pos, files_sorted, q, cancel) if pos else {}
+    lines_by_file = _display_lines(pos, files_sorted, q, cancel, stats) if pos else {}
     for fp in files_sorted:
         if cancel(): break
         try:
@@ -460,9 +495,10 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     return n, time.time() - t0
 
 
-def _display_lines(pos_terms, files, q: engine.Query, cancel) -> dict:
+def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dict:
     """Para os arquivos-resultado, extrai linhas que casam QUALQUER termo positivo.
-    B4: processa em lotes p/ não estourar o argv (60k caminhos matariam o exec)."""
+    B4: processa em lotes p/ não estourar o argv (60k caminhos matariam o exec).
+    N2: `stats` recebe 'denied' contados do stderr do rg."""
     if not files or not engine.RG:
         return {}
     base = _rg_base(q) + ["--json"]
@@ -472,10 +508,12 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel) -> dict:
     for i in range(0, len(files), _BATCH):
         if cancel(): break
         cmd = base + ["--"] + files[i:i + _BATCH]
+        errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, text=True, errors="replace")
+                                    stderr=errf, text=True, errors="replace")
         except OSError:
+            errf.close()
             continue
         try:
             for line in proc.stdout:
@@ -492,7 +530,7 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel) -> dict:
                         txt = ev["data"]["lines"].get("text", "").rstrip("\n")
                         lst.append((ln, txt))
         finally:
-            engine._reap(proc)                    # B1: nunca deixar rg órfão
+            _reap_stats(proc, errf, stats)        # B1 + N2: mata órfão e conta inacessíveis
     return res
 
 

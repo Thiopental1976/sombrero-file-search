@@ -409,10 +409,9 @@ python3 lfs/app.py     # GUI    |    python3 lfs/cli.py --help    # CLI
 - `rga` pré-compilado só para `x86_64`; em outras arquiteturas, instalar pelo gerenciador.
 - Realce de preview e destaque só valem para termos **literais**; regex de conteúdo não é realçado.
 - Ordenação por coluna é habilitada ao fim da busca (durante a busca, ordem de chegada).
-- **Otimizações da §3 da auditoria: #1, #2, #3 e #4 concluídas** (ver §13/§14). Sobra o
-  N2 (plumbing de `stats` no modo booleano p/ o contador de inacessíveis).
-- Contador de "inacessíveis" só é atualizado ao fim de cada processo (no `_reap`), e o
-  modo **booleano** ainda não recebe `stats` (fica 0 nesse modo) — plumbing pendente (N2).
+- **Otimizações da §3 da auditoria: #1, #2, #3 e #4 concluídas; e o N2 também** (ver §13/§14).
+- Contador de "inacessíveis" é atualizado ao fim de cada processo (no `_reap`) — inclusive no
+  modo **booleano** e nos fallbacks Python (N2, §13.6). Não é ao vivo por processo, mas o total final é correto.
 
 ---
 
@@ -420,8 +419,8 @@ python3 lfs/app.py     # GUI    |    python3 lfs/cli.py --help    # CLI
 
 | Módulo | Símbolos-chave |
 |---|---|
-| `engine.py` | `Query`, `Match`, `search`, `engine_info`, `_which`, `_iter_content_rg`, `_iter_names_fd`, `_iter_content_python`, `_iter_names_python`, `_passes_meta`, `_name_matcher`, `_glob_to_regex`, `_merge_globs`, `_reap` |
-| `boolean.py` | `parse`, `tokenize`, `search_boolean`, `positive_terms`, `_eval`, `_files_with_term`, `_universe`, `_display_lines`, `_term_set`, `_or_operands`, `_max_workers`, `_under_mount`, `_Phase`, `_all_terms`, `BooleanError`, `Term/Not/And/Or` |
+| `engine.py` | `Query`, `Match`, `search`, `engine_info`, `_which`, `_iter_content_rg`, `_iter_names_fd`, `_iter_content_python`, `_iter_names_python`, `_passes_meta`, `_name_matcher`, `_glob_to_regex`, `_merge_globs`, `_reap`, `_walk_onerror` |
+| `boolean.py` | `parse`, `tokenize`, `search_boolean`, `positive_terms`, `_eval`, `_files_with_term`, `_universe`, `_display_lines`, `_term_set`, `_or_operands`, `_max_workers`, `_under_mount`, `_Phase`, `_all_terms`, `_reap_stats`, `_merge_denied`, `BooleanError`, `Term/Not/And/Or` |
 | `cli.py` | `main` (argparse) |
 | `app.py` | `MainWindow`, `SearchWorker`, `ResultModel`, `THEMES`, `build_style`, `media_kind`, `_build_preview`, `_show_media`, `_nav_media`, `apply_theme` |
 
@@ -463,10 +462,10 @@ já corrigidos:
 | # | Problema | Conserto | Onde |
 |---|---|---|---|
 | **N1** | fd usa *smart-case*: com "Aa" LIGADO, padrão minúsculo ainda casava `N1.TXT` (rg era sensível → os motores divergiam de novo) | força `--case-sensitive` quando `case_sensitive` | `engine._iter_names_fd` |
+| **N2** | contador de inacessíveis ausente no modo booleano (`stderr=DEVNULL`) e no fallback Python (`os.walk` engolia erros) | captura stderr + `_reap_stats` thread-safe; `os.walk(onerror=…)` e `PermissionError` de arquivo | §13.6 |
 | **N3** | teto de imagem só valia quando as dimensões não vinham do cabeçalho; PNG/TIFF grande com header decodificava o raster inteiro na UI | teto de 64 MB **incondicional** → placeholder "abrir externo" | `app._load_image` |
 
-Pendências registradas (não urgentes): N2 (contador de inacessíveis só ao fim do
-processo e ausente no modo booleano) e N4 (miudezas de revisão) — ver §11.
+Pendência restante (não urgente): N4 (miudezas de revisão) — ver §11.
 
 ### 13.2 Otimização #1 — AND com restrição progressiva (implementada)
 
@@ -561,6 +560,28 @@ e, no fim, **"passo 4/4: extraindo linhas"**.
 - **Testes**: `test_on_phase_reports` (passos 1..total, total correto, último passo é
   "extraindo linhas", cada termo uma vez) e `test_on_phase_optional` (sem o callback,
   a busca funciona igual).
+
+### 13.6 N2 — contagem de inacessíveis no modo booleano e nos fallbacks (implementado)
+
+O contador de "N inacessível(is)" (B8) só funcionava na busca simples: o modo
+**booleano** passava `stderr=DEVNULL` e o fallback Python engolia os erros do
+`os.walk`. Agora o `stats['denied']` é preenchido em todos os caminhos.
+
+- **Modo booleano**: `_files_with_term`, `_universe` e `_display_lines` passaram a
+  **capturar o stderr** (tempfile) e contar via `_reap_stats`. `search_boolean` ganhou
+  o parâmetro `stats` e o propaga por `_eval`/`_term_set`/`_universe_cached`. A GUI já
+  passa `SearchWorker.stats`.
+- **Thread-safe (opt#2)**: `_reap_stats` conta num dict **local** por processo e mescla
+  no `stats` compartilhado sob `_cache_lock` (`_merge_denied`) — sem corrida mesmo com
+  `OR` em paralelo. Os fallbacks Python usam o mesmo padrão (local → merge sob lock).
+- **Fallback Python**: `engine._iter_names_python` agora passa `onerror=_walk_onerror(stats)`
+  ao `os.walk` (conta `PermissionError` de diretório), e `_iter_content_python` conta
+  também o `PermissionError` ao abrir arquivo. `engine.search` repassa `stats` a esses
+  fallbacks (antes só o caminho `rg`/`fd` recebia).
+- **Retrocompatível**: `stats` é opcional (default `None`); quem não passa (CLI) não conta.
+- **Testes**: `test_walk_onerror_counts_denied` (diretório `chmod 000` no fallback conta
+  ≥1) e `test_boolean_stats_denied` (booleano sobre a mesma árvore preenche `denied`,
+  antes ficava 0). Ambos pulados como root (que ignora permissões).
 
 ---
 
