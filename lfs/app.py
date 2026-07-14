@@ -837,14 +837,15 @@ class MainWindow(QMainWindow):
             sz = os.path.getsize(path)
         except OSError:
             sz = 0
-        reader = QImageReader(path)
-        reader.setAutoTransform(True)
-        orig = reader.size()               # lê o cabeçalho, não o raster inteiro
-        # imagem enorme sem dimensão conhecida a priori → evita decodificar síncrono
-        if sz > self._IMG_CAP and not orig.isValid():
+        # N3: teto INCONDICIONAL — setScaledSize só é fast-path real em JPEG; PNG/TIFF
+        # decodificam o raster inteiro antes de escalar e congelariam a UI num SMR.
+        if sz > self._IMG_CAP:
             self.img_label.setPixmap(QPixmap())
             self.img_label.setText("imagem muito grande —\nclique duplo p/ abrir externo")
             return
+        reader = QImageReader(path)
+        reader.setAutoTransform(True)
+        orig = reader.size()               # lê o cabeçalho, não o raster inteiro
         area = self.media_view.size()
         tw, th = max(1, area.width() - 4), max(1, area.height() - 4)
         if orig.isValid() and (orig.width() > tw or orig.height() > th):

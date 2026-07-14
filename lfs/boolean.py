@@ -173,18 +173,39 @@ def _rg_base(q: engine.Query):
     return cmd
 
 
-def _files_with_term(term: str, q: engine.Query, cancel) -> set[str]:
-    """Arquivos que CONTÊM o termo (rg -l). Fallback Python se rg ausente."""
-    if engine.RG:
-        cmd = _rg_base(q) + ["-l"]
-        if not q.content_is_regex: cmd.append("--fixed-strings")
-        cmd += ["-e", term, "--"] + q.paths
+_BATCH = 400   # caminhos por invocação do rg (evita estourar ARG_MAX — B4 e opt#1)
+
+
+def _files_with_term(term: str, q: engine.Query, cancel, restrict=None) -> set[str]:
+    """Arquivos que CONTÊM o termo (rg -l). Fallback Python se rg ausente.
+
+    Opt#1 (AND progressivo): se `restrict` (lista de caminhos) é dado, varre SÓ
+    esses arquivos — em lotes p/ não estourar o argv — em vez da árvore inteira.
+    Retorna sempre um subconjunto de `restrict` quando ele é dado.
+    """
+    if not engine.RG:
+        res = _files_with_term_py(term, q, cancel)
+        return res & set(restrict) if restrict is not None else res
+    base = _rg_base(q) + ["-l"]
+    if not q.content_is_regex: base.append("--fixed-strings")
+    base += ["-e", term]
+    if restrict is None:
+        batches = [list(q.paths)]                 # varredura da árvore toda
+    else:
+        rl = list(restrict)
+        batches = [rl[i:i + _BATCH] for i in range(0, len(rl), _BATCH)]
+    out = set()
+    for roots in batches:
+        if cancel(): break
+        if not roots: continue
+        cmd = base + ["--"] + roots
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                     stderr=subprocess.DEVNULL, text=True, errors="replace")
         except OSError:
-            return _files_with_term_py(term, q, cancel)
-        out = set()
+            if restrict is None:
+                return _files_with_term_py(term, q, cancel)
+            continue                              # lote isolado falhou; segue os outros
         try:
             for line in proc.stdout:
                 if cancel(): break
@@ -192,8 +213,7 @@ def _files_with_term(term: str, q: engine.Query, cancel) -> set[str]:
                 if fp: out.add(os.path.abspath(fp))
         finally:
             engine._reap(proc)                    # B1: nunca deixar rg órfão
-        return out
-    return _files_with_term_py(term, q, cancel)
+    return out
 
 
 def _files_with_term_py(term: str, q: engine.Query, cancel) -> set[str]:
@@ -224,19 +244,49 @@ def _universe(q: engine.Query, cancel) -> set[str]:
 
 
 # ------------------------------------------------------------------ avaliação do AST
-def _eval(node, q, cancel, cache, universe_box):
+def _universe_cached(q, cancel, universe_box):
+    if universe_box[0] is None:
+        universe_box[0] = _universe(q, cancel)
+    return universe_box[0]
+
+
+def _term_set(term, q, cancel, cache, restrict):
+    """Conjunto de arquivos que contêm o termo.
+    Sem restrição: usa/preenche o cache com o conjunto CHEIO (reuso entre nós).
+    Com restrição (opt#1): intersecta o cache se já houver, senão varre SÓ os
+    arquivos de `restrict` — o resultado é subconjunto e NÃO polui o cache."""
+    if restrict is None:
+        if term not in cache:
+            cache[term] = _files_with_term(term, q, cancel)
+        return cache[term]
+    if term in cache:
+        return cache[term] & restrict
+    return _files_with_term(term, q, cancel, restrict=restrict)
+
+
+def _eval(node, q, cancel, cache, universe_box, restrict=None):
+    """Avalia o AST -> conjunto de arquivos.
+
+    Opt#1 (AND com restrição progressiva): o lado esquerdo de um AND vira o
+    `restrict` do lado direito, que passa a varrer só esses arquivos em vez da
+    árvore inteira. É correto para AND/OR/NOT porque a interseção distribui:
+    (X∘Y)∩R = (X∩R)∘(Y∩R). O termo mais à esquerda é a única varredura cheia."""
     if isinstance(node, Term):
-        if node.text not in cache:
-            cache[node.text] = _files_with_term(node.text, q, cancel)
-        return cache[node.text]
+        return _term_set(node.text, q, cancel, cache, restrict)
     if isinstance(node, And):
-        return _eval(node.a, q, cancel, cache, universe_box) & _eval(node.b, q, cancel, cache, universe_box)
+        sa = _eval(node.a, q, cancel, cache, universe_box, restrict)
+        if not sa:
+            return set()                     # curto-circuito: nada satisfaz o AND
+        return _eval(node.b, q, cancel, cache, universe_box, restrict=sa)
     if isinstance(node, Or):
-        return _eval(node.a, q, cancel, cache, universe_box) | _eval(node.b, q, cancel, cache, universe_box)
+        return (_eval(node.a, q, cancel, cache, universe_box, restrict)
+                | _eval(node.b, q, cancel, cache, universe_box, restrict))
     if isinstance(node, Not):
-        if universe_box[0] is None:
-            universe_box[0] = _universe(q, cancel)
-        return universe_box[0] - _eval(node.node, q, cancel, cache, universe_box)
+        if restrict is None:                 # NOT no topo: universo − termo (varredura cheia)
+            univ = _universe_cached(q, cancel, universe_box)
+            return univ - _eval(node.node, q, cancel, cache, universe_box, restrict=None)
+        # NOT dentro de um AND: já restrito ao acumulado, subtrai o que casa nele
+        return restrict - _eval(node.node, q, cancel, cache, universe_box, restrict=restrict)
     raise BooleanError("nó desconhecido")
 
 
@@ -278,8 +328,6 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
         if n >= q.max_results: break
     return n, time.time() - t0
 
-
-_BATCH = 400   # B4: caminhos por invocação do rg (evita estourar ARG_MAX)
 
 def _display_lines(pos_terms, files, q: engine.Query, cancel) -> dict:
     """Para os arquivos-resultado, extrai linhas que casam QUALQUER termo positivo.

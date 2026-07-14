@@ -158,11 +158,83 @@ def test_boolean_parser():
     print("ok  §4  parser booleano (precedência, adjacência, | & !)")
 
 
+# ------------------------------------------------------------------ N1 fd caixa-sensível
+def test_fd_case_sensitive():
+    """N1: com 'Aa' LIGADO, o fd não pode vazar por smart-case.
+    glob *.txt sensível NÃO acha N1.TXT; regex de nome 'n1' sensível não casa N1.TXT."""
+    if not engine.FD:
+        print("--  N1  (pulado: sem fd)"); return
+    d = _tree()
+    try:
+        got = set()
+        engine.search(Query(paths=[d], name_patterns=["*.txt"], case_sensitive=True),
+                      lambda m: got.add(os.path.basename(m.path)), lambda: False, lambda k: None)
+        assert "N1.TXT" not in got, f"vazou N1.TXT com caixa ligada: {got}"
+        assert "n2.txt" in got, f"perdeu n2.txt: {got}"
+        got2 = set()
+        engine.search(Query(paths=[d], name_patterns=["n1"], name_is_regex=True,
+                            case_sensitive=True),
+                      lambda m: got2.add(os.path.basename(m.path)), lambda: False, lambda k: None)
+        assert "N1.TXT" not in got2, f"regex sensível vazou N1.TXT: {got2}"
+        print("ok  N1  fd respeita caixa ligada (glob e regex de nome)")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+# ------------------------------------------------------------------ opt#1 AND progressivo
+def test_and_progressive_correctness():
+    """Opt#1 não pode mudar resultados: AND/OR/NOT com restrição = interseção ingênua."""
+    d = _tree()
+    try:
+        def run(expr):
+            got = set()
+            boolean.search_boolean(Query(paths=[d]), expr,
+                                   lambda m: got.add(os.path.basename(m.path)), lambda: False)
+            return got
+        assert run("laudo AND paciente") == {"N1.TXT", "n2.txt", "doc42.log", "ambos.log"}
+        assert run("laudo AND NOT rascunho") == {"N1.TXT", "n2.txt", "ambos.log"}
+        assert run("(assinatura OR rascunho) AND paciente") == {"N1.TXT", "n2.txt", "doc42.log"}
+        print("ok  opt#1  AND progressivo preserva os resultados (AND/OR/NOT)")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_and_progressive_restricts():
+    """Opt#1 de fato restringe: a 2ª parte do AND varre só o conjunto acumulado."""
+    d = tempfile.mkdtemp(prefix="lfs_prog_")
+    try:
+        with open(os.path.join(d, "raro.txt"), "w") as f:
+            f.write("raro comum\n")
+        for i in range(50):
+            with open(os.path.join(d, f"c{i}.txt"), "w") as f:
+                f.write("comum\n")
+        calls = []
+        orig = boolean._files_with_term
+        def spy(term, q, cancel, restrict=None):
+            calls.append((term, None if restrict is None else len(restrict)))
+            return orig(term, q, cancel, restrict)
+        boolean._files_with_term = spy
+        try:
+            got = set()
+            boolean.search_boolean(Query(paths=[d]), "raro AND comum",
+                                   lambda m: got.add(os.path.basename(m.path)), lambda: False)
+        finally:
+            boolean._files_with_term = orig
+        assert got == {"raro.txt"}, f"resultado errado: {got}"
+        restricted = [c for c in calls if c[1] is not None]
+        assert restricted, f"nenhuma varredura restrita ocorreu: {calls}"
+        assert restricted[0][1] == 1, f"'comum' devia varrer só 1 arquivo (o de 'raro'): {calls}"
+        print("ok  opt#1  2ª parte do AND varreu só o acumulado (1 arquivo, não 51)")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def main():
     fns = [test_parse_size, test_reap_kills_process, test_no_orphan_on_cancel,
            test_glob_case_insensitive, test_boolean_name_regex,
            test_display_lines_batched, test_one_file_system_fallback,
-           test_boolean_parser]
+           test_boolean_parser, test_fd_case_sensitive,
+           test_and_progressive_correctness, test_and_progressive_restricts]
     fail = 0
     for fn in fns:
         try:

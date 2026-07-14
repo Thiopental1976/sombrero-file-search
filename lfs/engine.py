@@ -217,6 +217,8 @@ def _iter_names_fd(q: Query, cancel, stats=None):
             cmd += ["--glob"]
         if q.name_patterns and not q.case_sensitive:
             cmd.append("--ignore-case")
+        elif q.name_patterns and q.case_sensitive:
+            cmd.append("--case-sensitive")        # N1: fd usa smart-case; força sensível
         pat_val = pat if q.name_patterns else "."
         cmd += ["--", pat_val] + q.paths          # B10: '--' encerra as opções
         errf = tempfile.TemporaryFile(mode="w+")

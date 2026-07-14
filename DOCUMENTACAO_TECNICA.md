@@ -409,6 +409,12 @@ python3 lfs/app.py     # GUI    |    python3 lfs/cli.py --help    # CLI
 - `rga` pré-compilado só para `x86_64`; em outras arquiteturas, instalar pelo gerenciador.
 - Realce de preview e destaque só valem para termos **literais**; regex de conteúdo não é realçado.
 - Ordenação por coluna é habilitada ao fim da busca (durante a busca, ordem de chegada).
+- **Otimizações restantes** (§3 da auditoria; a #1 já foi feita — ver §13/§14):
+  #2 termos independentes em paralelo (2–3 subprocessos, **serializando em `/mnt`** —
+  ver §14 sobre SMR); #3 fd multi-glob → uma regex alternada quando >3 padrões;
+  #4 callback `on_phase` no booleano ("passo 2/4: termo 'paciente'").
+- Contador de "inacessíveis" só é atualizado ao fim de cada processo (no `_reap`), e o
+  modo **booleano** ainda não recebe `stats` (fica 0 nesse modo) — plumbing pendente (N2).
 
 ---
 
@@ -449,5 +455,95 @@ headless (GUI).
 
 **Otimização §5 aplicada**: `parse_size` unificado em `engine.parse_size`
 (era duplicado em `app.py` e `cli.py`); `seen` do fd só quando há múltiplos
-padrões. As otimizações maiores (AND com restrição progressiva, termos em
-paralelo, fd multi-glob → regex alternada) ficam no backlog (§11).
+padrões.
+
+### 13.1 Verificação v2 (`LinuxFileSearch_v2_Verificacao.md`)
+
+A re-auditoria por execução confirmou as 14 correções e achou dois pontos reais,
+já corrigidos:
+
+| # | Problema | Conserto | Onde |
+|---|---|---|---|
+| **N1** | fd usa *smart-case*: com "Aa" LIGADO, padrão minúsculo ainda casava `N1.TXT` (rg era sensível → os motores divergiam de novo) | força `--case-sensitive` quando `case_sensitive` | `engine._iter_names_fd` |
+| **N3** | teto de imagem só valia quando as dimensões não vinham do cabeçalho; PNG/TIFF grande com header decodificava o raster inteiro na UI | teto de 64 MB **incondicional** → placeholder "abrir externo" | `app._load_image` |
+
+Pendências registradas (não urgentes): N2 (contador de inacessíveis só ao fim do
+processo e ausente no modo booleano) e N4 (miudezas de revisão) — ver §11.
+
+### 13.2 Otimização #1 — AND com restrição progressiva (implementada)
+
+A maior otimização da §3 da auditoria. Antes, cada termo de um `AND` varria a
+**árvore inteira** com `rg -l`; agora o resultado parcial do lado esquerdo vira o
+`restrict` do lado direito, que passa a varrer **só aqueles arquivos** (em lotes de
+`_BATCH`, reusando o mecanismo do B4). O termo mais à esquerda é a única varredura
+cheia; os seguintes leem apenas o conjunto acumulado.
+
+- **Onde**: `boolean._eval` (propaga `restrict` por AND/OR/NOT), `boolean._term_set`
+  (cache do conjunto cheio × varredura restrita), `boolean._files_with_term(..., restrict=)`.
+- **Correção**: preservada porque a interseção distribui — `(X∘Y)∩R = (X∩R)∘(Y∩R)` —
+  e um `AND` com lado esquerdo vazio faz **curto-circuito** (não varre o direito).
+  O cache guarda só conjuntos CHEIOS; resultados restritos nunca o poluem.
+- **Ganho**: em `raro AND comum` numa árvore grande, a 2ª varredura cai de
+  *toda a árvore* para *só os arquivos de `raro`* — de minutos para milissegundos,
+  e **muito menos I/O de disco** (crucial nos SMR — ver §14).
+- **Testes**: `test_and_progressive_correctness` (mesmos resultados em AND/OR/NOT) e
+  `test_and_progressive_restricts` (prova que a 2ª parte varreu 1 arquivo, não 51).
+
+---
+
+## 14. Cuidado com discos SMR (e a diferença para CMR)
+
+O Linux File Search é feito para rodar sobre acervos grandes espalhados em muitos
+HDs — inclusive discos **SMR** e USB externos. Isso guia várias decisões do motor.
+
+### 14.1 O que são SMR e CMR
+
+- **CMR** (*Conventional Magnetic Recording*, também PMR): as trilhas **não se
+  sobrepõem**. Cada setor pode ser reescrito no lugar. Escrita aleatória é
+  previsível e rápida. É o disco "normal".
+- **SMR** (*Shingled Magnetic Recording*): as trilhas são gravadas **sobrepostas
+  como telhas** (daí *shingled*), o que aumenta a densidade/capacidade por um preço:
+  reescrever um setor obriga a reescrever a faixa (*zone*) inteira ao redor. O disco
+  usa uma zona de cache (CMR) e faz *garbage collection* depois. Consequências
+  práticas:
+  - **Leitura sequencial**: parecida com CMR (boa).
+  - **Escrita/reescrita aleatória**: pode despencar para poucos MB/s quando o
+    cache satura, com **travadas** enquanto o disco reorganiza as telhas.
+  - **Seek concorrente** (vários leitores ao mesmo tempo, ou ler enquanto escreve)
+    é especialmente ruim: as cabeças passam a saltar e o *throughput* real cai muito.
+  - Drives **SMR device-managed** escondem tudo isso do SO — não dá para "ver" a
+    zona; só dá para **evitar o padrão de acesso ruim**.
+
+Muitos HDs de alta capacidade "de prateleira" (e vários USB externos) são SMR sem
+avisar na caixa. No acervo do ServidorCedro, os discos mecânicos grandes tendem a
+SMR; o CMR de referência é o WD Purple (DiscoL).
+
+### 14.2 Como o programa trata isso
+
+O princípio é simples: **ler o mínimo, uma vez, sem concorrência desnecessária, e
+nunca deixar I/O pendurado**. Na prática:
+
+- **Nada de rg/fd órfão** (B1): uma busca cortada ou uma janela fechada no meio
+  **matam o processo** (`engine._reap`). Sem isso, um `rg` abandonado continuaria
+  varrendo o disco inteiro em background — exatamente o *seek* concorrente que
+  mata o SMR e ainda competiria com os daemons do acervo.
+- **AND com restrição progressiva** (opt#1, §13.2): o segundo termo de um `AND`
+  lê **só os arquivos que o primeiro já selecionou**, não a árvore toda. Menos
+  arquivos abertos = menos I/O = menos castigo no SMR.
+- **`--one-file-system` / chip "1 disco"**: evita que a varredura **cruze para
+  outro ponto de montagem** sem querer (respeitado inclusive no fallback Python — B9).
+  Útil para manter a busca dentro de um único USB e não acordar todos os discos.
+- **Imagem grande não decodifica síncrona** (B12/N3): teto de 64 MB → placeholder.
+  Um TIFF de 200 MB num SMR levaria segundos de leitura e **congelaria a UI**.
+- **Streaming, não slurp**: o motor consome a saída do rg/fd linha a linha e emite
+  resultados ao vivo; não acumula o disco inteiro em memória antes de mostrar nada.
+- **Metadados por `os.stat`** só nos candidatos que já passaram no filtro de nome —
+  não se faz `stat` de tudo.
+
+### 14.3 Backlog SMR-consciente
+
+A otimização **#2 (termos independentes em paralelo)** só será ligada **quando os
+paths NÃO estiverem em `/mnt`**: em CMR/SSD, 2–3 `rg` concorrentes aproveitam a CPU;
+em SMR/USB, o *seek* concorrente faria mais mal que bem, então lá a busca continua
+**serializada** de propósito. Essa é a regra de ouro do projeto: paralelizar onde o
+disco aguenta, serializar onde ele sofre.

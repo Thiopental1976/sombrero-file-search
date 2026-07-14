@@ -92,6 +92,24 @@ install.sh      # instalador universal (multi-distro)
 - **ripgrep** e **fd** (recomendados; sem eles, fallback Python).
 - Opcional: **ripgrep-all** + **pandoc**/**poppler** (modo documentos); **QtMultimedia** (player).
 
+## Cuidado com discos SMR
+
+Feito para rodar sobre acervos grandes, inclusive discos **SMR** e USB externos.
+SMR (*Shingled Magnetic Recording*) grava trilhas sobrepostas "como telhas": lê bem
+em sequência, mas sofre com escrita aleatória e, principalmente, com **leitura
+concorrente** (as cabeças começam a saltar e o desempenho despenca) — ao contrário
+do **CMR** convencional, que reescreve no lugar. O programa foi desenhado para poupar
+esses discos:
+
+- **nunca deixa `rg`/`fd` órfão** varrendo o disco em background (busca cortada ou
+  janela fechada mata o processo);
+- o **AND booleano restringe** o segundo termo aos arquivos que o primeiro já achou,
+  lendo bem menos do disco;
+- **`--one-file-system`** ("1 disco") evita cruzar para outro mount sem querer;
+- **imagens grandes** não são decodificadas na hora (evita travar num SMR);
+- a busca é **serializada** por padrão — o paralelismo só será ligado onde o disco
+  aguenta (CMR/SSD), nunca no `/mnt` do acervo. Detalhes na §14 da documentação técnica.
+
 ## Licença
 
 **Aberto e gratuito** — baseada na MIT, porém **sem direito de revenda**: o software pode ser
