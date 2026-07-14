@@ -11,13 +11,15 @@ Desenho: GARIMPO_Desenho_Busca_ripgrep.md (Fable 5) — nome final "Linux File S
 from __future__ import annotations
 import os, sys, time
 
-from PySide6.QtCore import Qt, QThread, Signal, QAbstractTableModel, QModelIndex, QUrl
-from PySide6.QtGui import (QAction, QDesktopServices, QFont, QGuiApplication, QIcon,
-                           QPixmap, QKeySequence, QShortcut)
+from PySide6.QtCore import (Qt, QThread, Signal, QAbstractTableModel, QModelIndex,
+                            QUrl, QTimer, QSortFilterProxyModel)
+from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont, QGuiApplication,
+                           QIcon, QImageReader, QPixmap, QKeySequence, QShortcut,
+                           QTextCharFormat, QTextCursor, QTextDocument)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QCheckBox, QLabel, QTableView, QPlainTextEdit,
-    QFileDialog, QSplitter, QHeaderView, QSpinBox, QMenu,
+    QFileDialog, QSplitter, QHeaderView, QSpinBox, QMenu, QTextEdit,
     QAbstractItemView, QToolButton, QFrame, QStackedWidget, QSlider, QSizePolicy)
 
 try:
@@ -69,19 +71,7 @@ def human_size(n: int) -> str:
     return f"{f:.1f} TB"
 
 
-def parse_size(s: str):
-    s = s.strip().upper().replace(" ", "")
-    if not s:
-        return None
-    mult = 1
-    for suf, m in (("TB", 1 << 40), ("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10),
-                   ("T", 1 << 40), ("G", 1 << 30), ("M", 1 << 20), ("K", 1 << 10), ("B", 1)):
-        if s.endswith(suf):
-            s = s[:-len(suf)]; mult = m; break
-    try:
-        return int(float(s) * mult)
-    except ValueError:
-        return None
+parse_size = engine.parse_size          # §5: fonte única (era duplicado aqui e no cli)
 
 
 # ----------------------------------------------------------------- worker
@@ -98,6 +88,7 @@ class SearchWorker(QThread):
         self._cancel = False
         self._buf: list[Match] = []
         self._last = 0.0
+        self.stats: dict = {"denied": 0}     # B8: contadores (inacessíveis etc.)
 
     def cancel(self):
         self._cancel = True
@@ -121,7 +112,8 @@ class SearchWorker(QThread):
                 tot, dt = boolean.search_boolean(self.q, self.boolexpr, on_result,
                                                  lambda: self._cancel, on_prog)
             else:
-                tot, dt = engine.search(self.q, on_result, lambda: self._cancel, on_prog)
+                tot, dt = engine.search(self.q, on_result, lambda: self._cancel, on_prog,
+                                        stats=self.stats)
         except boolean.BooleanError as e:
             self._flush(force=True)
             self.error.emit(str(e))
@@ -133,6 +125,7 @@ class SearchWorker(QThread):
 # ----------------------------------------------------------------- modelo
 class ResultModel(QAbstractTableModel):
     HEADERS = ["Arquivo", "Pasta", "Matches", "Tamanho", "Modificado"]
+    SORT_ROLE = Qt.UserRole + 1
 
     def __init__(self):
         super().__init__()
@@ -166,6 +159,12 @@ class ResultModel(QAbstractTableModel):
             return m.path
         elif role == Qt.UserRole:
             return m
+        elif role == ResultModel.SORT_ROLE:      # B14: chave numérica p/ ordenar
+            if c == 0: return os.path.basename(m.path).lower()
+            if c == 1: return os.path.dirname(m.path).lower()
+            if c == 2: return m.nmatch
+            if c == 3: return m.size
+            if c == 4: return m.mtime
         return None
 
     def append(self, matches: list[Match]):
@@ -331,7 +330,12 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(ico))
         self.worker: SearchWorker | None = None
         self.t0 = 0.0
+        self._mode_tag = ""
+        self._tick = QTimer(self)                 # B8: pulso de status a cada 0,5 s
+        self._tick.setInterval(500)
+        self._tick.timeout.connect(self._heartbeat)
         self.cfg = load_cfg()
+        self.muted = bool(self.cfg.get("muted", True))   # B13: mídia começa muda
         self.theme = self.cfg.get("theme", "dark")
         if self.theme not in THEMES:
             self.theme = "dark"
@@ -407,6 +411,7 @@ class MainWindow(QMainWindow):
             "Também aceita | & !  e \"aspas\" p/ frases. Precedência NOT>AND>OR.")
         self.ck_bool.toggled.connect(self._on_bool_toggled)
         self.ck_doc = QCheckBox("documentos")
+        self.ck_doc.toggled.connect(self._on_doc_toggled)      # B6
         if engine.RGA:
             self.ck_doc.setToolTip("Busca DENTRO de PDF/docx/epub/odt/zip… (ripgrep-all).")
         else:
@@ -435,10 +440,13 @@ class MainWindow(QMainWindow):
         # ---------- resultados / preview ----------
         split = QSplitter(Qt.Vertical)
         self.model = ResultModel()
-        self.table = QTableView(); self.table.setModel(self.model)
+        self.proxy = QSortFilterProxyModel()          # B14: ordenação de colunas
+        self.proxy.setSourceModel(self.model)
+        self.proxy.setSortRole(ResultModel.SORT_ROLE)
+        self.table = QTableView(); self.table.setModel(self.proxy)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.table.setSortingEnabled(False)
+        self.table.setSortingEnabled(False)           # ligado só ao fim da busca
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
@@ -505,6 +513,7 @@ class MainWindow(QMainWindow):
             self.player.mediaStatusChanged.connect(self._on_media_status)
         else:
             self.player = None
+            self.audio_out = None
         sv.addWidget(self.media_view)
         pv.addWidget(stage, 1)
 
@@ -520,6 +529,10 @@ class MainWindow(QMainWindow):
         self.btn_next = QToolButton(); self.btn_next.setObjectName("transport")
         self.btn_next.setText("⏭"); self.btn_next.setToolTip("Próxima mídia")
         self.btn_next.clicked.connect(lambda: self._nav_media(1))
+        self.btn_vol = QToolButton(); self.btn_vol.setObjectName("transport")  # B13
+        self.btn_vol.setText("🔇" if self.muted else "🔊")
+        self.btn_vol.setToolTip("Mudo (padrão para privacidade) — clique p/ ativar o som")
+        self.btn_vol.clicked.connect(self._toggle_mute)
         self.lbl_media = QLabel(""); self.lbl_media.setObjectName("medianame")
         self.lbl_media.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.sld_pos = QSlider(Qt.Horizontal)
@@ -534,6 +547,7 @@ class MainWindow(QMainWindow):
         bl.addWidget(self.lbl_media)
         bl.addWidget(self.sld_pos, 1)
         bl.addWidget(self.lbl_time)
+        bl.addWidget(self.btn_vol)
         pv.addWidget(bar)
         self.media_bar = bar
 
@@ -570,10 +584,19 @@ class MainWindow(QMainWindow):
             self.ck_crx.setChecked(False); self.ck_crx.setEnabled(False)
             self.ed_content.setPlaceholderText(
                 "Expressão booleana:   (nota OR laudo) AND paciente NOT rascunho")
+            if self.ck_doc.isChecked():           # B6: não combinam
+                self.ck_doc.setChecked(False)
         else:
             self.ck_crx.setEnabled(True)
             self.ed_content.setPlaceholderText(
                 "Conteúdo a conter (texto ou regex)…   — vazio = busca só por nome")
+        # B6: booleano ainda não busca dentro de documentos — um desabilita o outro
+        self.ck_doc.setEnabled(not on and bool(engine.RGA))
+
+    def _on_doc_toggled(self, on):
+        if on and self.ck_bool.isChecked():       # B6
+            self.ck_bool.setChecked(False)
+        self.ck_bool.setEnabled(not on)
 
     def browse(self):
         d = QFileDialog.getExistingDirectory(self, "Escolha a pasta",
@@ -623,45 +646,93 @@ class MainWindow(QMainWindow):
         q = self._build_query()
         if not q:
             return
+        self._stop_media()                        # B11: nova busca cala a mídia
+        self.pv_stack.setCurrentIndex(0)
+        self.table.setSortingEnabled(False)       # B14: ordem de chegada durante a busca
+        self.proxy.sort(-1)
         self.model.clear(); self.preview.clear()
+        self.preview.setExtraSelections([])
         self.btn_search.setEnabled(False); self.btn_cancel.setEnabled(True)
         self.t0 = time.time()
         boolexpr = self.ed_content.text().strip() if self.ck_bool.isChecked() else ""
+        # B7: termos positivos p/ o destaque no preview (literais; regex de conteúdo não realça)
+        self._hl_cs = q.case_sensitive
+        if boolexpr:
+            try:
+                self._hl_terms = boolean.positive_terms(boolean.parse(boolexpr))
+            except Exception:
+                self._hl_terms = []
+        elif q.content and not q.content_is_regex:
+            self._hl_terms = [q.content]
+        else:
+            self._hl_terms = []
         modes = []
         if boolexpr: modes.append("booleano")
         if q.documents: modes.append("documentos")
-        tag = f"  ({' + '.join(modes)})" if modes else ""
-        self.status.setText("Buscando…" + tag)
+        self._mode_tag = f"  ({' + '.join(modes)})" if modes else ""
+        self.status.setText("Buscando…" + self._mode_tag)
         self.worker = SearchWorker(q, boolexpr)
         self.worker.batch.connect(self.model.append)
         self.worker.progress.connect(self.on_progress)
         self.worker.done.connect(self.on_done)
         self.worker.error.connect(self.on_error)
         self.worker.start()
+        self._tick.start()                        # B8: heartbeat de status
 
     def cancel_search(self):
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
             self.status.setText("Cancelando…")
 
+    def closeEvent(self, ev):
+        """B5: fechar no meio de uma busca não pode derrubar o processo.
+        Cancela o worker e espera a thread sair antes de aceitar o fechamento."""
+        self._tick.stop()
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.worker.wait(3000)
+        self._stop_media()
+        super().closeEvent(ev)
+
+    def _denied(self) -> int:
+        return self.worker.stats.get("denied", 0) if self.worker else 0
+
+    def _heartbeat(self):
+        """B8: atualiza o status independentemente de lotes (busca longa não 'trava')."""
+        d = self._denied()
+        extra = f" · {d} inacessível(is)" if d else ""
+        self.status.setText(f"Buscando…{self._mode_tag}  {len(self.model.rows)} encontrados "
+                            f"· {time.time()-self.t0:.1f}s{extra}")
+
     def on_error(self, msg):
+        self._tick.stop()
         self.btn_search.setEnabled(True); self.btn_cancel.setEnabled(False)
         self.status.setText(f"⚠  Expressão booleana inválida: {msg}")
 
     def on_progress(self, n):
-        self.status.setText(f"Buscando…  {len(self.model.rows)} encontrados "
-                            f"· {time.time()-self.t0:.1f}s")
+        self._heartbeat()
 
     def on_done(self, tot, dt):
+        self._tick.stop()
         self.btn_search.setEnabled(True); self.btn_cancel.setEnabled(False)
+        self.table.setSortingEnabled(True)        # B14: colunas ordenáveis ao fim
         cancelled = self.worker and self.worker._cancel
         icon = "■" if cancelled else "✔"
-        self.status.setText(f"{icon}  {tot} resultado(s)  ·  {dt:.2f}s"
+        d = self._denied()
+        extra = f"  ·  {d} inacessível(is)" if d else ""
+        self.status.setText(f"{icon}  {tot} resultado(s)  ·  {dt:.2f}s" + extra
                             + ("   (cancelado)" if cancelled else ""))
+
+    # ---- mapeamento proxy (visual) -> source (dados)
+    def _match_at_proxy(self, row: int):
+        if row < 0 or row >= self.proxy.rowCount():
+            return None
+        src = self.proxy.mapToSource(self.proxy.index(row, 0))
+        return self.model.match_at(src.row())
 
     # ---- preview
     def on_select(self, cur, prev):
-        m = self.model.match_at(cur.row()) if cur.isValid() else None
+        m = self._match_at_proxy(cur.row()) if cur.isValid() else None
         if not m:
             self._stop_media(); self.pv_stack.setCurrentIndex(0); self.preview.clear()
             return
@@ -681,6 +752,36 @@ class MainWindow(QMainWindow):
             else:
                 head = self._peek(m.path)
                 self.preview.setPlainText(m.path + "\n" + "─" * 72 + "\n" + head)
+            self._apply_highlight()               # B7: realce dos termos positivos
+
+    def _apply_highlight(self):
+        """B7: fundo âmbar sobre as ocorrências dos termos positivos no preview."""
+        terms = getattr(self, "_hl_terms", None)
+        if not terms:
+            self.preview.setExtraSelections([])
+            return
+        pal = THEMES[self.theme]
+        fmt = QTextCharFormat()
+        fmt.setBackground(QColor(pal["amber"]))
+        fmt.setForeground(QColor(pal["on_accent"]))
+        doc = self.preview.document()
+        flags = QTextDocument.FindFlags()
+        if getattr(self, "_hl_cs", False):
+            flags |= QTextDocument.FindCaseSensitively
+        sels = []
+        for term in terms:
+            if not term:
+                continue
+            cur = QTextCursor(doc)
+            while True:
+                cur = doc.find(term, cur, flags)
+                if cur.isNull():
+                    break
+                sel = QTextEdit.ExtraSelection()
+                sel.cursor = cur
+                sel.format = fmt
+                sels.append(sel)
+        self.preview.setExtraSelections(sels)
 
     # ---- mídia
     def _show_media(self, path: str, kind: str):
@@ -689,13 +790,15 @@ class MainWindow(QMainWindow):
         self.lbl_media.setToolTip(path)
         if kind == "image":
             self._stop_media()
-            self._orig_pixmap = QPixmap(path)
+            self._img_path = path
             self.media_view.setCurrentWidget(self.img_label)
-            self._rescale_image()
+            self._load_image()                    # B12: decodifica já reduzido / com teto
             self._set_transport(playable=False)
         else:
             self.media_view.setCurrentIndex(2 if kind == "video" else 1)  # vídeo / ♪
             self._set_transport(playable=True)
+            if self.audio_out is not None:
+                self.audio_out.setMuted(self.muted)   # B13: começa MUDO por padrão
             self.player.setSource(QUrl.fromLocalFile(path))
             self.player.play()
 
@@ -707,25 +810,68 @@ class MainWindow(QMainWindow):
     def _set_transport(self, playable: bool):
         self.btn_play.setEnabled(playable)
         self.sld_pos.setEnabled(playable)
+        self.btn_vol.setEnabled(playable and HAS_MEDIA)
         if not playable:
             self.sld_pos.setRange(0, 0)
             self.lbl_time.setText("imagem")
 
+    def _toggle_mute(self):
+        """B13: liga/desliga o som e persiste a escolha no config."""
+        self.muted = not self.muted
+        if self.audio_out is not None:
+            self.audio_out.setMuted(self.muted)
+        self.btn_vol.setText("🔇" if self.muted else "🔊")
+        self.cfg["muted"] = self.muted
+        save_cfg(self.cfg)
+
+    _IMG_CAP = 64 * 1024 * 1024      # B12: acima disso, não decodifica síncrono
+
+    def _load_image(self):
+        """B12: decodifica a imagem JÁ reduzida (QImageReader.setScaledSize) e com teto
+        de tamanho — um TIFF de 200 MB num SMR não pode congelar a UI."""
+        path = getattr(self, "_img_path", None)
+        self._orig_pixmap = None
+        if not path:
+            return
+        try:
+            sz = os.path.getsize(path)
+        except OSError:
+            sz = 0
+        reader = QImageReader(path)
+        reader.setAutoTransform(True)
+        orig = reader.size()               # lê o cabeçalho, não o raster inteiro
+        # imagem enorme sem dimensão conhecida a priori → evita decodificar síncrono
+        if sz > self._IMG_CAP and not orig.isValid():
+            self.img_label.setPixmap(QPixmap())
+            self.img_label.setText("imagem muito grande —\nclique duplo p/ abrir externo")
+            return
+        area = self.media_view.size()
+        tw, th = max(1, area.width() - 4), max(1, area.height() - 4)
+        if orig.isValid() and (orig.width() > tw or orig.height() > th):
+            reader.setScaledSize(orig.scaled(tw, th, Qt.KeepAspectRatio))
+        img = reader.read()
+        if img.isNull():
+            self.img_label.setPixmap(QPixmap())
+            self.img_label.setText("(sem pré-visualização de imagem)")
+            return
+        self._orig_pixmap = QPixmap.fromImage(img)
+        self.img_label.setText("")
+        self.img_label.setPixmap(self._orig_pixmap)
+
     def _rescale_image(self):
         pm = getattr(self, "_orig_pixmap", None)
         if not pm or pm.isNull():
-            self.img_label.setText("(sem pré-visualização de imagem)")
-            return
+            return                          # sem pixmap (imagem gigante/erro): mantém o texto
         area = self.media_view.size()
         self.img_label.setPixmap(pm.scaled(
             max(1, area.width() - 4), max(1, area.height() - 4),
             Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def _media_rows(self):
-        """Índices de linhas que são mídia reproduzível (na ordem da tabela)."""
+        """Linhas-proxy (ordem VISUAL da tabela) que são mídia reproduzível."""
         out = []
-        for r in range(self.model.rowCount()):
-            m = self.model.match_at(r)
+        for r in range(self.proxy.rowCount()):
+            m = self._match_at_proxy(r)
             k = media_kind(m.path) if m else None
             if k == "image" or (k in ("video", "audio") and HAS_MEDIA):
                 out.append(r)
@@ -800,7 +946,8 @@ class MainWindow(QMainWindow):
     # ---- contexto
     def _sel_matches(self):
         rows = {i.row() for i in self.table.selectionModel().selectedRows()}
-        return [self.model.match_at(r) for r in sorted(rows) if self.model.match_at(r)]
+        out = [self._match_at_proxy(r) for r in sorted(rows)]
+        return [m for m in out if m]
 
     def open_file(self, *a):
         for m in self._sel_matches()[:10]:

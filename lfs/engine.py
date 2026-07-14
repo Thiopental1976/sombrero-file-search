@@ -12,7 +12,7 @@ O motor NÃO depende de Qt. A GUI o consome via callbacks/geradores, num thread,
 pra interface nunca travar (foi o defeito do menu do Cinnamon: busca síncrona).
 """
 from __future__ import annotations
-import os, re, fnmatch, shutil, subprocess, json, stat, time
+import os, re, fnmatch, shutil, subprocess, json, stat, time, tempfile
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Optional
 
@@ -41,6 +41,52 @@ def engine_info():
         "fd": FD or "(ausente — fallback Python)",
         "rga": RGA or "(ausente — sem modo documentos)",
     }
+
+
+# ---------------------------------------------------------------- utilidades
+def _reap(proc, errf=None, stats=None):
+    """Encerra o subprocesso SEM deixar órfão (B1) e conta 'inacessíveis' do
+    stderr capturado (B8). Idempotente e à prova de exceção."""
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(1)
+            except Exception:
+                proc.kill()
+                try: proc.wait(1)
+                except Exception: pass
+    except Exception:
+        pass
+    if errf is not None:
+        if stats is not None:
+            try:
+                errf.seek(0)
+                d = sum(1 for L in errf if "ermission denied" in L)
+                stats["denied"] = stats.get("denied", 0) + d
+            except Exception:
+                pass
+        try: errf.close()
+        except Exception: pass
+
+
+def parse_size(s):
+    """'10M', '1.5G', '512K', '2TB'… -> bytes. None se vazio/ inválido.
+    Canônico (antes duplicado em app.py e cli.py)."""
+    if not s:
+        return None
+    s = str(s).strip().upper().replace(" ", "")
+    if not s:
+        return None
+    mult = 1
+    for suf, m in (("TB", 1 << 40), ("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10),
+                   ("T", 1 << 40), ("G", 1 << 30), ("M", 1 << 20), ("K", 1 << 10), ("B", 1)):
+        if s.endswith(suf):
+            s = s[:-len(suf)]; mult = m; break
+    try:
+        return int(float(s) * mult)
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------- parâmetros
@@ -108,15 +154,28 @@ def _passes_meta(q: Query, st: os.stat_result) -> bool:
 
 # ---------------------------------------------------------------- busca por NOME
 def _iter_names_python(q: Query):
-    """Fallback universal: os.walk com profundidade/hidden/symlink/meta."""
+    """Fallback universal: os.walk com profundidade/hidden/symlink/meta/one-fs."""
     match_name = _name_matcher(q)
     for root in q.paths:
         root = os.path.abspath(os.path.expanduser(root))
         base_depth = root.rstrip("/").count("/")
+        root_dev = None
+        if q.one_file_system:                       # B9: não cruzar mounts no fallback
+            try: root_dev = os.stat(root).st_dev
+            except OSError: root_dev = None
         for dp, dns, fns in os.walk(root, followlinks=q.follow_symlinks):
             depth = dp.rstrip("/").count("/") - base_depth
             if not q.include_hidden:
                 dns[:] = [d for d in dns if not d.startswith(".")]
+            if root_dev is not None:
+                keep = []
+                for d in dns:
+                    try:
+                        if os.stat(os.path.join(dp, d)).st_dev == root_dev:
+                            keep.append(d)
+                    except OSError:
+                        pass
+                dns[:] = keep
             if not q.recursive:
                 dns[:] = []
             elif q.max_depth is not None and depth >= q.max_depth:
@@ -136,10 +195,10 @@ def _iter_names_python(q: Query):
                 yield Match(fp, st.st_size, st.st_mtime)
 
 
-def _iter_names_fd(q: Query, cancel):
+def _iter_names_fd(q: Query, cancel, stats=None):
     """fd/fdfind quando disponível (rápido). Multi-glob -> um fd por padrão."""
-    seen = set()
     pats = q.name_patterns or ["."]
+    seen = set() if len(pats) > 1 else None   # dedup só faz sentido com múltiplos padrões
     for pat in pats:
         cmd = [FD, "--absolute-path", "--type", "f"]
         if not q.respect_gitignore:
@@ -154,43 +213,41 @@ def _iter_names_fd(q: Query, cancel):
             cmd += ["--max-depth", "1"]
         elif q.max_depth is not None:
             cmd += ["--max-depth", str(q.max_depth)]
-        if q.name_patterns:
-            if q.name_is_regex:
-                if not q.case_sensitive:
-                    cmd.append("--ignore-case")
-                cmd += [pat]
-            else:
-                cmd += ["--glob"]
-                if not q.case_sensitive:
-                    cmd.append("--ignore-case")
-                cmd += [pat]
-        else:
-            cmd += ["."]
-        cmd += q.paths
+        if q.name_patterns and not q.name_is_regex:
+            cmd += ["--glob"]
+        if q.name_patterns and not q.case_sensitive:
+            cmd.append("--ignore-case")
+        pat_val = pat if q.name_patterns else "."
+        cmd += ["--", pat_val] + q.paths          # B10: '--' encerra as opções
+        errf = tempfile.TemporaryFile(mode="w+")
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
                                     text=True, errors="replace")
         except OSError:
+            errf.close()
             yield from _iter_names_python(q); return
-        for line in proc.stdout:
-            if cancel():
-                proc.terminate(); return
-            fp = line.rstrip("\n")
-            if not fp or fp in seen:
-                continue
-            seen.add(fp)
-            try:
-                st = os.stat(fp)
-            except OSError:
-                continue
-            if not _passes_meta(q, st):
-                continue
-            yield Match(fp, st.st_size, st.st_mtime)
-        proc.wait()
+        try:
+            for line in proc.stdout:
+                if cancel():
+                    return
+                fp = line.rstrip("\n")
+                if not fp or (seen is not None and fp in seen):
+                    continue
+                if seen is not None:
+                    seen.add(fp)
+                try:
+                    st = os.stat(fp)
+                except OSError:
+                    continue
+                if not _passes_meta(q, st):
+                    continue
+                yield Match(fp, st.st_size, st.st_mtime)
+        finally:
+            _reap(proc, errf, stats)              # B1/B8: mata processo + conta inacessíveis
 
 
 # ---------------------------------------------------------------- busca por CONTEÚDO
-def _iter_content_rg(q: Query, cancel):
+def _iter_content_rg(q: Query, cancel, stats=None):
     """ripgrep --json (ou rga p/ documentos): filtra por nome (glob) E casa conteúdo, streaming.
 
     Em modo documentos (q.documents + rga presente) o rga extrai texto de PDF/docx/epub/zip…
@@ -222,6 +279,8 @@ def _iter_content_rg(q: Query, cancel):
         cmd += ["--max-depth", str(q.max_depth)]
     # filtro de nome via glob (rg aplica no arquivo)
     if q.name_patterns and not q.name_is_regex:
+        if not q.case_sensitive:
+            cmd.append("--glob-case-insensitive")   # B2: glob insensível como o fd/Agent Ransack
         for p in q.name_patterns:
             cmd += ["--glob", p]
     cmd += ["-e", q.content, "--"]
@@ -231,48 +290,49 @@ def _iter_content_rg(q: Query, cancel):
     if q.name_patterns and q.name_is_regex:
         name_rx = re.compile(q.name_patterns[0], 0 if q.case_sensitive else re.IGNORECASE)
 
+    errf = tempfile.TemporaryFile(mode="w+")
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
                                 text=True, errors="replace")
     except OSError:
+        errf.close()
         yield from _iter_content_python(q, cancel); return
 
     cur = None
-    for line in proc.stdout:
-        if cancel():
-            proc.terminate(); break
-        try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
-        t = ev.get("type")
-        if t == "begin":
-            path = ev["data"]["path"].get("text")
-            if path is None or (name_rx and not name_rx.search(os.path.basename(path))):
-                cur = None
-                continue
-            try:
-                st = os.stat(path)
-            except OSError:
-                # arquivo dentro de container (ex algo.zip/interno.pdf): sem stat no FS
-                cur = Match(path, 0, 0) if docs else None
-                continue
-            if not _passes_meta(q, st):
-                cur = None; continue
-            cur = Match(path, st.st_size, st.st_mtime)
-        elif t == "match" and cur is not None:
-            ln = ev["data"].get("line_number")
-            txt = ev["data"]["lines"].get("text", "")
-            cur.nmatch += len(ev["data"].get("submatches", []))
-            if len(cur.lines) < 200:
-                cur.lines.append((ln or 0, txt.rstrip("\n")))
-        elif t == "end" and cur is not None:
-            yield cur
-            cur = None
     try:
-        proc.wait(timeout=1)
-    except Exception:
-        pass
+        for line in proc.stdout:
+            if cancel():
+                break
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            t = ev.get("type")
+            if t == "begin":
+                path = ev["data"]["path"].get("text")
+                if path is None or (name_rx and not name_rx.search(os.path.basename(path))):
+                    cur = None
+                    continue
+                try:
+                    st = os.stat(path)
+                except OSError:
+                    # arquivo dentro de container (ex algo.zip/interno.pdf): sem stat no FS
+                    cur = Match(path, 0, 0) if docs else None
+                    continue
+                if not _passes_meta(q, st):
+                    cur = None; continue
+                cur = Match(path, st.st_size, st.st_mtime)
+            elif t == "match" and cur is not None:
+                ln = ev["data"].get("line_number")
+                txt = ev["data"]["lines"].get("text", "")
+                cur.nmatch += len(ev["data"].get("submatches", []))
+                if len(cur.lines) < 200:
+                    cur.lines.append((ln or 0, txt.rstrip("\n")))
+            elif t == "end" and cur is not None:
+                yield cur
+                cur = None
+    finally:
+        _reap(proc, errf, stats)                    # B1/B8
 
 
 def _iter_content_python(q: Query, cancel):
@@ -308,18 +368,20 @@ def _iter_content_python(q: Query, cancel):
 # ---------------------------------------------------------------- API pública
 def search(q: Query, on_result: Callable[[Match], None],
            cancel: Callable[[], bool] = lambda: False,
-           on_progress: Callable[[int], None] = lambda n: None):
+           on_progress: Callable[[int], None] = lambda n: None,
+           stats: Optional[dict] = None):
     """Executa a busca chamando on_result(Match) em streaming.
-    Retorna (total_encontrado, segundos)."""
+    Retorna (total_encontrado, segundos). Se `stats` (dict) for passado, recebe
+    contadores como stats['denied'] (arquivos inacessíveis vistos no stderr)."""
     t0 = time.time()
     n = 0
     if q.content:
         if RG or (q.documents and RGA):
-            it = _iter_content_rg(q, cancel)
+            it = _iter_content_rg(q, cancel, stats)
         else:
             it = _iter_content_python(q, cancel)
     else:
-        it = _iter_names_fd(q, cancel) if FD else _iter_names_python(q)
+        it = _iter_names_fd(q, cancel, stats) if FD else _iter_names_python(q)
     for m in it:
         if cancel():
             break

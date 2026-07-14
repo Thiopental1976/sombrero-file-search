@@ -167,6 +167,8 @@ def _rg_base(q: engine.Query):
     if not q.recursive:         cmd += ["--max-depth", "1"]
     elif q.max_depth is not None: cmd += ["--max-depth", str(q.max_depth)]
     if q.name_patterns and not q.name_is_regex:
+        if not q.case_sensitive:                 # B2: glob insensível
+            cmd.append("--glob-case-insensitive")
         for p in q.name_patterns: cmd += ["--glob", p]
     return cmd
 
@@ -183,11 +185,13 @@ def _files_with_term(term: str, q: engine.Query, cancel) -> set[str]:
         except OSError:
             return _files_with_term_py(term, q, cancel)
         out = set()
-        for line in proc.stdout:
-            if cancel(): proc.terminate(); break
-            fp = line.rstrip("\n")
-            if fp: out.add(os.path.abspath(fp))
-        proc.wait()
+        try:
+            for line in proc.stdout:
+                if cancel(): break
+                fp = line.rstrip("\n")
+                if fp: out.add(os.path.abspath(fp))
+        finally:
+            engine._reap(proc)                    # B1: nunca deixar rg órfão
         return out
     return _files_with_term_py(term, q, cancel)
 
@@ -208,11 +212,13 @@ def _universe(q: engine.Query, cancel) -> set[str]:
             proc = None
         if proc:
             out = set()
-            for line in proc.stdout:
-                if cancel(): proc.terminate(); break
-                fp = line.rstrip("\n")
-                if fp: out.add(os.path.abspath(fp))
-            proc.wait()
+            try:
+                for line in proc.stdout:
+                    if cancel(): break
+                    fp = line.rstrip("\n")
+                    if fp: out.add(os.path.abspath(fp))
+            finally:
+                engine._reap(proc)                # B1
             return out
     return {os.path.abspath(m.path) for m in engine._iter_names_python(q)}
 
@@ -245,6 +251,10 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     cache: dict = {}
     universe_box = [None]
     files = _eval(ast, q, cancel, cache, universe_box)
+    # B3: filtro de nome por REGEX (o glob já vai pro rg; regex é pós-filtro no basename)
+    if q.name_is_regex and q.name_patterns:
+        nrx = re.compile(q.name_patterns[0], 0 if q.case_sensitive else re.IGNORECASE)
+        files = {f for f in files if nrx.search(os.path.basename(f))}
     pos = positive_terms(ast)
 
     # passada de exibição: linhas dos termos positivos, só nos arquivos do resultado
@@ -269,34 +279,41 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     return n, time.time() - t0
 
 
+_BATCH = 400   # B4: caminhos por invocação do rg (evita estourar ARG_MAX)
+
 def _display_lines(pos_terms, files, q: engine.Query, cancel) -> dict:
-    """Para os arquivos-resultado, extrai linhas que casam QUALQUER termo positivo."""
+    """Para os arquivos-resultado, extrai linhas que casam QUALQUER termo positivo.
+    B4: processa em lotes p/ não estourar o argv (60k caminhos matariam o exec)."""
     if not files or not engine.RG:
         return {}
-    cmd = _rg_base(q) + ["--json"]
-    if not q.content_is_regex: cmd.append("--fixed-strings")
-    for t in pos_terms: cmd += ["-e", t]
-    cmd += ["--"] + files
-    try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True, errors="replace")
-    except OSError:
-        return {}
+    base = _rg_base(q) + ["--json"]
+    if not q.content_is_regex: base.append("--fixed-strings")
+    for t in pos_terms: base += ["-e", t]
     res: dict = {}
-    for line in proc.stdout:
-        if cancel(): proc.terminate(); break
-        try: ev = json.loads(line)
-        except ValueError: continue
-        if ev.get("type") == "match":
-            path = ev["data"]["path"].get("text")
-            if path is None: continue
-            path = os.path.abspath(path)
-            lst = res.setdefault(path, [])
-            if len(lst) < 200:
-                ln = ev["data"].get("line_number") or 0
-                txt = ev["data"]["lines"].get("text", "").rstrip("\n")
-                lst.append((ln, txt))
-    proc.wait()
+    for i in range(0, len(files), _BATCH):
+        if cancel(): break
+        cmd = base + ["--"] + files[i:i + _BATCH]
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True, errors="replace")
+        except OSError:
+            continue
+        try:
+            for line in proc.stdout:
+                if cancel(): break
+                try: ev = json.loads(line)
+                except ValueError: continue
+                if ev.get("type") == "match":
+                    path = ev["data"]["path"].get("text")
+                    if path is None: continue
+                    path = os.path.abspath(path)
+                    lst = res.setdefault(path, [])
+                    if len(lst) < 200:
+                        ln = ev["data"].get("line_number") or 0
+                        txt = ev["data"]["lines"].get("text", "").rstrip("\n")
+                        lst.append((ln, txt))
+        finally:
+            engine._reap(proc)                    # B1: nunca deixar rg órfão
     return res
 
 

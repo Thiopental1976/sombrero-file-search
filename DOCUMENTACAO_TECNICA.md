@@ -382,6 +382,9 @@ python3 lfs/app.py     # GUI    |    python3 lfs/cli.py --help    # CLI
 
 ## 10. Testes e depuração
 
+- **Suíte de regressão da auditoria**: `python3 tests/test_audit.py` — 8 testes
+  auto-contidos (constroem árvore em tempdir, não tocam o acervo) cobrindo os
+  consertos B1–B14 exercitáveis sem GUI. Ver §13.
 - **Auto-teste de módulo**: `python3 lfs/engine.py <pasta> <termo>` e
   `python3 lfs/boolean.py <pasta> '<expr>'` imprimem AST/resultados.
 - **GUI headless** (sem display): `QT_QPA_PLATFORM=offscreen` + `MainWindow().grab().save(png)`
@@ -403,8 +406,9 @@ python3 lfs/app.py     # GUI    |    python3 lfs/cli.py --help    # CLI
 - **F5 — Conforto**: abas simultâneas, buscas salvas/histórico, export CSV/JSON, mais atalhos.
 - **F6 — Portabilidade**: empacotar `.deb` e **AppImage** (PySide6 embutido; evitar Flatpak, cuja
   sandbox brigaria com ler o filesystem inteiro).
-- Contagem de "inacessíveis" (permission-denied) no rodapé — hoje `stderr` é descartado.
 - `rga` pré-compilado só para `x86_64`; em outras arquiteturas, instalar pelo gerenciador.
+- Realce de preview e destaque só valem para termos **literais**; regex de conteúdo não é realçado.
+- Ordenação por coluna é habilitada ao fim da busca (durante a busca, ordem de chegada).
 
 ---
 
@@ -416,3 +420,34 @@ python3 lfs/app.py     # GUI    |    python3 lfs/cli.py --help    # CLI
 | `boolean.py` | `parse`, `tokenize`, `search_boolean`, `positive_terms`, `_eval`, `_files_with_term`, `_universe`, `_display_lines`, `BooleanError`, `Term/Not/And/Or` |
 | `cli.py` | `main` (argparse) |
 | `app.py` | `MainWindow`, `SearchWorker`, `ResultModel`, `THEMES`, `build_style`, `media_kind`, `_build_preview`, `_show_media`, `_nav_media`, `apply_theme` |
+
+---
+
+## 13. Auditoria Fable 5 — consertos aplicados
+
+Auditoria de debug (`LinuxFileSearch_Auditoria_Debug.md`, 14/07/2026) achou 14
+bugs provados/por-revisão + otimizações. Todos os consertos abaixo estão
+implementados e cobertos por `tests/test_audit.py` (o que não é GUI) e por smoke
+headless (GUI).
+
+| # | Problema | Conserto | Onde |
+|---|---|---|---|
+| **B1** | rg/fd órfão ao cortar/abandonar a busca (varre `/mnt` em background) | `try/finally` + `engine._reap()` (terminate→wait→kill, idempotente) | `engine._iter_content_rg`/`_iter_names_fd`; `boolean._files_with_term`/`_universe`/`_display_lines` |
+| **B2** | glob de nome caixa-sensível no rg (contrato é insensível) | `--glob-case-insensitive` quando `not case_sensitive` | `engine._iter_content_rg`, `boolean._rg_base` |
+| **B3** | booleano ignorava filtro de nome REGEX | pós-filtro `re.search` no basename | `boolean.search_boolean` |
+| **B4** | perda silenciosa de linhas por ARG_MAX (60k caminhos → `{}`) | lotes de ~400 caminhos por invocação do rg, mesclando dicts | `boolean._display_lines` (`_BATCH`) |
+| **B5** | crash ao fechar a janela com busca viva (`QThread destroyed`) | `closeEvent`: `cancel()` → `wait(3000)` → `_stop_media()` | `app.MainWindow.closeEvent` |
+| **B6** | booleano + documentos não combinam (ilusão de buscar em PDF) | exclusão mútua na GUI (marcar um desabilita o outro) | `app._on_bool_toggled`/`_on_doc_toggled` |
+| **B7** | preview sem destaque do termo (recurso-assinatura) | `QTextEdit.ExtraSelection` âmbar sobre termos positivos literais | `app._apply_highlight` |
+| **B8** | sem heartbeat/contadores (busca longa parece travada) | `QTimer` 0,5 s + contagem de "inacessíveis" via `stderr` (`stats["denied"]`) | `app._heartbeat`; `engine._reap(..., stats)` |
+| **B9** | `one_file_system` ignorado no fallback Python (cruza mounts) | compara `st_dev` do root e poda `dns` | `engine._iter_names_python` |
+| **B10** | higiene de argv no fd (falta `--`) | `--` antes do padrão e dos paths | `engine._iter_names_fd` |
+| **B11** | nova busca não parava a mídia | `_stop_media()` + preview p/ página 0 | `app.start_search` |
+| **B12** | imagem gigante decodificada síncrona congela a UI | `QImageReader.setScaledSize` (decodifica já reduzido) + teto 64 MB | `app._load_image` |
+| **B13** | autoplay de vídeo COM ÁUDIO ao selecionar (constrangimento) | começa **mudo** por padrão; botão 🔇/🔊 persistido no config | `app._toggle_mute`, `cfg["muted"]` |
+| **B14** | colunas sem ordenação | `QSortFilterProxyModel` + `SORT_ROLE` numérico, ligado ao fim da busca | `app.ResultModel.SORT_ROLE`, `app.proxy` |
+
+**Otimização §5 aplicada**: `parse_size` unificado em `engine.parse_size`
+(era duplicado em `app.py` e `cli.py`); `seen` do fd só quando há múltiplos
+padrões. As otimizações maiores (AND com restrição progressiva, termos em
+paralelo, fd multi-glob → regex alternada) ficam no backlog (§11).

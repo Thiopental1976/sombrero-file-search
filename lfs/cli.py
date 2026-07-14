@@ -30,13 +30,7 @@ def main():
     ap.add_argument("-l", "--files-only", action="store_true", help="só o caminho (sem linhas de match)")
     args = ap.parse_args()
 
-    def parse_size(s):
-        if not s: return None
-        s = s.strip().upper(); mult = 1
-        for suf, m in (("T",1<<40),("G",1<<30),("M",1<<20),("K",1<<10),("B",1)):
-            if s.endswith(suf): s = s[:-1]; mult = m; break
-        try: return int(float(s)*mult)
-        except ValueError: return None
+    parse_size = engine.parse_size            # §5: fonte única (era duplicado)
 
     names = [p.strip() for p in args.name.replace(";", ",").split(",") if p.strip()] if not args.name_regex else ([args.name] if args.name else [])
     q = Query(
