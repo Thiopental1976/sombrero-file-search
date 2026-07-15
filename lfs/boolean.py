@@ -62,9 +62,9 @@ def tokenize(s: str):
                 j += 1
             if j >= n:                    # sem fechamento: antes virava termo até o fim,
                 raise BooleanError(       # silenciosamente. Melhor avisar que adivinhar.
-                    f'aspas sem fechamento em: {s[i:]!r}')
+                    t("unclosed quote at: {frag}", frag=repr(s[i:])))
             if j == i + 1:                # "" vazio casaria TODO arquivo (rg -e "")
-                raise BooleanError('termo vazio ("") na expressão')
+                raise BooleanError(t('empty term ("") in expression'))
             toks.append(("TERM", s[i+1:j])); i = j + 1; continue
         if c in "&|":                     # & && | ||
             if i+1 < n and s[i+1] == c:
@@ -99,10 +99,10 @@ class _P:
 
     def parse(self):
         if not self.t:
-            raise BooleanError("expressão vazia")
+            raise BooleanError(t("empty expression"))
         node = self.parse_or()
         if self.i != len(self.t):
-            raise BooleanError(f"token inesperado: {self.peek()[1]!r}")
+            raise BooleanError(t("unexpected token: {tok}", tok=repr(self.peek()[1])))
         return node
 
     def parse_or(self):
@@ -135,11 +135,11 @@ class _P:
         if k == "(":
             self.eat(); node = self.parse_or()
             if self.peek()[0] != ")":
-                raise BooleanError("parêntese ')' faltando")
+                raise BooleanError(t("missing ')'"))
             self.eat(); return node
         if k == "TERM":
             self.eat(); return Term(v)
-        raise BooleanError(f"esperava termo, veio {v!r}")
+        raise BooleanError(t("expected a term, got {tok}", tok=repr(v)))
 
 
 def parse(expr: str):
@@ -490,7 +490,7 @@ def _eval(node, q, cancel, cache, universe_box, restrict=None, pool=None, phase=
             return univ - _eval(node.node, q, cancel, cache, universe_box, restrict=None, pool=pool, phase=phase, stats=stats)
         # NOT dentro de um AND: já restrito ao acumulado, subtrai o que casa nele
         return restrict - _eval(node.node, q, cancel, cache, universe_box, restrict=restrict, pool=pool, phase=phase, stats=stats)
-    raise BooleanError("nó desconhecido")
+    raise BooleanError(t("unknown node"))
 
 
 # ------------------------------------------------------------------ API pública

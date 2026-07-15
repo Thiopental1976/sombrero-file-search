@@ -149,6 +149,15 @@ _PT = {
     "term “{term}”": "termo “{term}”",
     "extracting lines": "extraindo linhas",
     "listing files (NOT)": "listando arquivos (NOT)",
+
+    # boolean parser errors (boolean.py) — {frag}/{tok} já vêm como repr()
+    "unclosed quote at: {frag}": "aspas sem fechamento em: {frag}",
+    'empty term ("") in expression': 'termo vazio ("") na expressão',
+    "empty expression": "expressão vazia",
+    "unexpected token: {tok}": "token inesperado: {tok}",
+    "missing ')'": "parêntese ')' faltando",
+    "expected a term, got {tok}": "esperava termo, veio {tok}",
+    "unknown node": "nó desconhecido",
 }
 
 # Source is English; only non-English languages need a table.
