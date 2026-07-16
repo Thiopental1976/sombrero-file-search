@@ -56,16 +56,22 @@ def tokenize(s: str):
             i += 1; continue
         if c in "()":
             toks.append((c, c)); i += 1; continue
-        if c == '"':                      # termo com aspas
-            j = i + 1
-            while j < n and s[j] != '"':
-                j += 1
-            if j >= n:                    # sem fechamento: antes virava termo até o fim,
+        if c == '"':                      # termo com aspas (frase); \" e \\ escapam
+            j = i + 1; chars = []; closed = False
+            while j < n:
+                ch = s[j]
+                if ch == "\\" and j + 1 < n and s[j+1] in '"\\':
+                    chars.append(s[j+1]); j += 2; continue   # B3: \" -> "  \\ -> \
+                if ch == '"':
+                    closed = True; break
+                chars.append(ch); j += 1
+            if not closed:                # sem fechamento: antes virava termo até o fim,
                 raise BooleanError(       # silenciosamente. Melhor avisar que adivinhar.
                     t("unclosed quote at: {frag}", frag=repr(s[i:])))
-            if j == i + 1:                # "" vazio casaria TODO arquivo (rg -e "")
+            phrase = "".join(chars)
+            if not phrase.strip():        # "" ou "   " casaria TODO arquivo (rg -e "") — B4
                 raise BooleanError(t('empty term ("") in expression'))
-            toks.append(("TERM", s[i+1:j])); i = j + 1; continue
+            toks.append(("TERM", phrase)); i = j + 1; continue
         if c in "&|":                     # & && | ||
             if i+1 < n and s[i+1] == c:
                 toks.append((_OPS[c*2], c*2)); i += 2
@@ -428,16 +434,36 @@ def _all_terms(node):
 
 # ------------------------------------------------------------------ avaliação do AST
 def _universe_cached(q, cancel, universe_box, phase=None, stats=None):
-    with _cache_lock:
-        if universe_box[0] is not None:
-            return universe_box[0]
-    if phase is not None:
-        phase.note(t("listing files (NOT)"))
-    u = _universe(q, cancel, stats)          # I/O fora do lock
-    with _cache_lock:
-        if universe_box[0] is None:
-            universe_box[0] = u
-        return universe_box[0]
+    """Lista o universo (arquivos-texto) p/ o NOT do topo — UMA vez só, mesmo com
+    OR paralelo pedindo à toa (B5, single-flight). universe_box[0]:
+    None (nunca pedido) | Event (alguém está varrendo) | set (pronto)."""
+    while True:
+        with _cache_lock:
+            cur = universe_box[0]
+            if isinstance(cur, set):
+                return cur
+            if cur is None:
+                ev = threading.Event(); universe_box[0] = ev; mine = True
+            else:
+                ev = cur; mine = False
+        if not mine:                         # outra thread já varre: espera o resultado
+            ev.wait()
+            continue                          # relê (set pronto, ou None se falhou → re-tenta)
+        ok = False
+        try:
+            if phase is not None:
+                phase.note(t("listing files (NOT)"))
+            u = _universe(q, cancel, stats)   # I/O fora do lock (só eu varro)
+            with _cache_lock:
+                universe_box[0] = u
+            ok = True
+            return u
+        finally:
+            if not ok:                        # falhou: libera p/ outra tentar
+                with _cache_lock:
+                    if universe_box[0] is ev:
+                        universe_box[0] = None
+            ev.set()
 
 
 def _term_set(term, q, cancel, cache, restrict, phase=None, stats=None):
@@ -445,24 +471,42 @@ def _term_set(term, q, cancel, cache, restrict, phase=None, stats=None):
     Sem restrição: usa/preenche o cache com o conjunto CHEIO (reuso entre nós).
     Com restrição (opt#1): intersecta o cache se já houver, senão varre SÓ os
     arquivos de `restrict` — o resultado é subconjunto e NÃO polui o cache.
-    Thread-safe (opt#2): o I/O roda fora do lock; numa corrida, o pior caso é
-    recalcular o mesmo conjunto (idempotente) e `setdefault` mantém um só.
+    Single-flight (B5): o scan CHEIO de cada termo roda UMA vez só, mesmo com OR
+    paralelo (opt#2) pedindo o mesmo termo em duas threads. cache[term] é set
+    (pronto) ou Event (em voo); quem chega depois espera em vez de re-varrer.
     Opt#4: anuncia a fase só quando VAI varrer o disco (cache hit é instantâneo)."""
     if restrict is None:
-        with _cache_lock:
-            hit = cache.get(term)
-        if hit is None:
-            if phase is not None: phase.term(term)
-            hit = _files_with_term(term, q, cancel, stats=stats)
+        while True:
             with _cache_lock:
-                cache.setdefault(term, hit)
-                hit = cache[term]
-        return hit
+                cur = cache.get(term)
+                if isinstance(cur, set):
+                    return cur
+                if cur is None:
+                    ev = threading.Event(); cache[term] = ev; mine = True
+                else:
+                    ev = cur; mine = False
+            if not mine:                      # outra thread varre este termo: espera
+                ev.wait()
+                continue                      # relê (set pronto, ou None se falhou → re-tenta)
+            ok = False
+            try:
+                if phase is not None: phase.term(term)
+                hit = _files_with_term(term, q, cancel, stats=stats)
+                with _cache_lock:
+                    cache[term] = hit
+                ok = True
+                return hit
+            finally:
+                if not ok:                    # falhou: tira o marcador p/ outra tentar
+                    with _cache_lock:
+                        if cache.get(term) is ev:
+                            del cache[term]
+                ev.set()
     with _cache_lock:
         hit = cache.get(term)
-    if hit is not None:
+    if isinstance(hit, set):                  # scan cheio já pronto: intersecta
         return hit & restrict
-    if phase is not None: phase.term(term)
+    if phase is not None: phase.term(term)     # (em voo ou ausente) varre só o subconjunto
     return _files_with_term(term, q, cancel, restrict=restrict, stats=stats)
 
 

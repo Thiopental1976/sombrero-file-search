@@ -176,20 +176,83 @@ def test_boolean_unterminated_quote():
     print("ok  §4b aspas sem fechamento viram BooleanError (fechadas seguem OK)")
 
 
-# ------------------------------------------------------------------ aspas vazias
+# ------------------------------------------------------------------ aspas vazias / só-espaço (B4)
 def test_boolean_empty_quoted_term():
     """`""` virava Term('') e casaria TODO arquivo (rg -e '' aceita qualquer linha).
-    Agora é erro. `" "` (espaço literal) segue válido: é uma busca legítima."""
+    B4: frase SÓ-ESPAÇO (`" "`, `"   "`, tab) é o mesmo footgun — rg -e ' ' casa
+    quase toda linha de texto — então agora também vira erro (antes `" "` passava)."""
     from boolean import parse, BooleanError, Term
-    for expr in ('""', 'laudo AND ""', '("" OR nota)'):
+    for expr in ('""', 'laudo AND ""', '("" OR nota)', '" "', '"   "', '"\t"',
+                 'laudo AND "  "'):
         try:
             parse(expr)
         except BooleanError:
             pass
         else:
-            raise AssertionError(f"aceitou termo vazio: {expr!r}")
-    assert parse('" "') == Term(" ")     # espaço entre aspas não é vazio
-    print("ok  §4c termo vazio \"\" vira BooleanError (\" \" segue válido)")
+            raise AssertionError(f"aceitou termo vazio/só-espaço: {expr!r}")
+    # frase com conteúdo real (mesmo cercada de espaço) segue válida
+    assert parse('" paciente "') == Term(" paciente ")
+    print("ok  §4c termo vazio \"\"/só-espaço vira BooleanError (B4)")
+
+
+# ------------------------------------------------------------------ aspas escapadas (B3)
+def test_boolean_escaped_quotes():
+    """B3: dentro de aspas, `\\"` é uma aspa literal e `\\\\` uma barra literal, então
+    dá p/ buscar uma frase que CONTÉM aspas: `"disse \\"oi\\""` → disse "oi"."""
+    from boolean import parse, tokenize, Term
+    assert parse(r'"disse \"oi\""') == Term('disse "oi"')
+    assert parse(r'"c:\\temp"') == Term(r"c:\temp")
+    # a aspa escapada NÃO fecha a frase: o AND vem depois do fecha-aspas real
+    toks = tokenize(r'"a \"b\" c" AND laudo')
+    assert toks[0] == ("TERM", 'a "b" c'), toks
+    assert ("AND", "AND") in toks and ("TERM", "laudo") in toks
+    # barra invertida solta (não seguida de " ou \) fica literal
+    assert parse(r'"a\b"') == Term(r"a\b")
+    print("ok  §4d aspas/barras escapadas em frase (B3)")
+
+
+# ------------------------------------------------------------------ single-flight (B5)
+def test_boolean_single_flight():
+    """B5: sob OR paralelo, o scan CHEIO de um termo (e o universo do NOT) roda UMA
+    vez só — quem chega depois espera o resultado em vez de re-varrer o disco.
+    Instrumento _files_with_term/_universe p/ contar varreduras e confirmar 1x."""
+    import threading, time as _time
+    d = _tree()
+    try:
+        real_ft = boolean._files_with_term
+        real_un = boolean._universe
+        calls = {}
+        lock = threading.Lock()
+        def counting_ft(term, q, cancel, restrict=None, stats=None):
+            if restrict is None:                         # só o scan cheio é single-flight
+                with lock: calls[term] = calls.get(term, 0) + 1
+                if term == "laudo": _time.sleep(0.08)    # segura o voo p/ forçar sobreposição
+            return real_ft(term, q, cancel, restrict=restrict, stats=stats)
+        def counting_un(q, cancel, stats=None):
+            with lock: calls["__univ__"] = calls.get("__univ__", 0) + 1
+            _time.sleep(0.08)                            # idem p/ o universo do NOT
+            return real_un(q, cancel, stats)
+        old = boolean._WORKERS
+        boolean._files_with_term = counting_ft
+        boolean._universe = counting_un
+        try:
+            boolean._WORKERS = 4                          # tmp paraleliza (não é /mnt)
+            got = set()
+            # 'laudo' abre 2 operandos do OR e o universo do NOT é pedido por 2 operandos;
+            # sem single-flight cada um viraria 2 varreduras concorrentes.
+            boolean.search_boolean(
+                Query(paths=[d]),
+                "(laudo AND paciente) OR (laudo AND assinatura) OR (NOT rascunho) OR (NOT ausente)",
+                lambda m: got.add(os.path.basename(m.path)), lambda: False)
+        finally:
+            boolean._WORKERS = old
+            boolean._files_with_term = real_ft
+            boolean._universe = real_un
+        assert calls.get("laudo", 0) == 1, f"'laudo' varrido {calls.get('laudo')}x (esperado 1)"
+        assert calls.get("__univ__", 0) == 1, f"universo varrido {calls.get('__univ__')}x (esperado 1)"
+        print("ok  B5   single-flight: termo/universo varridos 1x sob OR paralelo")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 # ------------------------------------------------------------------ UX: nome "contém"
@@ -779,7 +842,8 @@ def main():
            test_name_search_includes_dirs,
            test_name_newline_in_filename, test_name_broken_symlink,
            test_max_depth_backend_parity, test_boolean_deep_nesting,
-           test_boolean_not_excludes_binaries]
+           test_boolean_not_excludes_binaries, test_boolean_escaped_quotes,
+           test_boolean_single_flight]
     fail = 0
     for fn in fns:
         try:
