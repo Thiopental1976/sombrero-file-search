@@ -26,6 +26,8 @@ os buscadores comerciais. Sem `rg`/`fd`, cai num fallback em Python puro (roda e
 Os buscadores do Windows (FileLocator, Everything, UltraSearch) são **inúteis no Linux**: leem a
 MFT/USN do NTFS, que não existe aqui. Este projeto reimplementa a função de forma nativa.
 
+> 📖 **Manual completo:** [MANUAL.md](MANUAL.md) (English) · [MANUAL.pt-BR.md](MANUAL.pt-BR.md) (Português) — uso da GUI e todas as capacidades da CLI.
+
 ## Recursos
 
 - 🔎 **Nome + conteúdo** — glob (`*.py`) ou regex, texto ou regex, com destaque no preview.

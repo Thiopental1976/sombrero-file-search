@@ -47,7 +47,8 @@ reimplementa a função de forma nativa.
   o disco lido; termos `OR` correm em paralelo no SSD mas **serializam** em `/mnt`
   (poupando o SMR de *seek* concorrente).
 
-**Instalação e uso completo:** veja **[README_LINUX_FILE_SEARCH.md](README_LINUX_FILE_SEARCH.md)**
+**Manual completo:** **[MANUAL.md](MANUAL.md)** (English) · **[MANUAL.pt-BR.md](MANUAL.pt-BR.md)** (Português) — GUI + CLI.
+**Instalação e detalhes:** veja **[README_LINUX_FILE_SEARCH.md](README_LINUX_FILE_SEARCH.md)**
 (instalação multi-distro, CLI, arquitetura) e **[DOCUMENTACAO_TECNICA.md](DOCUMENTACAO_TECNICA.md)**
 (motor, parser booleano, otimizações e cuidados com SMR em detalhe).
 
