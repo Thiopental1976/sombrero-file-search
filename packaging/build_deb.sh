@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Linux File Search — Copyright (C) 2026 Rodrigo Toledo
+# Sombrero File Search — Copyright (C) 2026 Rodrigo Toledo
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Constrói o pacote .deb. Sem dh_make, sem debhelper: a árvore é montada à mão e
@@ -19,7 +19,7 @@
 #     c) MAGRO (o que fazemos)    -> o motor e a CLI não precisam de Qt e ficam
 #        100% funcionais só com python3. A GUI usa o PySide6 do sistema se
 #        houver; se não houver, o lançador EXPLICA e oferece
-#        `linux-file-search --setup-gui`, que cria um venv no HOME do usuário
+#        `sombrero-file-search --setup-gui`, que cria um venv no HOME do usuário
 #        que pediu. Quem quer tudo pronto e autocontido usa o AppImage.
 #
 # Depends é deliberadamente mínimo: python3. ripgrep e fd são Recommends porque
@@ -34,7 +34,7 @@ umask 022
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-$SRC/dist}"
-APP="linux-file-search"
+APP="sombrero-file-search"
 ARCH="all"                      # Python puro: um pacote serve qualquer máquina
 
 ver="$(cd "$SRC" && python3 -c 'import sys; sys.path.insert(0,"lfs"); import version; print(version.deb_version())')"
@@ -73,10 +73,10 @@ install -m 644 "$SRC/assets/icon.svg" "$pkgdir/usr/share/icons/hicolor/scalable/
 # usuário veria no terminal, ou nem veria se clicou no menu — em instrução.
 cat > "$pkgdir/usr/bin/$APP" <<'LAUNCHER'
 #!/usr/bin/env bash
-# Lançador da GUI do Linux File Search (pacote .deb).
+# Lançador da GUI do Sombrero File Search (pacote .deb).
 set -euo pipefail
-LIB=/usr/lib/linux-file-search
-VENV="${XDG_DATA_HOME:-$HOME/.local/share}/linux-file-search/venv"
+LIB=/usr/lib/sombrero-file-search
+VENV="${XDG_DATA_HOME:-$HOME/.local/share}/sombrero-file-search/venv"
 
 # 1) PySide6 do sistema (distros que o empacotam: Arch, Fedora, openSUSE);
 # 2) venv do usuário, criado por --setup-gui (Debian/Ubuntu/Mint, que não têm).
@@ -99,14 +99,14 @@ setup_gui() {
     echo "AVISO: falta libxcb-cursor0 (o Qt do pip não a traz)."
     echo "       sudo apt install libxcb-cursor0"
   fi
-  echo "pronto — rode 'linux-file-search' de novo."
+  echo "pronto — rode 'sombrero-file-search' de novo."
 }
 
 if [ "${1:-}" = "--setup-gui" ]; then setup_gui; exit 0; fi
 
 if [ -z "$pybin" ]; then
   msg="A interface gráfica precisa do PySide6, que não está instalado.
-Rode uma vez:    linux-file-search --setup-gui
+Rode uma vez:    sombrero-file-search --setup-gui
 (A busca em linha de comando — 'lfs' — funciona sem isso.)"
   echo "$msg" >&2
   # Clicou no menu: sem terminal para ler a mensagem. Avisa na tela se der.
@@ -119,18 +119,24 @@ fi
 exec "$pybin" "$LIB/lfs/app.py" "$@"
 LAUNCHER
 
-cat > "$pkgdir/usr/bin/lfs" <<'CLI'
+# CLI: comando novo 'sfs' (Sombrero File Search) e 'lfs' como alias de
+# compatibilidade. Os dois são arquivos reais (não symlink) de propósito: um
+# link '/usr/bin/lfs -> sfs' apareceria diferente no `dpkg-deb -c` e o alias é
+# barato demais para valer a complicação.
+for cmd in sfs lfs; do
+  cat > "$pkgdir/usr/bin/$cmd" <<'CLI'
 #!/usr/bin/env bash
-# CLI do Linux File Search. Não usa Qt: roda em servidor sem tela.
-exec python3 /usr/lib/linux-file-search/lfs/cli.py "$@"
+# CLI do Sombrero File Search. Não usa Qt: roda em servidor sem tela.
+exec python3 /usr/lib/sombrero-file-search/lfs/cli.py "$@"
 CLI
-chmod 755 "$pkgdir/usr/bin/$APP" "$pkgdir/usr/bin/lfs"
+done
+chmod 755 "$pkgdir/usr/bin/$APP" "$pkgdir/usr/bin/sfs" "$pkgdir/usr/bin/lfs"
 
 # --------------------------------------------------------------- .desktop
 cat > "$pkgdir/usr/share/applications/$APP.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Linux File Search
+Name=Sombrero File Search
 GenericName=Busca de arquivos
 Comment=Busca ampla de arquivos: nome, conteúdo, booleano e dentro de documentos
 Exec=/usr/bin/$APP %F
@@ -147,8 +153,8 @@ chmod 644 "$pkgdir/usr/share/applications/$APP.desktop"
 # qualquer um lê para saber sob que licença redistribuir.
 cat > "$pkgdir/usr/share/doc/$APP/copyright" <<'EOF'
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: linux-file-search
-Source: https://github.com/Thiopental1976/linux-file-search
+Upstream-Name: sombrero-file-search
+Source: https://github.com/Thiopental1976/sombrero-file-search
 
 Files: *
 Copyright: 2026 Rodrigo Toledo
@@ -175,12 +181,12 @@ printf '%s (%s) unstable; urgency=low\n\n  * Pacote gerado por packaging/build_d
 chmod 644 "$pkgdir/usr/share/doc/$APP/changelog.Debian.gz"
 
 # ------------------------------------------------------------------- man
-cat > "$pkgdir/usr/share/man/man1/lfs.1" <<'MAN'
-.TH LFS 1 "2026" "linux-file-search" "User Commands"
+cat > "$pkgdir/usr/share/man/man1/sfs.1" <<'MAN'
+.TH SFS 1 "2026" "sombrero-file-search" "User Commands"
 .SH NAME
-lfs \- broad file search (name and content) over ripgrep/fd
+sfs \- broad file search (name and content) over ripgrep/fd
 .SH SYNOPSIS
-.B lfs
+.B sfs
 .RI [ options ] " PATH" ...
 .SH DESCRIPTION
 Searches files by name and/or content. Name terms match as CONTAINS by default;
@@ -217,6 +223,11 @@ show version and license
 .SH AUTHOR
 Rodrigo Toledo
 MAN
+gzip -9n "$pkgdir/usr/share/man/man1/sfs.1"
+chmod 644 "$pkgdir/usr/share/man/man1/sfs.1.gz"
+# 'lfs' é alias do 'sfs': a man page do alias é um include (.so) para a real —
+# `man lfs` mostra a mesma página, sem duplicar o texto.
+printf '.so man1/sfs.1\n' > "$pkgdir/usr/share/man/man1/lfs.1"
 gzip -9n "$pkgdir/usr/share/man/man1/lfs.1"
 chmod 644 "$pkgdir/usr/share/man/man1/lfs.1.gz"
 
@@ -234,7 +245,7 @@ Installed-Size: $size_kb
 Depends: python3 (>= 3.10)
 Recommends: ripgrep, fd-find
 Suggests: ripgrep-all, python3-venv, libxcb-cursor0
-Homepage: https://github.com/Thiopental1976/linux-file-search
+Homepage: https://github.com/Thiopental1976/sombrero-file-search
 Description: broad file search by name and content
  Searches a whole filesystem by file name, by content, by boolean expression
  and inside documents (PDF, docx, epub) — the kind of search Agent Ransack and
@@ -243,7 +254,7 @@ Description: broad file search by name and content
  The search engine and the command line tool need nothing but python3: ripgrep
  and fd make it fast, and a pure Python fallback keeps it correct without them.
  The graphical interface needs PySide6; on distributions that do not package it
- (Debian, Ubuntu, Mint), run "linux-file-search --setup-gui" once.
+ (Debian, Ubuntu, Mint), run "sombrero-file-search --setup-gui" once.
 EOF
 
 # postinst/postrm: apenas caches do desktop. Nada de rede, nada de pip, nada de
@@ -291,9 +302,9 @@ fi
 # o arquivo presente parecer ausente. Mesma armadilha que o install.sh já
 # documenta no ldconfig — vale a pena não repetir o erro em outro arquivo.
 lista="$(mktemp)"; dpkg-deb -c "$deb" | awk '{print $NF}' > "$lista"
-for f in ./usr/bin/lfs ./usr/bin/$APP ./usr/lib/$APP/lfs/engine.py ./usr/lib/$APP/VERSION \
+for f in ./usr/bin/sfs ./usr/bin/lfs ./usr/bin/$APP ./usr/lib/$APP/lfs/engine.py ./usr/lib/$APP/VERSION \
          ./usr/share/applications/$APP.desktop ./usr/share/doc/$APP/copyright \
-         ./usr/share/man/man1/lfs.1.gz; do
+         ./usr/share/man/man1/sfs.1.gz ./usr/share/man/man1/lfs.1.gz; do
   grep -Fxq "$f" "$lista" || { echo "  !! FALTA $f"; probs=1; }
 done
 rm -f "$lista"

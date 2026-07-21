@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="assets/icon_128.png" width="96" alt="Linux File Search">
+<img src="assets/icon_128.png" width="96" alt="Sombrero File Search">
 
-# Linux File Search
+# Sombrero File Search
 
 **Busca de arquivos nativa para Linux — nome, conteúdo, booleano e dentro de documentos.**
 *A native file-search tool for Linux, in the spirit of Agent Ransack / FileLocator Pro.*
@@ -65,9 +65,9 @@ Três caminhos, na ordem em que provavelmente interessam:
 ### AppImage — um arquivo, nada a instalar
 
 ```bash
-chmod +x Linux_File_Search-*.AppImage
-./Linux_File_Search-*.AppImage                       # GUI
-./Linux_File_Search-*.AppImage --cli ~/docs -n '*.pdf'   # a mesma CLI
+chmod +x Sombrero_File_Search-*.AppImage
+./Sombrero_File_Search-*.AppImage                       # GUI
+./Sombrero_File_Search-*.AppImage --cli ~/docs -n '*.pdf'   # a mesma CLI
 ```
 
 Traz Python e Qt embutidos (~135 MB). Usa o `rg`/`fd` **do seu sistema** se existirem —
@@ -80,9 +80,9 @@ não os sequestra nem os duplica.
 ### .deb
 
 ```bash
-sudo apt install ./linux-file-search_*_all.deb
+sudo apt install ./sombrero-file-search_*_all.deb
 lfs ~/docs -n '*.pdf'          # CLI: funciona já, só precisa de python3
-linux-file-search              # GUI
+sombrero-file-search              # GUI
 ```
 
 O pacote é **magro** de propósito: `Depends: python3`, com `ripgrep` e `fd-find` como
@@ -91,7 +91,7 @@ O apt do Debian/Ubuntu/Mint **não tem PySide6** — nessas distros, a primeira 
 pede um comando único:
 
 ```bash
-linux-file-search --setup-gui   # cria um venv no SEU home, sem root
+sombrero-file-search --setup-gui   # cria um venv no SEU home, sem root
 ```
 
 ### install.sh — instalador universal
@@ -106,7 +106,7 @@ cd ubiquitous-octo-winner-BR
 
 Ele instala `ripgrep`, `fd` e `poppler` pelo gerenciador da distro (com sua autorização), baixa
 `ripgrep-all` e `pandoc` (binários estáticos, para o modo documentos) e prepara o PySide6 (do
-sistema ou num venv próprio). Ao final, abra **Linux File Search** pelo menu ou rode `linux-file-search`.
+sistema ou num venv próprio). Ao final, abra **Sombrero File Search** pelo menu ou rode `sombrero-file-search`.
 
 ### Manual
 

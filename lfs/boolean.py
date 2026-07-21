@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# Linux File Search — Copyright (C) 2026 Rodrigo Toledo
+# Sombrero File Search — Copyright (C) 2026 Rodrigo Toledo
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Este programa é software livre: você pode redistribuí-lo e/ou modificá-lo sob
 # os termos da GNU General Public License, versão 3 ou posterior (ver LICENSE).
 # Distribuído na esperança de ser útil, mas SEM QUALQUER GARANTIA.
-"""Linux File Search — busca BOOLEANA de conteúdo (recurso-assinatura, F3).
+"""Sombrero File Search — busca BOOLEANA de conteúdo (recurso-assinatura, F3).
 
 Sintaxe:  (A OR B) AND C NOT D     [também: | & !, e adjacência = AND implícito]
   - termos entre "aspas" preservam espaços; termo cru vai até o próximo operador/parêntese

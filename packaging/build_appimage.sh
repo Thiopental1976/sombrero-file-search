@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Linux File Search — Copyright (C) 2026 Rodrigo Toledo
+# Sombrero File Search — Copyright (C) 2026 Rodrigo Toledo
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Constrói o AppImage: um arquivo único que roda em qualquer distro x86_64 sem
@@ -23,7 +23,7 @@ umask 022
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-$SRC/dist}"
 CACHE="${LFS_APPIMAGE_CACHE:-$HOME/.cache/lfs-appimage}"
-APP="linux-file-search"
+APP="sombrero-file-search"
 PYVER="3.12.13"
 PYTAG="20260718"
 PYURL="https://github.com/astral-sh/python-build-standalone/releases/download/$PYTAG/cpython-$PYVER%2B$PYTAG-x86_64-unknown-linux-gnu-install_only.tar.gz"
@@ -87,7 +87,7 @@ install -m 644 "$SRC/LICENSE" "$appdir/usr/lib/$APP/LICENSE"
 cat > "$appdir/$APP.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Linux File Search
+Name=Sombrero File Search
 GenericName=Busca de arquivos
 Comment=Busca ampla de arquivos: nome, conteúdo, booleano e dentro de documentos
 Exec=$APP %F
@@ -107,7 +107,7 @@ cp "$appdir/$APP.desktop" "$appdir/usr/share/applications/"
 cat > "$appdir/AppRun" <<'APPRUN'
 #!/bin/sh
 HERE="$(dirname "$(readlink -f "$0")")"
-APPDIR_LIB="$HERE/usr/lib/linux-file-search"
+APPDIR_LIB="$HERE/usr/lib/sombrero-file-search"
 PY="$HERE/usr/lib/python/bin/python3"
 # PATH do sistema PRIMEIRO: se o usuário tem rg/fd instalados, são os dele que
 # valem; o AppImage não sequestra as ferramentas da máquina.
@@ -124,7 +124,7 @@ cat > "$appdir/usr/share/metainfo/$APP.appdata.xml" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>$APP</id>
-  <name>Linux File Search</name>
+  <name>Sombrero File Search</name>
   <summary>Broad file search by name and content</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
@@ -134,7 +134,7 @@ cat > "$appdir/usr/share/metainfo/$APP.appdata.xml" <<EOF
     <p>It reads and exports; it never moves, renames or deletes anything.</p>
   </description>
   <launchable type="desktop-id">$APP.desktop</launchable>
-  <url type="homepage">https://github.com/Thiopental1976/linux-file-search</url>
+  <url type="homepage">https://github.com/Thiopental1976/sombrero-file-search</url>
   <provides><binary>$APP</binary></provides>
   <releases><release version="$ver"/></releases>
 </component>
@@ -142,7 +142,7 @@ EOF
 
 say "[4/4] Montando"
 mkdir -p "$OUT"
-img="$OUT/Linux_File_Search-$ver-x86_64.AppImage"
+img="$OUT/Sombrero_File_Search-$ver-x86_64.AppImage"
 # ARCH: o appimagetool não adivinha em build sem desktop integration.
 ARCH=x86_64 "$CACHE/appimagetool.AppImage" --no-appstream "$appdir" "$img" 2>&1 \
   | grep -vi 'warning: no appstream' || true

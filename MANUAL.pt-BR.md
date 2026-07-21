@@ -1,4 +1,4 @@
-# Linux File Search — Manual de uso
+# Sombrero File Search — Manual de uso
 
 **Idioma:** **Português (BR)** · [English](MANUAL.md)
 
@@ -9,7 +9,7 @@ quando não há binários. Roda em qualquer distro.
 
 Duas caras, o mesmo motor:
 
-- **GUI** — `linux-file-search` (ou pelo menu, *Linux File Search*).
+- **GUI** — `sombrero-file-search` (ou pelo menu, *Sombrero File Search*).
 - **CLI** — `lfs`, feita para scripts e pipelines (`| xargs`, `| wc`, `| fzf`).
 
 O que a GUI acha, a CLI acha igual: são a mesma engine.
@@ -213,9 +213,9 @@ lfs ~ -n '*.md' -l 2>/dev/null | fzf
 | **install.sh** | qualquer distro, instala no `~`, sem root | usa o do sistema ou cria um venv |
 
 Detalhes de cada caminho e das dependências opcionais (`rg`, `fd`, `rga`) estão no
-`README_LINUX_FILE_SEARCH.md`.
+`README_SOMBRERO_FILE_SEARCH.md`.
 
 ---
 
-*Linux File Search — software livre sob GNU GPL v3 ou posterior. Sem índice, sem
+*Sombrero File Search — software livre sob GNU GPL v3 ou posterior. Sem índice, sem
 serviço, sem nag: você busca, ele acha.*

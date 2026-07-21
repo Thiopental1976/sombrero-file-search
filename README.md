@@ -16,17 +16,17 @@
 Duas frentes de trabalho, o mesmo espírito: software **nativo do Linux**, portável
 entre distros, cuidadoso com o hardware (SSD/CMR **e** discos SMR lentos) e sem
 índice mágico nem serviço pago. Aqui moram o código e a documentação do
-**Linux File Search**; o **TopazLinux** vive no seu próprio diretório e está
+**Sombrero File Search**; o **TopazLinux** vive no seu próprio diretório e está
 descrito abaixo como parte do mesmo esforço.
 
 | Projeto | O que faz | Onde está | Estado |
 |---|---|---|---|
-| **Linux File Search** | Busca de arquivos ao vivo — nome, conteúdo, booleano e dentro de documentos (PDF/docx/epub) | **este repositório** | Em uso; motor auditado e otimizado |
+| **Sombrero File Search** | Busca de arquivos ao vivo — nome, conteúdo, booleano e dentro de documentos (PDF/docx/epub) | **este repositório** | Em uso; motor auditado e otimizado |
 | **TopazLinux** | Realce e restauração de vídeo por IA (upscale, interpolação, denoise), nativo, com GUI Qt | `~/projetos/topazlinux/` | GUI em produção; treino local de modelos em curso |
 
 ---
 
-## 1. Linux File Search  *(este repositório)*
+## 1. Sombrero File Search  *(este repositório)*
 
 Um buscador de arquivos **sem índice**, com resultados **ao vivo**, no espírito do
 *Agent Ransack / FileLocator Pro* do Windows — mas nativo do Linux. O motor é o
@@ -48,7 +48,7 @@ reimplementa a função de forma nativa.
   (poupando o SMR de *seek* concorrente).
 
 **Manual completo:** **[MANUAL.md](MANUAL.md)** (English) · **[MANUAL.pt-BR.md](MANUAL.pt-BR.md)** (Português) — GUI + CLI.
-**Instalação e detalhes:** veja **[README_LINUX_FILE_SEARCH.md](README_LINUX_FILE_SEARCH.md)**
+**Instalação e detalhes:** veja **[README_SOMBRERO_FILE_SEARCH.md](README_SOMBRERO_FILE_SEARCH.md)**
 (instalação multi-distro, CLI, arquitetura) e **[DOCUMENTACAO_TECNICA.md](DOCUMENTACAO_TECNICA.md)**
 (motor, parser booleano, otimizações e cuidados com SMR em detalhe).
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# Linux File Search — Copyright (C) 2026 Rodrigo Toledo
+# Sombrero File Search — Copyright (C) 2026 Rodrigo Toledo
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Este programa é software livre: você pode redistribuí-lo e/ou modificá-lo sob
 # os termos da GNU General Public License, versão 3 ou posterior (ver LICENSE).
 # Distribuído na esperança de ser útil, mas SEM QUALQUER GARANTIA.
-"""Linux File Search — CLI (same core as the GUI, for scripts/daemons)."""
+"""Sombrero File Search — CLI (same core as the GUI, for scripts/daemons)."""
 from __future__ import annotations
 import argparse, os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -16,7 +16,7 @@ from engine import Query
 # A GPL pede que o programa saiba declarar licença e ausência de garantia. Fica
 # aqui, num --version que só aparece quando pedido: aviso que interrompe o uso
 # (pop-up, lembrete recorrente) não é respeito à licença, é incômodo.
-NOTICE = """Linux File Search {release}  {build}
+NOTICE = """Sombrero File Search {release}  {build}
 Copyright (C) 2026 Rodrigo Toledo
 Licença: GNU GPL versão 3 ou posterior <https://gnu.org/licenses/gpl.html>
 Software livre: você pode alterá-lo e redistribuí-lo.

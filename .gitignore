@@ -26,7 +26,12 @@ dist/
 
 # Notas internas de desenvolvimento (referências ao sistema pessoal) — não publicar
 ARRANQUE_SEGUNDA_JANELA.md
-PROJETO_Linux_File_Search.md
+PROJETO_Sombrero_File_Search.md
+
+# Prompts de imagem — locais por enquanto (a pedido); publicar só quando decidido
+assets/PROMPTS_LOGO_E_FUNDO.md
+assets/prompt_icone.txt
+assets/prompt_fundo.txt
 
 # Pacotes gerados (.deb, AppImage): saem do build, não do repositório
 /dist/

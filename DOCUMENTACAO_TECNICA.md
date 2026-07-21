@@ -1,4 +1,4 @@
-# Linux File Search — Documentação Técnica
+# Sombrero File Search — Documentação Técnica
 
 > Documento de referência para **avaliação e depuração** do projeto. Descreve arquitetura,
 > cada módulo, o fluxo de dados, o modelo de concorrência, a gramática da busca booleana,
@@ -11,7 +11,7 @@
 
 ## 1. Visão geral
 
-**Linux File Search** é um buscador de arquivos **nativo para Linux**, sem índice, com
+**Sombrero File Search** é um buscador de arquivos **nativo para Linux**, sem índice, com
 resultados **ao vivo**, no espírito do *Agent Ransack / FileLocator Pro* do Windows. Ele busca
 por **nome** (glob/regex), por **conteúdo** (texto/regex), com **expressões booleanas**
 (`(A OR B) AND C NOT D`) e **dentro de documentos** (PDF/docx/epub/odt/zip). Tem GUI em
@@ -53,7 +53,7 @@ linux_file_search/
 │   ├── icon.svg       # ícone-fonte (256×256, gradiente + lupa)
 │   └── icon_{48,64,128,256}.png, icon.png   # rasterizações (via QtSvg)
 ├── install.sh         # instalador universal multi-distro
-├── linux-file-search  # lançador (aponta pro venv com PySide6)
+├── sombrero-file-search  # lançador (aponta pro venv com PySide6)
 ├── README.md          # documentação de usuário
 ├── DOCUMENTACAO_TECNICA.md  # este arquivo
 ├── LICENSE            # MIT
@@ -71,7 +71,7 @@ iteradores de busca (dois por nome, dois por conteúdo) mais a API pública `sea
 ### 3.1 Detecção de binários
 
 ```python
-_APP_BIN = ~/.local/share/linux-file-search/bin   # binários empacotados (rga/pandoc)
+_APP_BIN = ~/.local/share/sombrero-file-search/bin   # binários empacotados (rga/pandoc)
 _which(*names)   # shutil.which + fallback no _APP_BIN (os.access X_OK)
 RG  = _which("rg")                    # ripgrep
 FD  = _which("fd", "fdfind")          # fd (Debian/Mint renomeiam para fdfind!)
@@ -271,7 +271,7 @@ externos recebem `terminate()`.
 - `_STYLE_TMPL` — folha de estilo Qt com placeholders `{chave}`; `build_style(pal)` faz
   `.format(**pal)`.
 - `apply_theme(name)` aplica o stylesheet, ajusta status e botão, e chama `_refresh_badges`.
-- `toggle_theme()` inverte e **persiste** em `~/.config/linux-file-search/config.json`
+- `toggle_theme()` inverte e **persiste** em `~/.config/sombrero-file-search/config.json`
   (`load_cfg`/`save_cfg`). Preferência é lida no `__init__`.
 - **Nota de depuração:** os badges são reconstruídos em `_refresh_badges`; ao limpar o layout,
   usa-se `w.setParent(None)` **antes** de `deleteLater()` (senão, num `grab()` headless, os
@@ -367,7 +367,7 @@ x86_64) do GitHub. ² Se o PySide6 do sistema faltar, o instalador cria um **ven
 Fluxo (5 passos): detecta o gerenciador; **lista todas as dependências e pede confirmação**;
 instala pacotes de sistema (com `sudo`, só se autorizado); baixa `rga`+`pandoc` estáticos se
 faltarem; prepara PySide6 (sistema ou venv em `$PREFIX/venv`); copia o app para
-`~/.local/share/linux-file-search/`, cria lançadores `linux-file-search` (GUI) e `lfs` (CLI),
+`~/.local/share/sombrero-file-search/`, cria lançadores `sombrero-file-search` (GUI) e `lfs` (CLI),
 ícones hicolor e atalho `.desktop`. Não precisa de root para o app (tudo em `~/.local`).
 
 ### 9.2 Manual
@@ -598,7 +598,7 @@ O contador de "N inacessível(is)" (B8) só funcionava na busca simples: o modo
 
 ## 14. Cuidado com discos SMR (e a diferença para CMR)
 
-O Linux File Search é feito para rodar sobre acervos grandes espalhados em muitos
+O Sombrero File Search é feito para rodar sobre acervos grandes espalhados em muitos
 HDs — inclusive discos **SMR** e USB externos. Isso guia várias decisões do motor.
 
 ### 14.1 O que são SMR e CMR

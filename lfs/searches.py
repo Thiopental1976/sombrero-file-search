@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# Linux File Search — Copyright (C) 2026 Rodrigo Toledo
+# Sombrero File Search — Copyright (C) 2026 Rodrigo Toledo
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Este programa é software livre: você pode redistribuí-lo e/ou modificá-lo sob
 # os termos da GNU General Public License, versão 3 ou posterior (ver LICENSE).
 # Distribuído na esperança de ser útil, mas SEM QUALQUER GARANTIA.
-"""Linux File Search — buscas salvas, histórico e exportação (F5).
+"""Sombrero File Search — buscas salvas, histórico e exportação (F5).
 
 Sem Qt, como engine.py e fileops.py: o que dá para testar sem abrir uma tela
 mora fora da GUI. Aqui estão as três coisas do F5 que são *dados*, não widgets:

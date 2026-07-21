@@ -1,4 +1,4 @@
-# Linux File Search — briefing completo
+# Sombrero File Search — briefing completo
 
 Documento de contexto para **desenhar** uma mudança no projeto.
 Gerado em 2026-07-21 a partir do repositório no commit `bcc06db` (working tree limpo,
@@ -27,7 +27,7 @@ Dois requisitos que o Rodrigo fixou e **não devem ser renegociados**:
 
 1. **Roda em qualquer distro** — sem depender de pacote específico, com fallback em Python puro
    quando `rg`/`fd` não existirem.
-2. **O nome não muda.** É "Linux File Search". O codinome antigo ("garimpo") está aposentado.
+2. **O nome não muda.** É "Sombrero File Search". O codinome antigo ("garimpo") está aposentado.
 
 Contexto de uso real: um servidor doméstico com **13 discos montados**, vários deles SMR e
 lentos, com acervo de dezenas de milhares de vídeos. As decisões de performance do projeto
@@ -44,7 +44,7 @@ saíram desse ambiente, não de benchmark sintético.
 | Testes | **33/33** (`tests/test_audit.py`, runner próprio, sem pytest) |
 | i18n | inglês é a fonte, pt por tabela |
 | Publicado | GitHub `Thiopental1976/ubiquitous-octo-winner-BR`, branch `main` |
-| Instalado | `~/.local/share/linux-file-search/` (venv PySide6 6.11.1, sem sudo) |
+| Instalado | `~/.local/share/sombrero-file-search/` (venv PySide6 6.11.1, sem sudo) |
 | Parecer externo | "projeto mais bem executado do ServidorCedro"; aprovado para uso diário |
 
 Falta: **F5** (abas, buscas salvas, export) e **F6** (`.deb` / AppImage / diálogo de instalação
@@ -187,15 +187,15 @@ usa**, e teste com entradas hostis, não com nomes bonitos.
 
 ```bash
 # instalado (sem sudo)
-linux-file-search          # GUI
+sombrero-file-search          # GUI
 lfs --help                 # CLI
 
 # a partir do repo
-~/.local/share/linux-file-search/venv/bin/python -m lfs.app
-~/.local/share/linux-file-search/venv/bin/python -m lfs.cli --help
+~/.local/share/sombrero-file-search/venv/bin/python -m lfs.app
+~/.local/share/sombrero-file-search/venv/bin/python -m lfs.cli --help
 
 # testes (runner próprio, NÃO usa pytest)
-~/.local/share/linux-file-search/venv/bin/python tests/test_audit.py
+~/.local/share/sombrero-file-search/venv/bin/python tests/test_audit.py
 # esperado: 33/33 testes passaram
 ```
 
@@ -235,10 +235,10 @@ A CLI tem `--print0`, pensada para pipeline com o resto do acervo.
 | o quê | onde |
 |---|---|
 | repositório | `~/projetos/linux_file_search/` |
-| instalação | `~/.local/share/linux-file-search/` |
+| instalação | `~/.local/share/sombrero-file-search/` |
 | GitHub | `Thiopental1976/ubiquitous-octo-winner-BR`, branch `main` |
 | doc técnica longa | `DOCUMENTACAO_TECNICA.md` (37 KB, neste repo) |
-| doc de projeto | `PROJETO_Linux_File_Search.md` |
-| README público | `README.md` / `README_LINUX_FILE_SEARCH.md` |
+| doc de projeto | `PROJETO_Sombrero_File_Search.md` |
+| README público | `README.md` / `README_SOMBRERO_FILE_SEARCH.md` |
 | parecer externo v3 | `~/Downloads/LinuxFileSearch_v3_Parecer_Final.md` |
 | desenho original | `~/Downloads/GARIMPO_Desenho_Busca_ripgrep.md` |

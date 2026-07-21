@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# Linux File Search — Copyright (C) 2026 Rodrigo Toledo
+# Sombrero File Search — Copyright (C) 2026 Rodrigo Toledo
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Este programa é software livre: você pode redistribuí-lo e/ou modificá-lo sob
 # os termos da GNU General Public License, versão 3 ou posterior (ver LICENSE).
 # Distribuído na esperança de ser útil, mas SEM QUALQUER GARANTIA.
-"""Linux File Search — copy engine (F7b). NON-DESTRUCTIVE BY CONSTRUCTION.
+"""Sombrero File Search — copy engine (F7b). NON-DESTRUCTIVE BY CONSTRUCTION.
 
 The governing rule of F7: **LFS reads and exports. It never alters, moves or
 removes what it found.** This module is where that rule is enforced, and it is

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# Linux File Search — Copyright (C) 2026 Rodrigo Toledo
+# Sombrero File Search — Copyright (C) 2026 Rodrigo Toledo
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Este programa é software livre: você pode redistribuí-lo e/ou modificá-lo sob
 # os termos da GNU General Public License, versão 3 ou posterior (ver LICENSE).
 # Distribuído na esperança de ser útil, mas SEM QUALQUER GARANTIA.
-"""Linux File Search — motor de busca (nome + conteúdo).
+"""Sombrero File Search — motor de busca (nome + conteúdo).
 
 Filosofia de compatibilidade (roda em QUALQUER distro):
   - Busca de CONTEÚDO: usa `ripgrep` (rg) se existir -> rapidíssimo, --json.
@@ -25,7 +25,7 @@ from typing import Callable, Iterable, Optional
 
 # ---------------------------------------------------------------- detecção
 # binários que o próprio app pode empacotar (ver F6) — procurados além do PATH
-_APP_BIN = os.path.expanduser("~/.local/share/linux-file-search/bin")
+_APP_BIN = os.path.expanduser("~/.local/share/sombrero-file-search/bin")
 
 def _which(*names):
     for n in names:

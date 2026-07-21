@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-# Linux File Search — Copyright (C) 2026 Rodrigo Toledo
+# Sombrero File Search — Copyright (C) 2026 Rodrigo Toledo
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Este programa é software livre: você pode redistribuí-lo e/ou modificá-lo sob
 # os termos da GNU General Public License, versão 3 ou posterior (ver LICENSE).
 # Distribuído na esperança de ser útil, mas SEM QUALQUER GARANTIA.
-"""Linux File Search — GUI (PySide6).
+"""Sombrero File Search — GUI (PySide6).
 
 Busca ampla de arquivos estilo Agent Ransack / FileLocator Pro, sobre ripgrep+fd+rga,
 NATIVA e portável entre distros. Motor em engine.py (sem Qt). A GUI só orquestra:
 form -> worker em thread -> tabela ao vivo -> preview com destaque.
 
 Recursos: nome+conteúdo, booleano (A OR B) AND C NOT D, documentos (PDF/docx/epub/zip).
-Desenho: GARIMPO_Desenho_Busca_ripgrep.md (Fable 5) — nome final "Linux File Search".
+Desenho: GARIMPO_Desenho_Busca_ripgrep.md (Fable 5) — nome final "Sombrero File Search".
 """
 from __future__ import annotations
 import os, sys, threading, time
@@ -321,9 +321,24 @@ class ResultModel(QAbstractTableModel):
 
 
 # ----------------------------------------------------------------- temas
-CONFIG_DIR = os.path.join(os.path.expanduser(
-    os.environ.get("XDG_CONFIG_HOME", "~/.config")), "linux-file-search")
+_CONFIG_BASE = os.path.expanduser(os.environ.get("XDG_CONFIG_HOME", "~/.config"))
+CONFIG_DIR = os.path.join(_CONFIG_BASE, "sombrero-file-search")
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
+
+
+def _migrate_old_config():
+    """Rebranding Linux File Search -> Sombrero File Search (jul/2026): as buscas
+    salvas e o histórico do F5 (mais o tema) viviam em ~/.config/linux-file-search.
+    Quem já usava o programa não pode perder isso ao atualizar. Migração única e
+    conservadora: só move se o diretório NOVO ainda não existe e o ANTIGO existe.
+    Falha em silêncio — perder a config antiga é um aborrecimento, travar o
+    arranque do app por causa dela seria pior."""
+    old = os.path.join(_CONFIG_BASE, "linux-file-search")
+    if os.path.isdir(old) and not os.path.exists(CONFIG_DIR):
+        try:
+            os.rename(old, CONFIG_DIR)
+        except OSError:
+            pass
 
 def load_cfg() -> dict:
     try:
@@ -883,7 +898,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         # O título carrega a BUILD: o app instalado é uma cópia dos fontes, então
         # commitar não muda o que o usuário roda. Ver version.py.
-        self.setWindowTitle("Linux File Search" + version.title_suffix())
+        self.setWindowTitle("Sombrero File Search" + version.title_suffix())
         # cabe SEMPRE na tela (monitor em retrato tem só ~1080 de largura útil);
         # janela maior que a tela perde o botão de maximizar no Muffin/Cinnamon
         scr = QGuiApplication.primaryScreen().availableGeometry()
@@ -936,7 +951,7 @@ class MainWindow(QMainWindow):
             logo.setPixmap(QPixmap(pm).scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         hl.addWidget(logo)
         tt = QVBoxLayout(); tt.setSpacing(0)
-        ttl = QLabel("Linux File Search"); ttl.setObjectName("title")
+        ttl = QLabel("Sombrero File Search"); ttl.setObjectName("title")
         s = QLabel(t("broad file search — name · content · boolean · documents"))
         s.setObjectName("subtitle")
         tt.addWidget(ttl); tt.addWidget(s); hl.addLayout(tt); hl.addStretch(1)
@@ -2168,9 +2183,15 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    # Migração do rebranding: só no arranque REAL da GUI, nunca no import (assim
+    # importar o módulo — em teste ou ferramenta — não mexe no ~/.config do usuário).
+    _migrate_old_config()
     app = QApplication(sys.argv)
-    app.setApplicationName("Linux File Search")
-    app.setApplicationDisplayName("Linux File Search")
+    app.setApplicationName("Sombrero File Search")
+    app.setApplicationDisplayName("Sombrero File Search")
+    # Amarra a janela ao .desktop instalado: sem isto o WM usa o WM_CLASS
+    # genérico e o ícone da barra de tarefas some (mostra o de app desconhecido).
+    app.setDesktopFileName("sombrero-file-search")
     ico = os.path.join(ASSETS, "icon_256.png")
     if os.path.exists(ico):
         app.setWindowIcon(QIcon(ico))

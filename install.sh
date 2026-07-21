@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==========================================================================
-#  Linux File Search — instalador universal
+#  Sombrero File Search — instalador universal
 #  Instala o app + TODAS as dependências, em qualquer distro:
 #    - ripgrep, fd            (busca de conteúdo / nome)
 #    - poppler-utils          (pdftotext, p/ PDF no modo documentos)
@@ -12,11 +12,19 @@
 # ==========================================================================
 set -euo pipefail
 
-APP="linux-file-search"
+APP="sombrero-file-search"
+OLD_APP="linux-file-search"                 # nome anterior (rebranding jul/2026)
 PREFIX="${PREFIX:-$HOME/.local/share/$APP}"
+OLD_PREFIX="$HOME/.local/share/$OLD_APP"
 BIN="$HOME/.local/bin"
 APPDIR="$HOME/.local/share/applications"
 ICONS="$HOME/.local/share/icons/hicolor"
+
+# Rebranding: reaproveita a instalação antiga (o venv de ~250 MB, sobretudo) em
+# vez de recriá-la sob o nome novo. Só move se o destino NOVO ainda não existe.
+if [ -d "$OLD_PREFIX" ] && [ ! -d "$PREFIX" ]; then
+  mv "$OLD_PREFIX" "$PREFIX" 2>/dev/null || true
+fi
 SRC="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 ARCH="$(uname -m)"
 ASSUME_YES=0
@@ -225,20 +233,31 @@ install_app() {
 
   cat > "$BIN/$APP" <<EOF
 #!/usr/bin/env bash
-# Lançador do Linux File Search (gerado pelo install.sh)
+# Lançador do Sombrero File Search (gerado pelo install.sh)
 export PATH="$PREFIX/bin:\$PATH"    # acha rga/pandoc empacotados
 exec "$PYBIN" "$PREFIX/lfs/app.py" "\$@"
 EOF
   chmod +x "$BIN/$APP"
   ln -sf "$PREFIX/lfs/cli.py" "$BIN/$APP-cli" 2>/dev/null || true
-  # CLI standalone (com o python certo)
-  cat > "$BIN/lfs" <<EOF
+
+  # CLI standalone (com o python certo). Comando novo: 'sfs' (Sombrero File
+  # Search). Mantemos 'lfs' como ALIAS — muda o nome, não a memória muscular de
+  # quem já usa o comando em scripts e no dia a dia.
+  cat > "$BIN/sfs" <<EOF
 #!/usr/bin/env bash
 export PATH="$PREFIX/bin:\$PATH"
 exec "$PYBIN" "$PREFIX/lfs/cli.py" "\$@"
 EOF
-  chmod +x "$BIN/lfs"
-  ok "app em $PREFIX  ·  lançadores: $BIN/$APP  e  $BIN/lfs (CLI)"
+  chmod +x "$BIN/sfs"
+  ln -sf "$BIN/sfs" "$BIN/lfs"          # alias de compatibilidade
+
+  # limpa lançadores/atalho do nome antigo, pra não ficar entrada duplicada no
+  # menu nem um binário obsoleto no PATH apontando para o PREFIX que já movemos.
+  rm -f "$BIN/$OLD_APP" "$BIN/$OLD_APP-cli" "$APPDIR/$OLD_APP.desktop" 2>/dev/null || true
+  for sz in 48 64 128 256; do rm -f "$ICONS/${sz}x${sz}/apps/$OLD_APP.png" 2>/dev/null || true; done
+  rm -f "$ICONS/scalable/apps/$OLD_APP.svg" 2>/dev/null || true
+
+  ok "app em $PREFIX  ·  lançadores: $BIN/$APP  ·  CLI: $BIN/sfs (alias: lfs)"
 
   # ícones no tema hicolor
   for sz in 48 64 128 256; do
@@ -252,7 +271,7 @@ EOF
   cat > "$APPDIR/$APP.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Linux File Search
+Name=Sombrero File Search
 GenericName=Busca de arquivos
 Comment=Busca ampla de arquivos: nome, conteúdo, booleano e dentro de documentos
 Exec=$BIN/$APP %F
@@ -264,7 +283,7 @@ StartupNotify=true
 EOF
   has update-desktop-database && update-desktop-database "$APPDIR" >/dev/null 2>&1 || true
   has gtk-update-icon-cache && gtk-update-icon-cache -f -t "$ICONS" >/dev/null 2>&1 || true
-  ok "atalho de menu instalado (Linux File Search)"
+  ok "atalho de menu instalado (Sombrero File Search)"
 }
 
 # mostra o plano de dependências (nome de pacote resolvido p/ ESTA distro) e pede OK
@@ -287,7 +306,7 @@ plan_and_confirm() {
 }
 
 # ============================================================ fluxo
-c "== Linux File Search — instalador =="
+c "== Sombrero File Search — instalador =="
 echo "  destino: $PREFIX"
 echo "  arch:    $ARCH"
 detect_pm; [ -n "$PM" ] && echo "  pacotes: $PM" || wn "gerenciador de pacotes não detectado"
@@ -317,6 +336,6 @@ c "[5/5] Instalando o aplicativo"
 install_app
 echo
 c "== Pronto! =="
-echo "  GUI : abra 'Linux File Search' no menu, ou rode:  $APP"
-echo "  CLI : lfs ~/pasta -c \"texto\"   |   lfs ~/docs -n '*.pdf' -c laudo --docs"
+echo "  GUI : abra 'Sombrero File Search' no menu, ou rode:  $APP"
+echo "  CLI : sfs ~/pasta -c \"texto\"   |   sfs ~/docs -n '*.pdf' -c laudo --docs   (alias: lfs)"
 case ":$PATH:" in *":$BIN:"*) : ;; *) wn "adicione ao PATH:  export PATH=\"$BIN:\$PATH\"";; esac

@@ -1427,8 +1427,9 @@ def test_deb_package_builds_and_is_well_formed():
                         ("Depends", "Pre-Depends", "Recommends")).lower()
         assert "pyside" not in deps, "não pode depender de um pacote inexistente no apt"
         conteudo = subprocess.run(["dpkg-deb", "-c", deb], capture_output=True, text=True).stdout
-        for f in ("/usr/bin/lfs", "/usr/bin/linux-file-search", "/usr/share/doc/",
-                  "/usr/share/man/man1/lfs.1.gz", "/usr/lib/linux-file-search/lfs/engine.py"):
+        for f in ("/usr/bin/sfs", "/usr/bin/lfs", "/usr/bin/sombrero-file-search",
+                  "/usr/share/doc/", "/usr/share/man/man1/sfs.1.gz",
+                  "/usr/share/man/man1/lfs.1.gz", "/usr/lib/sombrero-file-search/lfs/engine.py"):
             assert f in conteudo, f"pacote sem {f}"
         assert " root/root " in conteudo, "arquivos não saíram como root:root"
         # Scripts de manutenção: um postinst não pode baixar nada nem rodar pip.
