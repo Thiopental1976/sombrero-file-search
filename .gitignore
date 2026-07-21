@@ -27,3 +27,6 @@ dist/
 # Notas internas de desenvolvimento (referências ao sistema pessoal) — não publicar
 ARRANQUE_SEGUNDA_JANELA.md
 PROJETO_Linux_File_Search.md
+
+# Pacotes gerados (.deb, AppImage): saem do build, não do repositório
+/dist/

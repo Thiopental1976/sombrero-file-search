@@ -9,7 +9,8 @@ Cada teste constrói sua própria árvore sintética em tempdir — não toca no
 from __future__ import annotations
 import os, sys, time, subprocess, tempfile, shutil
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lfs"))
+RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+sys.path.insert(0, os.path.join(RAIZ, "lfs"))
 import engine, boolean, i18n
 from engine import Query
 
@@ -1145,9 +1146,8 @@ def test_cli_emits_bytes_for_hostile_names():
         quebrado = os.path.join(src, os.fsdecode(b"camera_\xff\xfe.jpg"))
         open(quebrado, "w").close()
         open(os.path.join(src, "depois.txt"), "w").close()
-        raiz = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
         out = subprocess.run([sys.executable, "-m", "lfs.cli", "-n", "*", "-l", src],
-                             capture_output=True, cwd=raiz)
+                             capture_output=True, cwd=RAIZ)
         assert out.returncode == 0, out.stderr.decode("utf-8", "replace")
         assert os.fsencode(quebrado) in out.stdout, "o nome não-UTF-8 não saiu em bytes"
         assert b"depois.txt" in out.stdout, "a busca morreu no nome quebrado"
@@ -1224,7 +1224,7 @@ def test_qt_drag_and_clipboard_payload():
     except ImportError:
         print("--  F7   payload Qt: pulado (sem PySide6)")
         return
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lfs"))
+    sys.path.insert(0, os.path.join(RAIZ, "lfs"))
     import app as lfsapp
     _ = QApplication.instance() or QApplication([])
     hostis = ["/tmp/com espaco.txt", "/tmp/com\nquebra.txt",
@@ -1310,6 +1310,95 @@ def test_build_info_visible_and_honest():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_deb_version_is_dpkg_comparable():
+    """F6 — a versão do pacote precisa ORDENAR. O hash do commit identifica, mas
+    não diz o que é mais novo; o dpkg decide atualização comparando versões. O
+    '~' faz o snapshot ordenar ANTES do 0.9.0 final, que é o certo para um
+    pacote gerado do worktree."""
+    import version as V
+    v = V.deb_version()
+    assert v.startswith(V.RELEASE)
+    if os.path.isdir(os.path.join(RAIZ, ".git")):
+        assert "~git" in v, f"sem carimbo de snapshot: {v}"
+    if shutil.which("dpkg"):
+        cmp = lambda a, op, b: subprocess.run(
+            ["dpkg", "--compare-versions", a, op, b]).returncode == 0
+        assert cmp(v, "lt", V.RELEASE), f"{v} deveria ser mais antigo que {V.RELEASE}"
+        assert cmp(v, "gt", "0.8.0"), f"{v} deveria ser mais novo que 0.8.0"
+    print(f"ok  F6   versão do pacote ordena no dpkg ({v})")
+
+
+def test_deb_package_builds_and_is_well_formed():
+    """F6 — constrói o .deb DE VERDADE e o inspeciona. Um teste que só lesse o
+    script não pegaria umask errado, SIGPIPE na conferência nem campo faltando
+    no control — os três erros que este build já cometeu."""
+    if not shutil.which("dpkg-deb"):
+        print("--  F6   .deb: pulado (sem dpkg-deb)"); return
+    out = tempfile.mkdtemp(prefix="lfs_deb_")
+    try:
+        r = subprocess.run([os.path.join(RAIZ, "packaging", "build_deb.sh"), out],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        debs = [f for f in os.listdir(out) if f.endswith(".deb")]
+        assert len(debs) == 1, f"esperava um .deb, achei {debs}"
+        deb = os.path.join(out, debs[0])
+        ctrl = subprocess.run(["dpkg-deb", "-f", deb], capture_output=True, text=True).stdout
+        campos = dict(l.split(":", 1) for l in ctrl.splitlines() if ":" in l and not l.startswith(" "))
+        for c in ("Package", "Version", "Architecture", "Maintainer", "Description", "Depends"):
+            assert c in campos, f"control sem {c}"
+        assert campos["Architecture"].strip() == "all", "Python puro não é arch-specific"
+        # Depends MÍNIMO: rg/fd são Recommends porque há fallback em Python puro.
+        assert "python3" in campos["Depends"]
+        assert "ripgrep" not in campos["Depends"], "ripgrep não é obrigatório (há fallback)"
+        assert "ripgrep" in campos.get("Recommends", "")
+        # PySide6 não existe no apt de Debian/Ubuntu/Mint: depender dele tornaria
+        # o pacote ininstalável na distro do próprio autor.
+        deps = " ".join(campos.get(c, "") for c in
+                        ("Depends", "Pre-Depends", "Recommends")).lower()
+        assert "pyside" not in deps, "não pode depender de um pacote inexistente no apt"
+        conteudo = subprocess.run(["dpkg-deb", "-c", deb], capture_output=True, text=True).stdout
+        for f in ("/usr/bin/lfs", "/usr/bin/linux-file-search", "/usr/share/doc/",
+                  "/usr/share/man/man1/lfs.1.gz", "/usr/lib/linux-file-search/lfs/engine.py"):
+            assert f in conteudo, f"pacote sem {f}"
+        assert " root/root " in conteudo, "arquivos não saíram como root:root"
+        # Scripts de manutenção: um postinst não pode baixar nada nem rodar pip.
+        for script in ("postinst", "postrm"):
+            s = subprocess.run(["dpkg-deb", "-I", deb, script],
+                               capture_output=True, text=True).stdout
+            for proibido in ("pip", "curl", "wget", "apt-get", "python3 -m venv"):
+                assert proibido not in s, f"{script} faz {proibido} — instalação não surpreende"
+        print(f"ok  F6   .deb bem formado ({campos['Version'].strip()}, {os.path.getsize(deb)//1024} KiB)")
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
+
+
+def test_appimage_recipe_is_coherent():
+    """F6 — o AppImage leva ~10 min para construir, então aqui checamos o que
+    quebra silenciosamente na receita: o AppRun tem que servir GUI e CLI (um
+    arquivo só), e não pode sequestrar o rg/fd do usuário."""
+    recipe = open(os.path.join(RAIZ, "packaging", "build_appimage.sh"),
+                  encoding="utf-8").read()
+    assert "--cli" in recipe, "AppImage sem modo CLI: um arquivo tem que servir aos dois"
+    assert 'export PATH="$PATH:$HERE/usr/bin"' in recipe, \
+        "o PATH do sistema tem que vir PRIMEIRO (o rg do usuário é o que vale)"
+    assert "PySide6-Essentials" in recipe, "Essentials evita arrastar o QtWebEngine"
+    assert "flatpak" not in recipe.lower() or "sandbox" in recipe.lower()
+    assert "GPL-3.0-or-later" in recipe, "AppStream sem a licença do projeto"
+    for chave in ("appimagetool", "python-build-standalone"):
+        assert chave in recipe
+    # O binário construído, se existir, tem que rodar a CLI.
+    imgs = [f for f in os.listdir(os.path.join(RAIZ, "dist"))
+            if f.endswith(".AppImage")] if os.path.isdir(os.path.join(RAIZ, "dist")) else []
+    if imgs:
+        img = os.path.join(RAIZ, "dist", sorted(imgs)[-1])
+        r = subprocess.run([img, "--cli", "--version"], capture_output=True, text=True,
+                           env={"HOME": os.environ.get("HOME", "/tmp"), "PATH": "/usr/bin:/bin"})
+        assert r.returncode == 0 and "GPL" in r.stdout, r.stdout + r.stderr
+        print(f"ok  F6   AppImage coerente e executável ({os.path.basename(img)})")
+    else:
+        print("ok  F6   receita do AppImage coerente (binário não construído)")
+
+
 def test_fileops_has_no_destructive_api():
     """Garantia estrutural: o motor de cópia não expõe NENHUMA função capaz de
     apagar, mover ou renomear a origem. É a versão executável do princípio —
@@ -1358,7 +1447,11 @@ def main():
            test_preflight_flags_fat_problems,
            test_copy_into_itself, test_qt_drag_and_clipboard_payload,
            test_default_file_manager_wins_over_dbus, test_build_info_visible_and_honest,
-           test_fileops_has_no_destructive_api]
+           test_fileops_has_no_destructive_api,
+           # F6 — empacotamento
+           test_deb_version_is_dpkg_comparable,
+           test_deb_package_builds_and_is_well_formed,
+           test_appimage_recipe_is_coherent]
     fail = 0
     for fn in fns:
         try:

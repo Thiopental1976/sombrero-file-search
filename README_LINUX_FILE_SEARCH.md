@@ -43,7 +43,49 @@ MFT/USN do NTFS, que não existe aqui. Este projeto reimplementa a função de f
 
 ## Instalação
 
-Instalador universal (detecta apt/dnf/pacman/zypper; instala o app em `~/.local`, sem root):
+Três caminhos, na ordem em que provavelmente interessam:
+
+| | quando usar | GUI funciona? |
+|---|---|---|
+| **AppImage** | qualquer distro, sem instalar nada | sim — Python e PySide6 vêm dentro |
+| **.deb** | Debian/Ubuntu/Mint, integrado ao apt | precisa de PySide6 (veja abaixo) |
+| **install.sh** | qualquer distro, instala no `~`, sem root | sim — usa o do sistema ou cria um venv |
+
+### AppImage — um arquivo, nada a instalar
+
+```bash
+chmod +x Linux_File_Search-*.AppImage
+./Linux_File_Search-*.AppImage                       # GUI
+./Linux_File_Search-*.AppImage --cli ~/docs -n '*.pdf'   # a mesma CLI
+```
+
+Traz Python e Qt embutidos (~135 MB). Usa o `rg`/`fd` **do seu sistema** se existirem —
+não os sequestra nem os duplica.
+
+> Não há versão Flatpak, e é de propósito: este programa existe para varrer o disco
+> inteiro, e a sandbox do Flatpak é o modelo errado para isso. Dar-lhe
+> `--filesystem=host` seria anular a sandbox e ainda brigar com portais.
+
+### .deb
+
+```bash
+sudo apt install ./linux-file-search_*_all.deb
+lfs ~/docs -n '*.pdf'          # CLI: funciona já, só precisa de python3
+linux-file-search              # GUI
+```
+
+O pacote é **magro** de propósito: `Depends: python3`, com `ripgrep` e `fd-find` como
+*Recommends* (há fallback em Python puro, então declará-los como obrigatórios seria mentira).
+O apt do Debian/Ubuntu/Mint **não tem PySide6** — nessas distros, a primeira execução da GUI
+pede um comando único:
+
+```bash
+linux-file-search --setup-gui   # cria um venv no SEU home, sem root
+```
+
+### install.sh — instalador universal
+
+Detecta apt/dnf/pacman/zypper; instala o app em `~/.local`, sem root:
 
 ```bash
 git clone https://github.com/Thiopental1976/ubiquitous-octo-winner-BR.git
@@ -83,7 +125,19 @@ lfs/engine.py   # core sem Qt: Query/Match + backends rg (conteúdo) / fd (nome)
 lfs/boolean.py  # parser recursivo-descendente da busca booleana (tokenizer → AST → conjuntos)
 lfs/app.py      # GUI PySide6: form, tabela ao vivo, preview texto/mídia, temas
 lfs/cli.py      # CLI (mesma core)
+lfs/fileops.py  # cópia não-destrutiva (F7): nunca move, renomeia nem apaga
+lfs/disks.py    # capacidades do destino: FAT/exFAT/NTFS/MTP e seus limites
+lfs/xdg.py      # mime, "abrir com", gerenciador de arquivos padrão
+lfs/version.py  # identidade da build (o que está rodando é o que você acha?)
 install.sh      # instalador universal (multi-distro)
+packaging/      # build_deb.sh e build_appimage.sh (F6)
+```
+
+Para gerar os pacotes você mesmo:
+
+```bash
+./packaging/build_deb.sh        # ~3 s, precisa só de dpkg-deb
+./packaging/build_appimage.sh   # ~10 min na 1ª vez (baixa Python + PySide6)
 ```
 
 ## Requisitos
