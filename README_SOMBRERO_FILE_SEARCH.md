@@ -99,8 +99,8 @@ sombrero-file-search --setup-gui   # cria um venv no SEU home, sem root
 Detecta apt/dnf/pacman/zypper; instala o app em `~/.local`, sem root:
 
 ```bash
-git clone https://github.com/Thiopental1976/ubiquitous-octo-winner-BR.git
-cd ubiquitous-octo-winner-BR
+git clone https://github.com/Thiopental1976/sombrero-file-search.git
+cd sombrero-file-search
 ./install.sh
 ```
 

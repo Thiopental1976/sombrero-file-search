@@ -53,8 +53,8 @@ reimplementa a função de forma nativa.
 (motor, parser booleano, otimizações e cuidados com SMR em detalhe).
 
 ```bash
-git clone https://github.com/Thiopental1976/ubiquitous-octo-winner-BR.git
-cd ubiquitous-octo-winner-BR
+git clone https://github.com/Thiopental1976/sombrero-file-search.git
+cd sombrero-file-search
 ./install.sh
 ```
 

@@ -43,7 +43,7 @@ saíram desse ambiente, não de benchmark sintético.
 | Auditoria adversarial | feita (Fable 5) — B1–B6 + E1–E10 + A1/A3 corrigidos |
 | Testes | **33/33** (`tests/test_audit.py`, runner próprio, sem pytest) |
 | i18n | inglês é a fonte, pt por tabela |
-| Publicado | GitHub `Thiopental1976/ubiquitous-octo-winner-BR`, branch `main` |
+| Publicado | GitHub `Thiopental1976/sombrero-file-search`, branch `main` |
 | Instalado | `~/.local/share/sombrero-file-search/` (venv PySide6 6.11.1, sem sudo) |
 | Parecer externo | "projeto mais bem executado do ServidorCedro"; aprovado para uso diário |
 
@@ -236,7 +236,7 @@ A CLI tem `--print0`, pensada para pipeline com o resto do acervo.
 |---|---|
 | repositório | `~/projetos/linux_file_search/` |
 | instalação | `~/.local/share/sombrero-file-search/` |
-| GitHub | `Thiopental1976/ubiquitous-octo-winner-BR`, branch `main` |
+| GitHub | `Thiopental1976/sombrero-file-search`, branch `main` |
 | doc técnica longa | `DOCUMENTACAO_TECNICA.md` (37 KB, neste repo) |
 | doc de projeto | `PROJETO_Sombrero_File_Search.md` |
 | README público | `README.md` / `README_SOMBRERO_FILE_SEARCH.md` |
