@@ -32,6 +32,13 @@ import os, subprocess
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)                 # …/linux_file_search ou …/<PREFIX>
 
+# Versão de RELEASE, à mão. Nasceu com o empacotamento (F6): .deb e AppImage
+# precisam de um número que ordene ("é mais novo que o instalado?"), e o hash do
+# commit não ordena. É o único lugar onde este número existe — o build lê daqui.
+# 0.9: em uso diário e completo do F1 ao F4 e F7; o 1.0 fica para quando o
+# empacotamento estiver rodando em outra máquina que não a do autor.
+RELEASE = "0.9.0"
+
 
 def _from_file(root: str) -> str:
     """VERSION: '<commit> (<data>)' na 1ª linha.
@@ -77,6 +84,20 @@ def build_info(root: str | None = None) -> str:
     número de versão errado é pior que nenhum."""
     root = root or _ROOT
     return _from_file(root) or _from_git(root)
+
+
+def deb_version(root: str | None = None) -> str:
+    """Versão no formato que o dpkg compara: '0.9.0~git20260721.eb24842'.
+
+    O '~' ordena ANTES de tudo, então qualquer 0.9.0 de snapshot é considerado
+    mais antigo que um 0.9.0 final — que é o comportamento certo para um pacote
+    gerado a partir do worktree. Sem git (tarball), cai em '0.9.0'."""
+    info = build_info(root)                    # "<commit>[+] (<data>)"
+    commit = info.split()[0].rstrip("+") if info else ""
+    data = info.split("(")[-1].rstrip(")") if "(" in info else ""
+    if not (commit and data):
+        return RELEASE
+    return f"{RELEASE}~git{data.replace('-', '')}.{commit}"
 
 
 def title_suffix(root: str | None = None) -> str:

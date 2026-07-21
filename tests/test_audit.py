@@ -1111,6 +1111,30 @@ def test_dest_caps_statvfs_lies_on_vfat():
     print("ok  F7   limite de nome do FAT medido em caracteres, não no f_namemax")
 
 
+def test_dest_caps_rejects_non_utf8_names():
+    """Terceiro achado do presencial, e o único que a imagem FAT32 em loop NÃO
+    pegou: um pendrive de verdade recusa nome que não é UTF-8 válido.
+
+    vfat/exfat/ntfs guardam o nome em UTF-16 e o kernel converte na escrita; um
+    byte indecodificável (foto de câmera, arquivo vindo de outro sistema) volta
+    EINVAL. A imagem em loop aceitava porque eu a montei com iocharset=utf8; o
+    udisks monta o removível com iso8859-1 + utf8, e aí o kernel valida. Sem
+    isto, 'adaptar nomes' ficava LIGADO e mesmo assim o arquivo falhava — o
+    usuário pediu adaptação e recebeu erro, que é o pior dos mundos."""
+    fat = disks.DestCaps(fstype="vfat", namemax=255, **disks._FAT)
+    quebrado = os.fsdecode(b"camera_\xff\xfe.jpg")
+    assert fat.name_problem(quebrado) == "encoding"
+    s = fat.sanitize(quebrado)
+    assert fat.name_problem(s) is None
+    s.encode("utf-8")                                  # tem que ser escrevível
+    assert s.endswith(".jpg"), "perdeu a extensão"
+    assert "FF" in s and "FE" in s, f"perdeu o byte original de vista: {s!r}"
+    posix = disks.DestCaps(fstype="ext4", namemax=255)
+    assert posix.name_problem(quebrado) is None, "no ext4 esse nome é legítimo"
+    assert posix.sanitize(quebrado) == quebrado, "mexeu em nome válido no destino"
+    print("ok  F7   nome não-UTF-8 pego antes do EINVAL do vfat (achado no pendrive)")
+
+
 def test_cli_emits_bytes_for_hostile_names():
     """Também do presencial: buscar uma pasta com foto de câmera de nome quebrado
     matava a CLI inteira com UnicodeEncodeError na primeira linha — os resultados
@@ -1329,6 +1353,7 @@ def main():
            test_copy_never_touches_source, test_preflight_space_and_mount,
            test_dest_caps_restrictive_filesystems,
            test_dest_caps_statvfs_lies_on_vfat,
+           test_dest_caps_rejects_non_utf8_names,
            test_cli_emits_bytes_for_hostile_names,
            test_preflight_flags_fat_problems,
            test_copy_into_itself, test_qt_drag_and_clipboard_payload,

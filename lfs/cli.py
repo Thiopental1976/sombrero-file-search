@@ -16,7 +16,7 @@ from engine import Query
 # A GPL pede que o programa saiba declarar licença e ausência de garantia. Fica
 # aqui, num --version que só aparece quando pedido: aviso que interrompe o uso
 # (pop-up, lembrete recorrente) não é respeito à licença, é incômodo.
-NOTICE = """Linux File Search {build}
+NOTICE = """Linux File Search {release}  {build}
 Copyright (C) 2026 Rodrigo Toledo
 Licença: GNU GPL versão 3 ou posterior <https://gnu.org/licenses/gpl.html>
 Software livre: você pode alterá-lo e redistribuí-lo.
@@ -29,7 +29,7 @@ class _PrintNotice(argparse.Action):
     imprime como está escrito."""
 
     def __call__(self, parser, ns, values, option_string=None):
-        print(NOTICE.format(build=version.build_info() or ""))
+        print(NOTICE.format(release=version.RELEASE, build=version.build_info() or ""))
         parser.exit()
 
 

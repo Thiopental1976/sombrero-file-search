@@ -182,6 +182,8 @@ _PT = {
         "nome reservado neste sistema de arquivos",
     "name ends in space or dot (dropped by this filesystem)":
         "nome termina em espaço ou ponto (descartado por este sistema de arquivos)",
+    "name is not valid UTF-8 (rejected by this filesystem)":
+        "nome não é UTF-8 válido (recusado por este sistema de arquivos)",
     "{n} symlink(s) will be copied as real files ({fs} has no symlinks).":
         "{n} link(s) simbólico(s) virarão cópia real ({fs} não tem symlink).",
     "{n} broken symlink(s) cannot be copied to {fs} and will be skipped.":

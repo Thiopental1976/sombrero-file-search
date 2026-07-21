@@ -608,6 +608,7 @@ class PreflightDialog(QDialog):
             "length": t("name too long for this filesystem"),
             "reserved": t("reserved name on this filesystem"),
             "trailing": t("name ends in space or dot (dropped by this filesystem)"),
+            "encoding": t("name is not valid UTF-8 (rejected by this filesystem)"),
         }.get(why, why)
 
     def __init__(self, parent, pf):

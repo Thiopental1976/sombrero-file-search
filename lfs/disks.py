@@ -115,6 +115,12 @@ def mount_ok(path: str) -> bool:
 #   times     — suporta ajustar mtime (utime)
 #   charset   — caracteres PROIBIDOS no nome
 #   reserved  — nomes reservados do DOS (CON, PRN, LPT1…) são inválidos
+#   utf8_only — o nome precisa ser UTF-8 VÁLIDO. O vfat/exfat/ntfs guardam nomes
+#               em UTF-16 e o kernel converte na hora de escrever; um nome com
+#               byte inválido (foto de câmera, arquivo vindo de outro sistema)
+#               volta EINVAL. Não é teoria: o pendrive de verdade recusou
+#               'camera_\xff\xfe.jpg' que a imagem FAT32 em loop tinha aceitado
+#               — a diferença é o iocharset com que o udisks monta o removível.
 #   maxchars  — limite de nome em CARACTERES (não bytes). FAT/exFAT/NTFS contam
 #               255 unidades UTF-16, mas o statvfs do vfat responde f_namemax
 #               =1530 (255x6, o pior caso do UTF-8): confiar nele fazia a
@@ -123,13 +129,13 @@ def mount_ok(path: str) -> bool:
 #               real: 254 caracteres passam, 259 não.
 _DOS_BAD = '"*:<>?\\|'
 _FAT = dict(max_file=(1 << 32) - 1, symlinks=False, perms=False, times=True,
-            charset=_DOS_BAD, reserved=True, label="FAT32", maxchars=255)
+            charset=_DOS_BAD, reserved=True, label="FAT32", maxchars=255, utf8_only=True)
 _EXFAT = dict(max_file=None, symlinks=False, perms=False, times=True,
-              charset=_DOS_BAD, reserved=False, label="exFAT", maxchars=255)
+              charset=_DOS_BAD, reserved=False, label="exFAT", maxchars=255, utf8_only=True)
 _NTFS = dict(max_file=None, symlinks=False, perms=False, times=True,
-             charset=_DOS_BAD, reserved=True, label="NTFS", maxchars=255)
+             charset=_DOS_BAD, reserved=True, label="NTFS", maxchars=255, utf8_only=True)
 _MTP = dict(max_file=None, symlinks=False, perms=False, times=False,
-            charset=_DOS_BAD, reserved=False, label="MTP", maxchars=255)
+            charset=_DOS_BAD, reserved=False, label="MTP", maxchars=255, utf8_only=True)
 
 _FS_CAPS = {
     "vfat": _FAT, "fat": _FAT, "msdos": _FAT, "umsdos": _FAT,
@@ -145,6 +151,19 @@ _FS_CAPS = {
 
 _DEFAULT_CAPS = dict(max_file=None, symlinks=True, perms=True, times=True,
                      charset="", reserved=False, label="POSIX")
+
+def _has_broken_bytes(name: str) -> bool:
+    """O nome carrega bytes que não formam UTF-8 válido? São os substitutos do
+    surrogateescape, que o Python usa para representar bytes indecodificáveis."""
+    return any(0xDC80 <= ord(c) <= 0xDCFF for c in name)
+
+
+def _fix_broken_bytes(name: str) -> str:
+    """Troca cada byte indecodificável por '%XX' — o valor original fica legível
+    no nome, então dá para saber de que arquivo veio sem consultar a origem."""
+    return "".join("%%%02X" % (ord(c) - 0xDC00) if 0xDC80 <= ord(c) <= 0xDCFF else c
+                   for c in name)
+
 
 _RESERVED = ({"CON", "PRN", "AUX", "NUL"} |
              {"COM%d" % i for i in range(1, 10)} |
@@ -166,7 +185,8 @@ class DestCaps:
         self.perms = caps.get("perms", True)
         self.times = caps.get("times", True)
         self.charset = caps.get("charset", "")
-        self.maxchars = caps.get("maxchars")     # limite em CARACTERES (UTF-16)
+        self.maxchars = caps.get("maxchars")             # limite em CARACTERES (UTF-16)
+        self.utf8_only = bool(caps.get("utf8_only"))     # nome precisa ser UTF-8 válido
         self.reserved = caps.get("reserved", False)
         self.label = caps.get("label", "POSIX")
 
@@ -184,6 +204,8 @@ class DestCaps:
             return "charset"
         if self.charset and any(ord(c) < 32 for c in name):
             return "charset"             # \n, \t: ilegais em FAT/exFAT/NTFS
+        if self.utf8_only and _has_broken_bytes(name):
+            return "encoding"            # nome que não é UTF-8: EINVAL no vfat
         if len(os.fsencode(name)) > self.namemax:
             return "length"
         if self.maxchars and len(name) > self.maxchars:
@@ -197,6 +219,8 @@ class DestCaps:
     def sanitize(self, name: str) -> str:
         """Nome adaptado ao destino, preservando a extensão. Só é usado quando o
         usuário escolhe 'adaptar nomes' — nunca automaticamente."""
+        if self.utf8_only:
+            name = _fix_broken_bytes(name)
         out = "".join("_" if (c in self.charset or ord(c) < 32) else c for c in name)
         if self.reserved and os.path.splitext(out)[0].upper() in _RESERVED:
             stem, ext = os.path.splitext(out)
