@@ -7,7 +7,7 @@ Rode:  python3 tests/test_audit.py      (ou via pytest)
 Cada teste constrói sua própria árvore sintética em tempdir — não toca no acervo.
 """
 from __future__ import annotations
-import os, sys, time, subprocess, tempfile, shutil
+import os, sys, time, subprocess, tempfile, shutil, errno
 
 RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(RAIZ, "lfs"))
@@ -1492,22 +1492,56 @@ def test_appimage_recipe_is_coherent():
 
 
 def test_fileops_has_no_destructive_api():
-    """Garantia estrutural: o motor de cópia não expõe NENHUMA função capaz de
-    apagar, mover ou renomear a origem. É a versão executável do princípio —
-    se alguém 'só adicionar um move()' um dia, este teste reprova."""
-    proibidos = ("move", "delete", "remove", "rename", "trash", "unlink", "rmtree",
-                 "chmod", "truncate")
+    """Garantia estrutural do §0 do F7, agora por AST (não mais por substring cega):
+    o motor de cópia NUNCA muta a origem. As estratégias A2R (ATOMIC/GUARDED)
+    promovem um temporário POR CIMA DO ALVO com os.replace/os.rename — legítimo,
+    é destino —, então a proibição não pode ser 'a string os.replace no arquivo'.
+    A regra correta e executável: (1) nada de shutil.move/rmtree, os.rmdir/truncate
+    (sem uso legítimo); (2) os.replace/rename/unlink/remove só podem tocar um
+    NOME-LOCAL DE DESTINO conhecido, jamais a origem; (3) a origem nunca é aberta
+    para escrita. Se alguém 'só adicionar um move()' um dia, isto reprova."""
+    import ast
+    proibidos = ("move", "delete", "trash", "rmtree", "truncate")
     achados = [n for n in dir(fileops)
                if not n.startswith("_") and any(p in n.lower() for p in proibidos)]
     assert not achados, f"fileops expõe API destrutiva: {achados}"
-    fonte = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "..", "lfs", "fileops.py"), encoding="utf-8").read()
-    for chamada in ("shutil.move", "shutil.rmtree", "os.rename", "os.replace",
-                    "os.rmdir", "os.removedirs"):
-        assert chamada not in fonte, f"fileops chama {chamada}"
-    # os.unlink existe UMA vez só: apagar o parcial que nós mesmos criamos
-    assert fonte.count("os.unlink") == 1, "os.unlink em mais de um lugar no fileops"
-    print("ok  F7   fileops não tem API destrutiva (nem por dentro, nem exportada)")
+
+    caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "..", "lfs", "fileops.py")
+    arvore = ast.parse(open(caminho, encoding="utf-8").read())
+
+    def dotted(node):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            return f"{node.value.id}.{node.attr}"
+        return node.id if isinstance(node, ast.Name) else ""
+
+    BANIDAS = {"shutil.move", "shutil.rmtree", "shutil.copytree",
+               "os.rmdir", "os.removedirs", "os.truncate"}
+    MUTAM = {"os.replace", "os.rename", "os.unlink", "os.remove"}
+    DESTINOS = {"dst", "tmp", "part", "probe", "old", "cand"}   # nomes-locais de destino
+    ORIGEM = {"src", "fi"}                                      # a origem e seu handle de leitura
+
+    achou_mut = False
+    for node in ast.walk(arvore):
+        if not isinstance(node, ast.Call):
+            continue
+        nome = dotted(node.func)
+        assert nome not in BANIDAS, f"fileops chama {nome} (sem uso legítimo)"
+        if nome == "open" and node.args and isinstance(node.args[0], ast.Name) \
+                and node.args[0].id in ORIGEM:
+            modo = node.args[1] if len(node.args) > 1 else None
+            m = modo.value if isinstance(modo, ast.Constant) else ""
+            assert not ({"w", "a", "+", "x"} & set(m)), \
+                f"open({node.args[0].id}, {m!r}): a ORIGEM aberta para ESCRITA"
+        if nome in MUTAM:
+            achou_mut = True
+            assert node.args, f"{nome} sem argumento?"
+            alvo = node.args[0]
+            assert isinstance(alvo, ast.Name) and alvo.id in DESTINOS, \
+                f"{nome} muta alvo não-destino (só {DESTINOS} são permitidos)"
+            assert alvo.id not in ORIGEM, f"{nome} MUTA A ORIGEM ({alvo.id})!"
+    assert achou_mut, "esperava ao menos um os.unlink de destino (guarda do parcial)"
+    print("ok  F7   fileops nunca muta a origem (AST): mutação só em nomes de destino")
 
 
 # ================================================================== F5: abas/buscas
@@ -1625,6 +1659,60 @@ def test_f5_title_for():
     print("ok  F5   título da aba: prioriza o digitado, cai na pasta, trunca")
 
 
+def test_write_probe_classifies_errno():
+    """A2R §1.1: a sonda GRAVA de verdade no destino (metadado mente — o gvfs-MTP
+    aceita statvfs e recusa open('wb')), não deixa lixo, e classifica o errno para
+    a GUI dizer o porquê. O open é injetável para simular ENOTSUP/EACCES/EROFS sem
+    hardware."""
+    dst = tempfile.mkdtemp(prefix="lfs_probe_")
+    try:
+        p = fileops.probe_write(dst)
+        assert p.ok, f"sonda real no /tmp deveria gravar (kind={p.kind})"
+        assert not [f for f in os.listdir(dst) if f.startswith(".sombrero-probe")], \
+            "sonda deixou arquivo para trás"
+
+        def opener_que_falha(num):
+            def _o(path, mode):
+                raise OSError(num, os.strerror(num))
+            return _o
+
+        for num, kind in [(errno.ENOTSUP, "notsup"), (errno.EACCES, "perm"),
+                          (errno.EPERM, "perm"), (errno.EROFS, "readonly"),
+                          (errno.ENOSPC, "nospace"), (errno.EIO, "other")]:
+            pr = fileops.probe_write(dst, _opener=opener_que_falha(num))
+            assert not pr.ok and pr.errno == num and pr.kind == kind, \
+                f"errno {num}: esperava kind={kind}, veio ok={pr.ok} kind={pr.kind}"
+        assert not [f for f in os.listdir(dst) if f.startswith(".sombrero-probe")], \
+            "sonda deixou lixo mesmo em falha (try/finally furado)"
+        print("ok  A2R  sonda de escrita: grava, não deixa lixo, classifica ENOTSUP/EACCES/EROFS")
+    finally:
+        shutil.rmtree(dst, ignore_errors=True)
+
+
+def test_decide_strategy_machine():
+    """A2R §3.5: a estratégia é decidida UMA vez (taxonomia + sonda + gio), nunca
+    por exceção no meio do lote. Quatro linhas de verdade, quatro veredictos."""
+    ok = fileops.WriteProbe(True)
+    falhou = fileops.WriteProbe(False, errno.ENOTSUP, "notsup")
+    ext4 = disks.DestCaps(fstype="ext4", namemax=255)
+    fat = disks.DestCaps(fstype="vfat", namemax=255, **disks._FAT)
+    jmtp = disks.DestCaps(fstype="fuse.jmtpfs", namemax=255, **disks._MTP)
+    gvfs_mtp = disks.DestCaps(fstype="fuse.gvfsd-fuse", namemax=255,
+                              via_gvfs=True, **disks._MTP)
+    # sonda OK + perfil com replace -> ATOMIC (POSIX, FAT, NTFS, exFAT, sftp)
+    assert fileops.decide_strategy(ext4, ok, True) == fileops.STRAT_ATOMIC
+    assert fileops.decide_strategy(fat, ok, False) == fileops.STRAT_ATOMIC
+    # sonda OK + MTP por FUSE real (jmtpfs) -> GUARDED (sem os.replace atômico)
+    assert fileops.decide_strategy(jmtp, ok, False) == fileops.STRAT_GUARDED
+    # sonda FALHOU + via_gvfs + tem gio -> GIO (a rota do Nemo por `gio copy`)
+    assert fileops.decide_strategy(gvfs_mtp, falhou, True) == fileops.STRAT_GIO
+    # sonda FALHOU + via_gvfs mas SEM gio -> BLOCKED (barra no preflight)
+    assert fileops.decide_strategy(gvfs_mtp, falhou, False) == fileops.STRAT_BLOCKED
+    # sonda FALHOU num destino local (sem rota alternativa) -> BLOCKED
+    assert fileops.decide_strategy(ext4, falhou, True) == fileops.STRAT_BLOCKED
+    print("ok  A2R  máquina de estratégia: ATOMIC/GUARDED/GIO/BLOCKED decididos no preflight")
+
+
 def main():
     fns = [test_parse_size, test_reap_kills_process, test_no_orphan_on_cancel,
            test_glob_case_insensitive, test_boolean_name_regex,
@@ -1649,6 +1737,7 @@ def main():
            test_copy_never_touches_source, test_preflight_space_and_mount,
            test_dest_caps_restrictive_filesystems,
            test_mount_entry_sees_mtp_gvfs,
+           test_write_probe_classifies_errno, test_decide_strategy_machine,
            test_dest_caps_statvfs_lies_on_vfat,
            test_dest_caps_rejects_non_utf8_names,
            test_cli_emits_bytes_for_hostile_names,

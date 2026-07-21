@@ -28,7 +28,7 @@ of that up front, because failing on file 380 of 400 (or at byte 4294967296 of
 an 8 GiB video) is not an acceptable way to learn the destination was FAT32.
 """
 from __future__ import annotations
-import errno, os, stat, time
+import errno, os, shutil, stat, time
 
 try:                        # pacote (GUI) e flat (cli.py/testes)
     from . import disks
@@ -100,6 +100,8 @@ class Preflight:
         self.links_degraded: list[str] = []  # symlinks que virarão cópia real
         self.links_broken: list[str] = []   # symlinks quebrados, impossíveis no destino
         self.errors: list[tuple] = []       # (src, erro) na varredura
+        self.write_probe = None             # WriteProbe: dá pra gravar aqui? (§1.1)
+        self.strategy = ""                  # ATOMIC|GUARDED|GIO|BLOCKED (decidido no preflight)
 
     @property
     def fits(self) -> bool:
@@ -108,13 +110,119 @@ class Preflight:
 
     @property
     def blocked(self) -> bool:
-        """Impede começar? (montagem sumida ou destino só-leitura)"""
-        return (not self.mount_ok) or bool(self.caps and self.caps.readonly)
+        """Impede começar? Montagem sumida, destino só-leitura, ou a sonda provou
+        que não dá pra gravar por nenhuma rota (STRAT_BLOCKED) — decidido ANTES do
+        primeiro byte, nunca por Errno cru no meio do lote."""
+        return ((not self.mount_ok)
+                or bool(self.caps and self.caps.readonly)
+                or self.strategy == STRAT_BLOCKED)
 
     @property
     def has_warnings(self) -> bool:
         return bool(self.too_big or self.bad_names or self.links_degraded
                     or self.links_broken or not self.fits)
+
+
+# ---- estratégias de escrita (decididas UMA vez no preflight, nunca por exceção)
+STRAT_ATOMIC = "ATOMIC"       # .sombrero-part + fsync + os.replace (POSIX/FAT/NTFS/exFAT/sftp)
+STRAT_GUARDED = "GUARDED"     # jmtpfs: part + fsync -> remove antigo -> rename simples
+STRAT_GIO = "GIO"             # gvfs-MTP: `gio copy` por arquivo (a rota do Nemo)
+STRAT_BLOCKED = "BLOCKED"     # sonda falhou e não há rota: barra no preflight
+
+# Sufixo do temporário atômico. Órfão inequívoco se cair energia no meio.
+PART_SUFFIX = ".sombrero-part"
+
+
+class WriteProbe:
+    """Resultado de CRIAR+ESCREVER+APAGAR um arquivo-sonda no destino. Metadado
+    mente (o gvfs-MTP aceita statvfs e mkdir e recusa open('wb') com ENOTSUP): a
+    única resposta honesta a 'dá pra gravar aqui?' é TENTAR. De brinde, pega
+    diretório sem permissão, atributo imutável, inode esgotado, FUSE morto — tudo
+    ANTES do lote, nunca um Errno cru no arquivo 40 de 400."""
+
+    def __init__(self, ok, errno_=0, kind="", detail=""):
+        self.ok = bool(ok)
+        self.errno = errno_ or 0
+        self.kind = kind            # ""|"notsup"|"perm"|"readonly"|"nospace"|"other"
+        self.detail = detail
+
+
+def _classify_errno(num) -> str:
+    """errno da sonda -> chave estável (a GUI traduz; i18n mora na borda)."""
+    if num in (errno.ENOTSUP, getattr(errno, "EOPNOTSUPP", errno.ENOTSUP)):
+        return "notsup"             # gvfs-MTP: a ponte FUSE não abre p/ escrita
+    if num in (errno.EACCES, errno.EPERM):
+        return "perm"
+    if num == errno.EROFS:
+        return "readonly"
+    if num in (errno.ENOSPC, getattr(errno, "EDQUOT", -1)):
+        return "nospace"
+    return "other"
+
+
+def _nearest_existing(path: str) -> str:
+    """Ancestral existente mais próximo — o sistema de arquivos onde de fato se vai
+    escrever quando o subdiretório de destino ainda não existe."""
+    p = os.path.abspath(path)
+    while p != "/" and not os.path.exists(p):
+        p = os.path.dirname(p)
+    return p
+
+
+def probe_write(dest_dir, _opener=open) -> WriteProbe:
+    """Grava ~16 bytes num arquivo-sonda no destino, fsync, apaga. O try/finally
+    remove a sonda mesmo em falha parcial — nunca deixa lixo. `_opener` é injetável
+    para os testes simularem ENOTSUP/EACCES/EROFS sem hardware. Escreve APENAS no
+    diretório de destino (compatível com o §0 do F7 por construção)."""
+    target = _nearest_existing(dest_dir)
+    probe = os.path.join(target, ".sombrero-probe-%d-%s"
+                         % (os.getpid(), os.urandom(4).hex()))
+    try:
+        f = _opener(probe, "wb")
+        try:
+            f.write(b"sombrero-probe\n")
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except (OSError, AttributeError, ValueError):
+                pass                # fsync inócuo em alguns FUSE; não é falha de escrita
+        finally:
+            f.close()
+        return WriteProbe(True)
+    except OSError as ex:
+        return WriteProbe(False, ex.errno, _classify_errno(ex.errno), str(ex))
+    finally:
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass
+
+
+_GIO_BIN = []                       # cache: [] não sondado, [path] ou [None] depois
+
+
+def _has_gio() -> bool:
+    """`gio` presente? (padrão do rg/fd: usa se existir). É o utilitário que grava
+    no gvfs-MTP por dentro — a mesma rota que o Nemo usa para copiar pro celular."""
+    if not _GIO_BIN:
+        _GIO_BIN.append(shutil.which("gio"))
+    return _GIO_BIN[0] is not None
+
+
+def decide_strategy(caps, probe, has_gio: bool) -> str:
+    """A máquina de decisão do §3.5, pura e testável (caps + sonda + gio injetados):
+        sonda OK  e perfil COM replace   -> ATOMIC
+        sonda OK  e perfil SEM replace    -> GUARDED  (jmtpfs/_MTP não-gvfs)
+        sonda FALHOU e via_gvfs e tem gio -> GIO      (a rota Nemo por `gio copy`)
+        senão                             -> BLOCKED  (barra ANTES do primeiro byte)
+    """
+    via_gvfs = bool(getattr(caps, "via_gvfs", False))
+    mtp_like = bool(caps and caps.label == "MTP")
+    if probe is not None and probe.ok:
+        return STRAT_GUARDED if (mtp_like and not via_gvfs) else STRAT_ATOMIC
+    if via_gvfs and has_gio:
+        return STRAT_GIO
+    return STRAT_BLOCKED
 
 
 class CopyResult:
@@ -171,6 +279,14 @@ def preflight(sources, dest_dir) -> Preflight:
     pf.mount_ok = disks.mount_ok(dest_abs)
     pf.caps = disks.dest_caps(dest_abs)
     pf.free_bytes = disks.free_bytes(dest_abs)
+
+    # Sonda de escrita (§1.1) — SÓ se a montagem existe (não furar o guard de
+    # mount_ok escrevendo a sonda no disco de sistema sob um mountpoint vazio) e o
+    # FS não se anuncia só-leitura. Daí a estratégia de escrita é decidida aqui,
+    # uma vez, por taxonomia + sonda (§3.5) — nunca por exceção no meio do lote.
+    if pf.mount_ok and not (pf.caps and pf.caps.readonly):
+        pf.write_probe = probe_write(dest_abs)
+        pf.strategy = decide_strategy(pf.caps, pf.write_probe, _has_gio())
 
     seen_dirs = set()
     for s in sources:
