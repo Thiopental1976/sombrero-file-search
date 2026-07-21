@@ -256,6 +256,24 @@ _PT = {
     "expected a term, got {tok}": "esperava termo, veio {tok}",
     "unknown node": "nó desconhecido",
     "expression too deeply nested": "expressão aninhada em excesso",
+
+    # F5 — abas, buscas salvas, histórico, exportação
+    "New search": "Nova busca",
+    "Searches ▾": "Buscas ▾",
+    "Save current search…  (Ctrl+S)": "Salvar busca atual…  (Ctrl+S)",
+    "Export results…  (Ctrl+E)": "Exportar resultados…  (Ctrl+E)",
+    "Remove saved…": "Remover salva…",
+    "Recent": "Recentes",
+    "Clear history": "Limpar histórico",
+    "Save search": "Salvar busca",
+    "Name for this search:": "Nome para esta busca:",
+    "Search saved as “{name}”.": "Busca salva como “{name}”.",
+    "Export results": "Exportar resultados",
+    "CSV (*.csv);;JSON (*.json)": "CSV (*.csv);;JSON (*.json)",
+    "Nothing to export — the result list is empty.":
+        "Nada a exportar — a lista de resultados está vazia.",
+    "⚠  Could not write {path}: {err}": "⚠  Não consegui escrever {path}: {err}",
+    "✔  Exported {n} row(s) to {path}": "✔  Exportei {n} linha(s) para {path}",
 }
 
 # Source is English; only non-English languages need a table.

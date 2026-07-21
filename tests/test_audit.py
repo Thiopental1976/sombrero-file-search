@@ -1454,6 +1454,121 @@ def test_fileops_has_no_destructive_api():
     print("ok  F7   fileops não tem API destrutiva (nem por dentro, nem exportada)")
 
 
+# ================================================================== F5: abas/buscas
+# O F5 tem uma camada de DADOS (searches.py, sem Qt) e uma de GUI (abas em app.py).
+# Aqui cobrimos a camada de dados, que é onde mora a promessa de "reabrir uma busca
+# salva reproduz o resultado" e "config velho nunca quebra".
+import searches
+
+
+class _M:
+    """Stand-in de engine.Match, só o que export() lê."""
+    def __init__(self, path, size=10, mtime=0, nmatch=0, lines=None, is_dir=False):
+        self.path, self.size, self.mtime = path, size, mtime
+        self.nmatch, self.lines, self.is_dir = nmatch, lines or [], is_dir
+
+
+def test_f5_form_roundtrip_and_compat():
+    """Um snapshot normalizado sobrevive a ida-e-volta, e ler um snapshot de uma
+    versão passada (sem uma chave) ou futura (com chave a mais) não quebra."""
+    cheio = dict(searches.DEFAULTS, name="*.py", content="TODO", case=True,
+                 paths="/a;/b", days=7, min_size="1M")
+    assert searches.normalize(cheio) == searches.normalize(searches.normalize(cheio))
+    # config ANTIGO: falta 'one_fs' e 'gitignore' → assume o padrão, não estoura
+    velho = {"name": "x", "content": "y", "case": True}
+    n = searches.normalize(velho)
+    assert n["one_fs"] is False and n["gitignore"] is True and n["recursive"] is True
+    # config FUTURO: chave desconhecida é descartada em silêncio
+    futuro = dict(searches.DEFAULTS, name="z", campo_do_futuro=42)
+    assert "campo_do_futuro" not in searches.normalize(futuro)
+    # tipos são coagidos (bool/int vindos de JSON como string/num)
+    sujo = dict(searches.DEFAULTS, case=1, days="3", word=0)
+    s = searches.normalize(sujo)
+    assert s["case"] is True and s["days"] == 3 and s["word"] is False
+    print("ok  F5   snapshot do formulário: round-trip e compat de config velho/novo")
+
+
+def test_f5_history_dedup_and_cap():
+    """Repetir a mesma busca REORDENA (sobe ao topo), não duplica; o histórico
+    tem teto; busca vazia (sem nome/conteúdo/filtro) não entra."""
+    cfg = {}
+    searches.add_history(cfg, dict(searches.DEFAULTS, name="a"))
+    searches.add_history(cfg, dict(searches.DEFAULTS, name="b"))
+    searches.add_history(cfg, dict(searches.DEFAULTS, name="a"))   # repete 'a'
+    nomes = [h["name"] for h in cfg["history"]]
+    assert nomes == ["a", "b"], f"dedup/reordem falhou: {nomes}"
+    # busca vazia é ignorada
+    antes = len(cfg["history"])
+    searches.add_history(cfg, dict(searches.DEFAULTS))
+    assert len(cfg["history"]) == antes
+    # teto
+    cfg2 = {}
+    for i in range(searches.HISTORY_CAP + 15):
+        searches.add_history(cfg2, dict(searches.DEFAULTS, name="n%03d" % i))
+    assert len(cfg2["history"]) == searches.HISTORY_CAP
+    assert cfg2["history"][0]["name"] == "n%03d" % (searches.HISTORY_CAP + 14)
+    print("ok  F5   histórico: sem duplicata, reordena no topo, respeita o teto")
+
+
+def test_f5_saved_overwrite_in_place():
+    """Salvar com nome existente sobrescreve NA MESMA POSIÇÃO (não cria segunda
+    entrada, não pula para o fim)."""
+    cfg = {}
+    searches.save_search(cfg, "um", dict(searches.DEFAULTS, name="1"))
+    searches.save_search(cfg, "dois", dict(searches.DEFAULTS, name="2"))
+    searches.save_search(cfg, "um", dict(searches.DEFAULTS, name="1b"))  # sobrescreve
+    lst = searches.saved_list(cfg)
+    assert [n for n, _ in lst] == ["um", "dois"], f"posição mudou: {lst}"
+    assert dict(lst)["um"]["name"] == "1b", "não sobrescreveu o conteúdo"
+    searches.delete_search(cfg, "um")
+    assert [n for n, _ in searches.saved_list(cfg)] == ["dois"]
+    print("ok  F5   busca salva: sobrescreve no lugar por nome, apaga certo")
+
+
+def test_f5_export_csv_json():
+    """CSV: uma linha por trecho casado, com cabeçalho e ';'. JSON: um objeto por
+    ARQUIVO com os trechos aninhados. Nomes hostis não corrompem o CSV."""
+    import io, json, csv as _csv
+    ms = [
+        _M("/tmp/a b;c.txt", size=100, mtime=1_000_000, nmatch=2,
+           lines=[(3, "linha três\n"), (9, 'com "aspas" e ; ponto-e-vírgula')]),
+        _M("/tmp/only-name.bin", size=5, nmatch=0),           # busca só por nome
+    ]
+    # CSV
+    buf = io.StringIO(); n = searches.export_csv(ms, buf)
+    assert n == 3, f"esperava 3 linhas (2+1), veio {n}"
+    buf.seek(0); linhas = list(_csv.DictReader(buf, delimiter=";"))
+    assert linhas[0]["name"] == "a b;c.txt" and linhas[0]["line"] == "3"
+    assert '"aspas"' in linhas[1]["text"] and ";" in linhas[1]["text"]
+    assert linhas[2]["line"] == "" and linhas[2]["name"] == "only-name.bin"
+    # JSON
+    jbuf = io.StringIO(); nj = searches.export_json(ms, jbuf)
+    assert nj == 2, "JSON é um objeto por arquivo"
+    jbuf.seek(0); dados = json.load(jbuf)
+    assert len(dados) == 2 and len(dados[0]["lines"]) == 2
+    assert dados[0]["lines"][0]["line"] == 3
+    # export() escolhe pela extensão
+    import tempfile, os as _os
+    d = tempfile.mkdtemp()
+    pj = _os.path.join(d, "x.json"); pc = _os.path.join(d, "x.csv")
+    assert searches.export(ms, pj) == 2 and searches.export(ms, pc) == 3
+    assert json.load(open(pj))[0]["path"] == "/tmp/a b;c.txt"
+    print("ok  F5   exportar: CSV por trecho (nomes hostis OK) e JSON por arquivo")
+
+
+def test_f5_title_for():
+    """Rótulo da aba: prioriza o que o usuário digitou; sem nome/conteúdo cai na
+    última pasta (basename); trunca; nunca vazio."""
+    assert searches.title_for(dict(searches.DEFAULTS, name="foo*")) == "foo*"
+    assert searches.title_for(dict(searches.DEFAULTS, content="TODO")) == "TODO"
+    assert searches.title_for(dict(searches.DEFAULTS,
+             paths="/home/rodrigo/Documents/")) == "Documents"
+    assert searches.title_for(dict(searches.DEFAULTS)) == "•"
+    longo = searches.title_for(dict(searches.DEFAULTS, name="x" * 50), maxlen=22)
+    assert len(longo) == 22 and longo.endswith("…")
+    print("ok  F5   título da aba: prioriza o digitado, cai na pasta, trunca")
+
+
 def main():
     fns = [test_parse_size, test_reap_kills_process, test_no_orphan_on_cancel,
            test_glob_case_insensitive, test_boolean_name_regex,
@@ -1485,6 +1600,10 @@ def main():
            test_copy_into_itself, test_qt_drag_and_clipboard_payload,
            test_default_file_manager_wins_over_dbus, test_build_info_visible_and_honest,
            test_fileops_has_no_destructive_api,
+           # F5 — abas, buscas salvas, histórico, exportação
+           test_f5_form_roundtrip_and_compat, test_f5_history_dedup_and_cap,
+           test_f5_saved_overwrite_in_place, test_f5_export_csv_json,
+           test_f5_title_for,
            # F6 — empacotamento
            test_deb_version_is_dpkg_comparable,
            test_deb_package_builds_and_is_well_formed,

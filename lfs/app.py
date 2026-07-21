@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QSplitter, QHeaderView, QSpinBox, QMenu, QTextEdit,
     QAbstractItemView, QToolButton, QFrame, QStackedWidget, QSlider, QSizePolicy,
     QLayout, QDialog, QDialogButtonBox, QProgressBar, QFormLayout, QMessageBox,
-    QInputDialog)
+    QInputDialog, QTabWidget)
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -40,7 +40,7 @@ except ImportError:                     # QtMultimedia opcional (portabilidade)
     HAS_MEDIA = False
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import engine, boolean, i18n, disks, fileops, xdg, version
+import engine, boolean, i18n, disks, fileops, xdg, version, searches
 from engine import Query, Match
 from i18n import t
 
@@ -800,6 +800,84 @@ class PropertiesDialog(QDialog):
 
 
 # ----------------------------------------------------------------- janela
+class SearchTab(QWidget):
+    """Uma aba = uma busca INDEPENDENTE. Tabela, modelo e worker são dela; o
+    formulário e o preview continuam sendo da janela, um só — é assim que o
+    Agent Ransack se comporta, e duplicar o player de mídia por aba seria
+    absurdo (dois vídeos tocando ao mesmo tempo).
+
+    Guardar o SNAPSHOT do formulário na aba é o que faz a troca de aba fazer
+    sentido: voltar para a aba 1 devolve exatamente o formulário que produziu
+    aqueles resultados, e não o que está digitado agora.
+    """
+
+    def __init__(self, win):
+        super().__init__()
+        self.win = win
+        self.worker: SearchWorker | None = None
+        self.pending: tuple | None = None      # (Query, boolexpr) esperando a vez (SMR)
+        self.serial = False                    # varre disco rotacional? (gate do SMR)
+        self.t0 = 0.0
+        self.mode_tag = ""
+        self.phase_txt = ""
+        self.hl_terms: list[str] = []
+        self.hl_cs = False
+        self.status_text = t("Ready.")
+        self.form: dict = {}
+        self.model = ResultModel()
+        self.proxy = QSortFilterProxyModel()          # B14: ordenação de colunas
+        self.proxy.setSourceModel(self.model)
+        self.proxy.setSortRole(ResultModel.SORT_ROLE)
+        self.table = QTableView(); self.table.setModel(self.proxy)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setSortingEnabled(False)           # ligado só ao fim da busca
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        # F7: arrastar resultados para FORA (Nemo, desktop, e-mail). DragOnly:
+        # a tabela não aceita drop — quem recebe pasta arrastada é a janela.
+        self.table.setDragEnabled(True)
+        self.table.setDragDropMode(QAbstractItemView.DragOnly)
+        self.table.setDefaultDropAction(Qt.CopyAction)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(28)
+        hh = self.table.horizontalHeader()
+        hh.setHighlightSections(False)
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.Stretch)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.selectionModel().currentRowChanged.connect(win.on_select)
+        self.table.doubleClicked.connect(win.open_file)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(win.context_menu)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.table)
+
+    @property
+    def searching(self) -> bool:
+        return bool(self.worker and self.worker.isRunning())
+
+    def stop(self):
+        """Cancela e ESPERA. Destruir um QThread vivo aborta o processo (mesma
+        disciplina do closeEvent) — e fechar a aba leva o worker junto."""
+        self.pending = None
+        if self.worker is not None:
+            if self.worker.isRunning():
+                self.worker.cancel()
+                deadline = time.time() + 8.0
+                while self.worker.isRunning() and time.time() < deadline:
+                    if self.worker.wait(100):
+                        break
+                    QApplication.processEvents()
+                if self.worker.isRunning():
+                    self.worker.terminate(); self.worker.wait(2000)
+            self.worker = None
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -813,9 +891,6 @@ class MainWindow(QMainWindow):
         ico = os.path.join(ASSETS, "icon_256.png")
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
-        self.worker: SearchWorker | None = None
-        self.t0 = 0.0
-        self._mode_tag = ""
         self._tick = QTimer(self)                 # B8: pulso de status a cada 0,5 s
         self._tick.setInterval(500)
         self._tick.timeout.connect(self._heartbeat)
@@ -831,9 +906,19 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Escape), self, self.cancel_search)
         QShortcut(QKeySequence("Ctrl+L"), self, lambda: self.ed_name.setFocus())
         QShortcut(QKeySequence("Ctrl+T"), self, self.toggle_theme)
-        QShortcut(QKeySequence.Copy, self.table, self.copy_selection)      # F7
-        QShortcut(QKeySequence("Ctrl+Shift+C"), self.table, self.copy_paths)
-        QShortcut(QKeySequence("Alt+Return"), self.table, self.properties)
+        # F7 — atalhos de resultado. Ficam na JANELA, não na tabela: com abas a
+        # tabela troca debaixo do atalho, e um QShortcut preso à tabela da aba 1
+        # agiria na aba errada (ou morreria com ela).
+        QShortcut(QKeySequence.Copy, self, self.copy_selection)
+        QShortcut(QKeySequence("Ctrl+Shift+C"), self, self.copy_paths)
+        QShortcut(QKeySequence("Alt+Return"), self, self.properties)
+        # F5 — conforto: abas, repetir, exportar, salvar.
+        QShortcut(QKeySequence("Ctrl+N"), self, lambda: self.new_tab(focus=True))
+        QShortcut(QKeySequence("Ctrl+W"), self, self.close_current_tab)
+        QShortcut(QKeySequence("Ctrl+Return"), self, lambda: self.start_search(True))
+        QShortcut(QKeySequence(Qt.Key_F3), self, self.repeat_last)
+        QShortcut(QKeySequence("Ctrl+E"), self, self.export_results)
+        QShortcut(QKeySequence("Ctrl+S"), self, self.save_current_search)
         self.setAcceptDrops(True)                 # soltar pasta = "procure aqui"
         self.ed_name.setFocus()                   # digitar e Enter, sem clique
 
@@ -912,7 +997,17 @@ class MainWindow(QMainWindow):
         r2.addWidget(lbl_c); r2.addWidget(self.ed_content, 3)
         r2.addSpacing(6)
         r2.addWidget(lbl_e); r2.addWidget(self.ed_path, 2)
-        r2.addWidget(self.btn_disks); r2.addWidget(btn_browse)
+        # F5: buscas salvas + histórico. Um botão só, porque as duas coisas
+        # respondem à mesma pergunta ("quero aquela busca de novo") e separá-las
+        # obrigaria o usuário a lembrar se salvou ou não.
+        self.btn_saved = QToolButton(); self.btn_saved.setText(t("Searches ▾"))
+        self.btn_saved.setToolTip(t("Saved searches and history — the whole form,\n"
+                                    "not just the term (Ctrl+S saves the current one)."))
+        self.btn_saved.setPopupMode(QToolButton.InstantPopup)
+        self.mnu_saved = QMenu(self)
+        self.mnu_saved.aboutToShow.connect(self._fill_saved_menu)
+        self.btn_saved.setMenu(self.mnu_saved)
+        r2.addWidget(self.btn_disks); r2.addWidget(self.btn_saved); r2.addWidget(btn_browse)
         root.addLayout(r2)
 
         # ---------- chips de opção (FlowLayout: quebra linha em janela estreita) ----------
@@ -959,36 +1054,19 @@ class MainWindow(QMainWindow):
 
         # ---------- resultados / preview ----------
         split = QSplitter(Qt.Vertical)
-        self.model = ResultModel()
-        self.proxy = QSortFilterProxyModel()          # B14: ordenação de colunas
-        self.proxy.setSourceModel(self.model)
-        self.proxy.setSortRole(ResultModel.SORT_ROLE)
-        self.table = QTableView(); self.table.setModel(self.proxy)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.table.setSortingEnabled(False)           # ligado só ao fim da busca
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        # F7: arrastar resultados para FORA (Nemo, desktop, e-mail). DragOnly:
-        # a tabela não aceita drop — quem recebe pasta arrastada é a janela.
-        self.table.setDragEnabled(True)
-        self.table.setDragDropMode(QAbstractItemView.DragOnly)
-        self.table.setDefaultDropAction(Qt.CopyAction)
-        self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
-        self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(28)
-        hh = self.table.horizontalHeader()
-        hh.setHighlightSections(False)
-        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(1, QHeaderView.Stretch)
-        hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.table.selectionModel().currentRowChanged.connect(self.on_select)
-        self.table.doubleClicked.connect(self.open_file)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self.context_menu)
-        split.addWidget(self.table)
+        self.tabs = QTabWidget()
+        self.tabs.setTabsClosable(True)
+        self.tabs.setMovable(True)
+        self.tabs.setDocumentMode(True)
+        self.tabs.tabCloseRequested.connect(self.close_tab)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        mais = QToolButton(); mais.setText("  +  ")
+        mais.setToolTip(t("New search tab (Ctrl+N)"))
+        mais.setCursor(Qt.PointingHandCursor)
+        mais.clicked.connect(lambda: self.new_tab(focus=True))
+        self.tabs.setCornerWidget(mais, Qt.TopRightCorner)
+        self.new_tab()
+        split.addWidget(self.tabs)
 
         split.addWidget(self._build_preview())
         split.setStretchFactor(0, 3); split.setStretchFactor(1, 2)
@@ -1189,7 +1267,209 @@ class MainWindow(QMainWindow):
             cur += mounts
         self.ed_path.setText(";".join(cur))
 
+    # ---- F5: abas (a aba corrente É o "self.table/model/proxy" de antes)
+    @property
+    def tab(self) -> SearchTab:
+        return self.tabs.currentWidget()
+
+    @property
+    def table(self):
+        return self.tab.table
+
+    @property
+    def model(self):
+        return self.tab.model
+
+    @property
+    def proxy(self):
+        return self.tab.proxy
+
+    @property
+    def worker(self):
+        return self.tab.worker
+
+    def _all_tabs(self):
+        return [self.tabs.widget(i) for i in range(self.tabs.count())]
+
+    def new_tab(self, focus=False) -> SearchTab:
+        tab = SearchTab(self)
+        tab.form = self.form_state()
+        i = self.tabs.addTab(tab, t("New search"))
+        if focus:
+            self.tabs.setCurrentIndex(i)
+            self.ed_name.setFocus(); self.ed_name.selectAll()
+        return tab
+
+    def close_tab(self, i):
+        """Fechar a ÚLTIMA aba não fecha o programa: ela é esvaziada. Uma janela
+        de busca sem nenhuma aba não teria como voltar a ter uma."""
+        tab = self.tabs.widget(i)
+        if tab is None:
+            return
+        tab.stop()
+        if self.tabs.count() == 1:
+            tab.model.clear()
+            tab.status_text = t("Ready.")
+            self.tabs.setTabText(0, t("New search"))
+            self._stop_media(); self.preview.clear(); self.pv_stack.setCurrentIndex(0)
+            self._on_tab_changed(0)
+            return
+        self.tabs.removeTab(i)
+        tab.deleteLater()
+
+    def close_current_tab(self):
+        self.close_tab(self.tabs.currentIndex())
+
+    def _on_tab_changed(self, i):
+        """Trocar de aba devolve o FORMULÁRIO daquela busca, não o que está
+        digitado — senão o usuário olha resultados de uma busca com o formulário
+        de outra na frente, que é a pior mentira possível numa GUI de busca."""
+        if i < 0 or not hasattr(self, "status"):
+            return
+        tab = self.tabs.widget(i)
+        if tab is None:
+            return
+        self.apply_form(tab.form)
+        self.status.setText(tab.status_text)
+        self.btn_search.setEnabled(not tab.searching)
+        self.btn_cancel.setEnabled(tab.searching or bool(tab.pending))
+        self._hl_terms, self._hl_cs = tab.hl_terms, tab.hl_cs
+        self.on_select(tab.table.currentIndex(), QModelIndex())
+
+    def _set_status(self, tab, txt):
+        """Status é por aba: uma busca terminando no fundo não pode reescrever o
+        que a aba visível está mostrando."""
+        tab.status_text = txt
+        if tab is self.tab:
+            self.status.setText(txt)
+
+    # ---- F5: snapshot do formulário (o que uma busca salva REALMENTE é)
+    def form_state(self) -> dict:
+        return searches.normalize({
+            "name": self.ed_name.text(), "content": self.ed_content.text(),
+            "paths": self.ed_path.text(),
+            "name_regex": self.ck_nrx.isChecked(), "content_regex": self.ck_crx.isChecked(),
+            "boolean": self.ck_bool.isChecked(), "documents": self.ck_doc.isChecked(),
+            "case": self.ck_case.isChecked(), "word": self.ck_word.isChecked(),
+            "recursive": self.ck_rec.isChecked(), "hidden": self.ck_hid.isChecked(),
+            "gitignore": self.ck_git.isChecked(), "one_fs": self.ck_ofs.isChecked(),
+            "min_size": self.ed_minsz.text(), "days": self.sp_days.value(),
+        })
+
+    def apply_form(self, form: dict):
+        f = searches.normalize(form or {})
+        self.ed_name.setText(f["name"]); self.ed_content.setText(f["content"])
+        if f["paths"]:                       # aba nova nasce sem pastas: não apaga o campo
+            self.ed_path.setText(f["paths"])
+        self.ck_nrx.setChecked(f["name_regex"]); self.ck_crx.setChecked(f["content_regex"])
+        self.ck_bool.setChecked(f["boolean"]); self.ck_doc.setChecked(f["documents"])
+        self.ck_case.setChecked(f["case"]); self.ck_word.setChecked(f["word"])
+        self.ck_rec.setChecked(f["recursive"]); self.ck_hid.setChecked(f["hidden"])
+        self.ck_git.setChecked(f["gitignore"]); self.ck_ofs.setChecked(f["one_fs"])
+        self.ed_minsz.setText(f["min_size"]); self.sp_days.setValue(f["days"])
+
+    # ---- F5: buscas salvas + histórico
+    def _fill_saved_menu(self):
+        m = self.mnu_saved
+        m.clear()
+        m.addAction(t("Save current search…  (Ctrl+S)"), self.save_current_search)
+        m.addAction(t("Export results…  (Ctrl+E)"), self.export_results)
+        salvas = searches.saved_list(self.cfg)
+        if salvas:
+            m.addSeparator()
+            for nome, form in salvas:
+                a = m.addAction("★  " + nome)
+                a.triggered.connect(lambda _=False, f=form: self._run_form(f))
+            rem = m.addMenu(t("Remove saved…"))
+            for nome, _f in salvas:
+                rem.addAction(nome, lambda n=nome: self._forget(n))
+        hist = self.cfg.get("history", [])
+        if hist:
+            m.addSeparator()
+            cab = m.addAction(t("Recent")); cab.setEnabled(False)
+            for form in hist[:12]:
+                a = m.addAction("   " + self._form_label(form))
+                a.triggered.connect(lambda _=False, f=form: self._run_form(f))
+            m.addSeparator()
+            m.addAction(t("Clear history"), self._clear_history)
+
+    @staticmethod
+    def _form_label(form) -> str:
+        f = searches.normalize(form)
+        partes = []
+        if f["name"]:
+            partes.append(f["name"])
+        if f["content"]:
+            partes.append("“%s”" % f["content"])
+        rot = " · ".join(partes) or searches.title_for(f, 40)
+        alvo = [x for x in f["paths"].split(";") if x.strip()]
+        if alvo:
+            rot += "   →  " + (os.path.basename(alvo[0].rstrip("/")) or alvo[0])
+            if len(alvo) > 1:
+                rot += " +%d" % (len(alvo) - 1)
+        return rot if len(rot) <= 64 else rot[:63] + "…"
+
+    def _run_form(self, form):
+        """Abrir uma busca salva NÃO substitui a aba atual: abre outra. Quem
+        guardou uma busca quer comparar com o que já está na tela."""
+        self.new_tab(focus=True)
+        self.apply_form(form)
+        self.start_search()
+
+    def save_current_search(self):
+        f = self.form_state()
+        nome, ok = QInputDialog.getText(self, t("Save search"), t("Name for this search:"),
+                                        text=searches.title_for(f, 40))
+        if not ok or not nome.strip():
+            return
+        searches.save_search(self.cfg, nome, f)
+        save_cfg(self.cfg)
+        self.status.setText(t("Search saved as “{name}”.", name=nome.strip()))
+
+    def _forget(self, nome):
+        searches.delete_search(self.cfg, nome)
+        save_cfg(self.cfg)
+
+    def _clear_history(self):
+        self.cfg["history"] = []
+        save_cfg(self.cfg)
+
+    def repeat_last(self):
+        """F3: repetir. Se a aba já tem uma busca, repete ESSA (o gesto clássico
+        de F3 é "de novo"); aba virgem cai na última do histórico."""
+        f = self.tab.form or (self.cfg.get("history") or [None])[0]
+        if not f:
+            return
+        self.apply_form(f)
+        self.start_search()
+
+    def export_results(self):
+        """Exporta o que a aba corrente achou, na ORDEM QUE ESTÁ NA TELA — se o
+        usuário ordenou por tamanho, o CSV sai ordenado por tamanho."""
+        tab = self.tab
+        if not tab.model.rows:
+            self.status.setText(t("Nothing to export — the result list is empty."))
+            return
+        base = searches.title_for(tab.form, 40).replace("/", "_").strip() or "results"
+        alvo, _ = QFileDialog.getSaveFileName(
+            self, t("Export results"), os.path.join(os.path.expanduser("~"), base + ".csv"),
+            t("CSV (*.csv);;JSON (*.json)"))
+        if not alvo:
+            return
+        if not os.path.splitext(alvo)[1]:
+            alvo += ".csv"
+        linhas = [tab.model.match_at(tab.proxy.mapToSource(tab.proxy.index(r, 0)).row())
+                  for r in range(tab.proxy.rowCount())]
+        linhas = [m for m in linhas if m is not None]
+        try:
+            n = searches.export(linhas, alvo)
+        except OSError as e:
+            self.status.setText(t("⚠  Could not write {path}: {err}", path=alvo, err=e))
+            return
+        self.status.setText(t("✔  Exported {n} row(s) to {path}", n=n, path=alvo))
+
     def _build_query(self) -> Query | None:
+
         paths = [p.strip() for p in self.ed_path.text().split(";") if p.strip()]
         paths = [os.path.expanduser(p) for p in paths]
         bad = [p for p in paths if not os.path.exists(p)]
@@ -1225,51 +1505,92 @@ class MainWindow(QMainWindow):
             documents=self.ck_doc.isChecked(),
         )
 
-    def start_search(self):
-        if self.worker and self.worker.isRunning():
+    def start_search(self, new_tab=False):
+        tab = self.new_tab(focus=True) if new_tab else self.tab
+        if tab.searching:
             return
         q = self._build_query()
         if not q:
             return
+        tab.form = self.form_state()
+        searches.add_history(self.cfg, tab.form)
+        save_cfg(self.cfg)
+        self.tabs.setTabText(self.tabs.indexOf(tab), searches.title_for(tab.form))
         self._stop_media()                        # B11: nova busca cala a mídia
         self.pv_stack.setCurrentIndex(0)
-        self.table.setSortingEnabled(False)       # B14: ordem de chegada durante a busca
-        self.proxy.sort(-1)
-        self.model.clear(); self.preview.clear()
+        tab.table.setSortingEnabled(False)        # B14: ordem de chegada durante a busca
+        tab.proxy.sort(-1)
+        tab.model.clear(); self.preview.clear()
         self.preview.setExtraSelections([])
         self.btn_search.setEnabled(False); self.btn_cancel.setEnabled(True)
-        self.t0 = time.time()
         boolexpr = self.ed_content.text().strip() if self.ck_bool.isChecked() else ""
-        # B7: termos positivos p/ o destaque no preview (literais; regex de conteúdo não realça)
-        self._hl_cs = q.case_sensitive
+        # B7: termos positivos p/ o destaque no preview (literais; regex não realça)
+        tab.hl_cs = q.case_sensitive
         if boolexpr:
             try:
-                self._hl_terms = boolean.positive_terms(boolean.parse(boolexpr))
+                tab.hl_terms = boolean.positive_terms(boolean.parse(boolexpr))
             except Exception:
-                self._hl_terms = []
+                tab.hl_terms = []
         elif q.content and not q.content_is_regex:
-            self._hl_terms = [q.content]
+            tab.hl_terms = [q.content]
         else:
-            self._hl_terms = []
+            tab.hl_terms = []
+        self._hl_terms, self._hl_cs = tab.hl_terms, tab.hl_cs
         modes = []
         if boolexpr: modes.append(t("boolean"))
         if q.documents: modes.append(t("documents"))
-        self._mode_tag = f"  ({' + '.join(modes)})" if modes else ""
-        self._phase_txt = ""                      # opt#4: passo atual (modo booleano)
-        self.status.setText(t("Searching…") + self._mode_tag)
-        self.worker = SearchWorker(q, boolexpr)
-        self.worker.batch.connect(self.model.append)
-        self.worker.progress.connect(self.on_progress)
-        self.worker.phase.connect(self.on_phase)
-        self.worker.done.connect(self.on_done)
-        self.worker.error.connect(self.on_error)
-        self.worker.start()
+        tab.mode_tag = f"  ({' + '.join(modes)})" if modes else ""
+        tab.phase_txt = ""                        # opt#4: passo atual (modo booleano)
+        # SMR: duas abas varrendo o MESMO disco rotacional ao mesmo tempo é
+        # exatamente o seek thrash que a serialização interna evita — não
+        # adiantaria serializar dentro de uma busca e deixar duas correrem
+        # soltas. A segunda espera a primeira, e o status diz por quê.
+        if self._must_wait(tab, q):
+            tab.pending = (q, boolexpr)
+            self._set_status(tab, t("Queued — waiting for the other search "
+                                    "(same spinning disk; running both would thrash it)."))
+            return
+        self._launch(tab, q, boolexpr)
+
+    @staticmethod
+    def _serial_paths(q) -> bool:
+        try:
+            return any(disks.path_needs_serial(os.path.abspath(p)) for p in q.paths)
+        except Exception:
+            return False
+
+    def _must_wait(self, tab, q) -> bool:
+        eu = self._serial_paths(q)
+        return any(o is not tab and o.searching and (eu or o.serial)
+                   for o in self._all_tabs())
+
+    def _launch(self, tab, q, boolexpr):
+        tab.pending = None
+        tab.serial = self._serial_paths(q)
+        tab.t0 = time.time()
+        self._set_status(tab, t("Searching…") + tab.mode_tag)
+        w = SearchWorker(q, boolexpr)
+        # Cada sinal carrega a ABA a que pertence: uma busca que termina no fundo
+        # escreve no modelo e no status DELA, nunca no da aba que está na tela.
+        w.batch.connect(tab.model.append)
+        w.progress.connect(lambda _n, tb=tab: self._heartbeat_tab(tb))
+        w.phase.connect(lambda d, tt, l, tb=tab: self.on_phase(tb, d, tt, l))
+        w.done.connect(lambda tot, dt, tb=tab: self.on_done(tb, tot, dt))
+        w.error.connect(lambda m, tb=tab: self.on_error(tb, m))
+        tab.worker = w
+        w.start()
         self._tick.start()                        # B8: heartbeat de status
 
     def cancel_search(self):
-        if self.worker and self.worker.isRunning():
-            self.worker.cancel()
-            self.status.setText(t("Cancelling…"))
+        tab = self.tab
+        if tab.pending:                           # ainda na fila do SMR: nem começou
+            tab.pending = None
+            self._set_status(tab, t("Cancelled before starting."))
+            self.btn_search.setEnabled(True); self.btn_cancel.setEnabled(False)
+            return
+        if tab.searching:
+            tab.worker.cancel()
+            self._set_status(tab, t("Cancelling…"))
 
     def closeEvent(self, ev):
         """B5/A1: fechar no meio de uma busca não pode derrubar o processo.
@@ -1278,16 +1599,8 @@ class MainWindow(QMainWindow):
         eventos p/ a UI não congelar; após um teto generoso (o cancelamento já é
         checado a cada bloco/linha, então some em ~1s), forçamos como último recurso."""
         self._tick.stop()
-        if self.worker and self.worker.isRunning():
-            self.worker.cancel()
-            deadline = time.time() + 8.0
-            while self.worker.isRunning() and time.time() < deadline:
-                if self.worker.wait(100):
-                    break
-                QApplication.processEvents()
-            if self.worker.isRunning():           # não saiu graciosamente: evita o
-                self.worker.terminate()           # abort do destrutor de QThread
-                self.worker.wait(2000)
+        for tab in self._all_tabs():              # F5: uma busca viva por aba
+            tab.stop()
         # F7: mesma disciplina para a cópia. Uma cópia em curso NUNCA é abortada
         # à força no meio de um arquivo sem antes pedir cancel — o fileops apaga
         # o parcial do destino ao ser cancelado, e terminate() puro pularia isso,
@@ -1305,55 +1618,92 @@ class MainWindow(QMainWindow):
         self._stop_media()
         super().closeEvent(ev)
 
-    def _denied(self) -> int:
-        return self.worker.stats.get("denied", 0) if self.worker else 0
+    @staticmethod
+    def _denied(tab) -> int:
+        return tab.worker.stats.get("denied", 0) if tab.worker else 0
+
+    def _searching_text(self, tab) -> str:
+        d = self._denied(tab)
+        extra = t(" · {d} inaccessible", d=d) if d else ""
+        step = f" · {tab.phase_txt}" if tab.phase_txt else ""   # opt#4: passo booleano
+        return t("Searching…{tag}  {n} found · {sec}s{extra}{step}",
+                 tag=tab.mode_tag, n=len(tab.model.rows),
+                 sec=f"{time.time()-tab.t0:.1f}", extra=extra, step=step)
+
+    def _heartbeat_tab(self, tab):
+        if tab.searching:
+            self._set_status(tab, self._searching_text(tab))
+            self._tab_badge(tab)
+
+    def _tab_badge(self, tab):
+        """O rótulo da aba carrega o contador: busca rodando em segundo plano
+        precisa dizer que está viva sem roubar a tela de quem olha outra coisa."""
+        i = self.tabs.indexOf(tab)
+        if i < 0:
+            return
+        base = searches.title_for(tab.form)
+        n = len(tab.model.rows)
+        if tab.searching:
+            self.tabs.setTabText(i, f"{base}  ({n}…)")
+        else:
+            self.tabs.setTabText(i, f"{base}  ({n})" if n else base)
 
     def _heartbeat(self):
         """B8: atualiza o status independentemente de lotes (busca longa não 'trava')."""
-        d = self._denied()
-        extra = t(" · {d} inaccessible", d=d) if d else ""
-        ph = getattr(self, "_phase_txt", "")
-        step = f" · {ph}" if ph else ""           # opt#4: passo booleano atual
-        self.status.setText(t("Searching…{tag}  {n} found · {sec}s{extra}{step}",
-                              tag=self._mode_tag, n=len(self.model.rows),
-                              sec=f"{time.time()-self.t0:.1f}", extra=extra, step=step))
+        vivo = False
+        for tab in self._all_tabs():
+            if tab.searching:
+                vivo = True
+                self._heartbeat_tab(tab)
+        if not vivo:
+            self._tick.stop()
 
-    def on_phase(self, done, total, label):
-        """Opt#4: recebe 'passo done/total: label' do motor booleano e mostra no status."""
-        self._phase_txt = t("step {done}/{total}: {label}", done=done, total=total, label=label)
-        self._heartbeat()
+    def on_phase(self, tab, done, total, label):
+        """Opt#4: 'passo done/total: label' vindo do motor booleano."""
+        tab.phase_txt = t("step {done}/{total}: {label}", done=done, total=total, label=label)
+        self._heartbeat_tab(tab)
 
-    def on_error(self, msg):
-        self._tick.stop()
-        self.btn_search.setEnabled(True); self.btn_cancel.setEnabled(False)
-        self.status.setText(t("⚠  Invalid boolean expression: {msg}", msg=msg))
+    def on_error(self, tab, msg):
+        self._set_status(tab, t("⚠  Invalid boolean expression: {msg}", msg=msg))
+        if tab is self.tab:
+            self.btn_search.setEnabled(True); self.btn_cancel.setEnabled(False)
+        self._start_pending()
 
-    def on_progress(self, n):
-        self._heartbeat()
+    def _start_pending(self):
+        """Uma busca acabou: a fila do SMR pode andar."""
+        for tab in self._all_tabs():
+            if tab.pending:
+                q, boolexpr = tab.pending
+                if not self._must_wait(tab, q):
+                    self._launch(tab, q, boolexpr)
+                    return
 
-    def on_done(self, tot, dt):
-        self._tick.stop()
-        self._phase_txt = ""                      # opt#4: fim das fases
-        self.btn_search.setEnabled(True); self.btn_cancel.setEnabled(False)
+    def on_done(self, tab, tot, dt):
+        tab.phase_txt = ""                        # opt#4: fim das fases
+        if tab is self.tab:
+            self.btn_search.setEnabled(True); self.btn_cancel.setEnabled(False)
         # A3: habilitar ordenação dispara um sort imediato pela coluna do indicador
         # (default = coluna 0 "Arquivo"), que embaralharia a ordem de chegada que o
         # usuário viu preencher. Zera o indicador antes p/ manter a ordem natural;
         # clicar num cabeçalho continua ordenando normalmente.
-        self.table.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
-        self.table.setSortingEnabled(True)        # B14: colunas ordenáveis ao fim
-        cancelled = self.worker and self.worker._cancel
+        tab.table.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
+        tab.table.setSortingEnabled(True)         # B14: colunas ordenáveis ao fim
+        cancelled = tab.worker and tab.worker._cancel
         icon = "■" if cancelled else "✔"
-        d = self._denied()
+        d = self._denied(tab)
         extra = t("  ·  {d} inaccessible", d=d) if d else ""
         cancel = t("   (cancelled)") if cancelled else ""
         # dica: zero resultados COM Conteúdo preenchido = quase sempre o usuário
         # quis buscar por NOME (ex.: digitou "*.mp4" no Conteúdo). Aponta o caminho.
         tip = ""
-        if tot == 0 and not cancelled and self.ed_content.text().strip():
+        if tot == 0 and not cancelled and searches.normalize(tab.form)["content"]:
             tip = t("   —  tip: “Content” is filled, so this searched INSIDE files; "
                     "clear it to match file/folder names.")
-        self.status.setText(t("{icon}  {tot} result(s)  ·  {sec}s{extra}{cancel}",
-                              icon=icon, tot=tot, sec=f"{dt:.2f}", extra=extra, cancel=cancel) + tip)
+        self._set_status(tab, t("{icon}  {tot} result(s)  ·  {sec}s{extra}{cancel}",
+                                icon=icon, tot=tot, sec=f"{dt:.2f}", extra=extra,
+                                cancel=cancel) + tip)
+        self._tab_badge(tab)
+        self._start_pending()
 
     # ---- mapeamento proxy (visual) -> source (dados)
     def _match_at_proxy(self, row: int):

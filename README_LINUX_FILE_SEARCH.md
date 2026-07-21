@@ -39,6 +39,15 @@ MFT/USN do NTFS, que não existe aqui. Este projeto reimplementa a função de f
 - 🎛️ **Filtros** — tamanho mínimo, modificado nos últimos N dias, ocultos, `.gitignore`,
   não cruzar pontos de montagem (`--one-file-system`), palavra inteira, sensível a caixa.
 - ⚡ **Ao vivo** — a tabela cresce durante a busca (streaming de `rg --json` numa thread).
+- 🗂️ **Abas de busca** — várias buscas abertas ao mesmo tempo, cada uma com seu
+  formulário e seus resultados (`Ctrl+N` nova, `Ctrl+↵` busca em nova aba, `Ctrl+W` fecha).
+- ⭐ **Buscas salvas + histórico** — salve uma busca inteira (não só o termo) e
+  reabra depois; as últimas buscas ficam no menu **Buscas ▾** (`Ctrl+S` salvar, `F3` repetir).
+- 📤 **Exportar** — os resultados em **CSV** (uma linha por trecho casado) ou **JSON**
+  (um objeto por arquivo), na ordem em que estão na tela (`Ctrl+E`).
+- 📁 **Copiar arquivos** — arraste para outro app ou copie para uma pasta, com
+  pré-checagem do destino (espaço, FAT32, nomes ilegais) e **ritmo de escrita em
+  pendrive/removível** para não sequestrar o cache do sistema. Nunca move nem apaga a origem.
 - 💻 **CLI equivalente** — mesma engine, com `--print0` para pipelines.
 
 ## Instalação
