@@ -37,6 +37,26 @@ except ImportError:
 
 BLOCK = 1 << 22                      # 4 MiB: bom para vídeo, e o cancel responde rápido
 
+# Ritmo de escrita em dispositivo removível — o análogo, para pendrive, do que a
+# serialização de varredura faz pelo SMR. Só que aqui o problema não é seek, é
+# CACHE: escrevendo à toda, o kernel aceita os dados em memória a velocidade de
+# RAM e vai drenando para o pendrive depois. As páginas sujas são um recurso
+# GLOBAL — quando enchem, TODO processo que tentar escrever qualquer coisa
+# bloqueia até o pendrive drenar. Foi assim que o desktop travou em 19/06 com o
+# SMR, e no pendrive é pior: medido neste SanDisk Cruzer Fit em USB 2.0, a
+# escrita é de 11,8 MB/s, então os 512 MiB de dirty desta máquina são 46 s de
+# travamento — e num sistema com o padrão (20% da RAM) seriam minutos.
+#
+# A cada PACE bytes fazemos fdatasync + fadvise(DONTNEED) na faixa já escrita:
+#   - a janela suja fica limitada a PACE, não ao tamanho do arquivo;
+#   - o page cache não é envenenado com dados de uso único (o usuário não vai
+#     reler o vídeo que acabou de copiar; mas ele PERDE o que estava em cache);
+#   - o progresso passa a ser honesto: "90%" significa 90% no dispositivo, e não
+#     90% na RAM — o que importa muito para quem vai arrancar o pendrive.
+# 16 MiB: ~1,4 s de escrita no pior caso medido; grande o bastante para não
+# perder vazão (medido: sem diferença) e pequeno o bastante para não travar nada.
+PACE = 1 << 24
+
 # Motivos de pulo/erro — CHAVES estáveis. Este módulo não fala com o usuário;
 # a GUI é que traduz (i18n mora na borda, como nos rótulos do boolean.on_phase).
 SKIP_TOO_BIG = "too_big"             # não cabe no limite do FS de destino (FAT32)
@@ -201,10 +221,27 @@ def _unique(dst: str) -> str:
         n += 1
 
 
-def _copy_stream(src, dst, cancel, tick, prog):
+def _drain(fo, desde, ate):
+    """Manda ao disco o que já foi escrito e tira do cache. Melhor esforço: em
+    sistema de arquivos FUSE (ntfs-3g, MTP) o fadvise pode não fazer nada, e
+    isso é aceitável — nunca é motivo para falhar uma cópia."""
+    try:
+        fo.flush()
+        os.fdatasync(fo.fileno())
+        if hasattr(os, "posix_fadvise"):
+            os.posix_fadvise(fo.fileno(), desde, ate - desde, os.POSIX_FADV_DONTNEED)
+    except OSError:
+        pass
+
+
+def _copy_stream(src, dst, cancel, tick, prog, pace=0):
     """Copia um arquivo em blocos. Cancelar no meio REMOVE o destino parcial —
-    nunca deixar meio-vídeo no pendrive parecendo um arquivo bom."""
+    nunca deixar meio-vídeo no pendrive parecendo um arquivo bom.
+
+    `pace` > 0 (destino removível): drena a cada `pace` bytes, para não sequestrar
+    o cache de páginas sujas do sistema inteiro. Ver o comentário de PACE."""
     done = 0
+    drenado = 0
     try:
         with open(src, "rb") as fi, open(dst, "wb") as fo:
             while True:
@@ -218,6 +255,17 @@ def _copy_stream(src, dst, cancel, tick, prog):
                 fo.write(buf)
                 done += len(buf)
                 prog.done_bytes += len(buf)
+                if pace and done - drenado >= pace:
+                    _drain(fo, drenado, done)
+                    # a origem também: um vídeo de 5 GiB lido uma única vez não
+                    # pode expulsar do cache o que o usuário estava usando.
+                    try:
+                        if hasattr(os, "posix_fadvise"):
+                            os.posix_fadvise(fi.fileno(), drenado, done - drenado,
+                                             os.POSIX_FADV_DONTNEED)
+                    except OSError:
+                        pass
+                    drenado = done
                 tick()
             fo.flush()
             # destino típico é USB: "cópia concluída" tem que significar "no disco",
@@ -282,6 +330,11 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
         for e in pf.entries:
             res.failed.append((e.src, "destination not writable"))
         return res
+
+    # Removível: escreve em ritmo, para não sequestrar o cache do sistema (PACE).
+    # Em disco interno o kernel já administra bem e o fsync a cada 16 MiB só
+    # atrapalharia — a política existe para pendrive, não para NVMe.
+    pace = PACE if getattr(caps, "removable", False) else 0
 
     prog = CopyProgress()
     prog.total_files, prog.total_bytes = pf.total_files, pf.total_bytes
@@ -371,7 +424,7 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
                     os.symlink(target, dst)
                 elif os.path.exists(e.src):
                     # destino sem symlink (exFAT/FAT/NTFS/MTP): copia o CONTEÚDO
-                    n = _copy_stream(e.src, dst, cancel, tick, prog)
+                    n = _copy_stream(e.src, dst, cancel, tick, prog, pace)
                     if n is None:
                         res.cancelled = True
                         break
@@ -381,7 +434,7 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
                     res.skipped.append((e.src, SKIP_SYMLINK))
                     continue
             else:
-                n = _copy_stream(e.src, dst, cancel, tick, prog)
+                n = _copy_stream(e.src, dst, cancel, tick, prog, pace)
                 if n is None:
                     res.cancelled = True
                     break

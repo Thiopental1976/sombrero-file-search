@@ -22,7 +22,7 @@ Three jobs:
      fails at byte 4294967296, not at the start, so we check BEFORE writing.
 """
 from __future__ import annotations
-import os
+import os, re
 
 try:                        # pacote (GUI) e flat (cli.py/testes)
     from . import engine
@@ -187,6 +187,12 @@ class DestCaps:
         self.charset = caps.get("charset", "")
         self.maxchars = caps.get("maxchars")             # limite em CARACTERES (UTF-16)
         self.utf8_only = bool(caps.get("utf8_only"))     # nome precisa ser UTF-8 válido
+        # Removível: pendrive/cartão/gaveta USB. Não muda o QUE pode ser escrito
+        # (isso é o resto da tabela) — muda o RITMO com que se escreve.
+        self.removable = bool(caps.get("removable"))
+        # Velocidade negociada do link USB (Mbit/s), quando aplicável. Explica
+        # sozinha a maior parte das cópias "lentas demais".
+        self.link_mbits = caps.get("link_mbits")
         self.reserved = caps.get("reserved", False)
         self.label = caps.get("label", "POSIX")
 
@@ -241,6 +247,86 @@ class DestCaps:
         return (stem + ext).rstrip(" .") or "_"
 
 
+def is_removable(dev: str) -> bool:
+    """O dispositivo é removível (pendrive, cartão, HD USB)?
+
+    Lê /sys/block/<disco>/removable, e trata USB como removível mesmo quando a
+    flag é 0 — gaveta USB com disco comum responde 0, e o que nos interessa aqui
+    não é "pode arrancar", é "escrever nisso é lento e o cache de página do
+    kernel vira uma bomba-relógio"."""
+    disco = _sys_disk(dev)
+    if not disco:
+        return False
+    d = "/sys/block/%s" % disco
+    try:
+        with open(d + "/removable") as f:
+            if f.read().strip() == "1":
+                return True
+    except OSError:
+        return False
+    try:                                   # barramento USB: caminho tem /usb
+        return "/usb" in os.path.realpath(d + "/device")
+    except OSError:
+        return False
+
+
+def _sys_disk(dev: str) -> str:
+    """Nome em /sys/block do DISCO inteiro que sustenta o nó `dev` (sobe de
+    partição para disco e de dm-N para o disco físico). "" se não der."""
+    base = os.path.basename(os.path.realpath(dev or ""))
+    if not base:
+        return ""
+    for _ in range(4):
+        if not base.startswith("dm-"):
+            break
+        try:
+            base = sorted(os.listdir("/sys/block/%s/slaves" % base))[0]
+        except (OSError, IndexError):
+            return ""
+    disco = re.sub(r"(p?\d+)$", "", base) if not base.startswith("sd") else base.rstrip("0123456789")
+    return disco if os.path.isdir("/sys/block/%s" % disco) else ""
+
+
+def link_speed(dev: str):
+    """Velocidade NEGOCIADA do barramento, em Mbit/s, ou None se não for USB.
+
+    Vale a pena mostrar porque explica a maior parte das decepções com pendrive:
+    o mesmo SanDisk que faz 100 MB/s numa porta USB 3 faz 30 numa USB 2, e o
+    usuário não tem como saber em qual porta o filho espetou. 480 = USB 2.0,
+    5000 = USB 3.0, 10000 = 3.1 Gen2, 20000 = 3.2 Gen2x2.
+
+    É o teto do LINK, não do dispositivo: um pendrive lento em porta rápida
+    continua lento. Serve para dizer "não adianta trocar de porta" ou o
+    contrário."""
+    disco = _sys_disk(dev)
+    if not disco:
+        return None
+    caminho = os.path.realpath("/sys/block/%s/device" % disco)
+    # sobe a árvore até achar o nó USB que carrega 'speed'
+    for _ in range(8):
+        alvo = os.path.join(caminho, "speed")
+        if os.path.isfile(alvo):
+            try:
+                with open(alvo) as f:
+                    return float(f.read().strip())
+            except (OSError, ValueError):
+                return None
+        pai = os.path.dirname(caminho)
+        if pai == caminho or pai == "/sys":
+            return None
+        caminho = pai
+    return None
+
+
+def link_label(mbits) -> str:
+    """'USB 2.0 (480 Mb/s)' — o nome que o usuário reconhece, com o número."""
+    if not mbits:
+        return ""
+    nome = {480: "USB 2.0", 5000: "USB 3.0", 10000: "USB 3.1", 20000: "USB 3.2",
+            12: "USB 1.1", 1.5: "USB 1.0"}.get(mbits, "USB")
+    return f"{nome} ({mbits:g} Mb/s)"
+
+
 def dest_caps(path: str) -> DestCaps:
     """Capacidades do sistema de arquivos que sustenta `path` (ou o ancestral
     existente mais próximo, se o diretório ainda vai ser criado)."""
@@ -260,7 +346,8 @@ def dest_caps(path: str) -> DestCaps:
     except OSError:
         pass
     return DestCaps(fstype=fstype, mountpoint=mp, namemax=namemax,
-                    readonly=readonly, **caps)
+                    readonly=readonly, removable=is_removable(dev),
+                    link_mbits=link_speed(dev), **caps)
 
 
 def free_bytes(path: str) -> int:

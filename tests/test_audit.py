@@ -1196,6 +1196,42 @@ def test_preflight_flags_fat_problems():
         shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
 
 
+def test_copy_paces_writes_on_removable():
+    """O ritmo de escrita (PACE) existe para NÃO travar a máquina inteira: as
+    páginas sujas são um recurso global e um pendrive de 11,8 MB/s leva 46 s para
+    drenar os 512 MiB de dirty desta máquina — foi assim que o desktop congelou
+    com o SMR em 19/06. Este teste prova as duas metades da política: destino
+    removível DRENA (fdatasync periódico), destino interno NÃO (num NVMe o fsync
+    a cada 16 MiB só custaria vazão, sem proteger ninguém)."""
+    src = tempfile.mkdtemp(prefix="lfs_pace_src_")
+    dst = tempfile.mkdtemp(prefix="lfs_pace_dst_")
+    with open(os.path.join(src, "video.mkv"), "wb") as f:
+        f.write(b"\0" * (32 << 20))              # 32 MiB
+    sincs = []
+    real_sync, real_caps, real_pace = os.fdatasync, disks.dest_caps, fileops.PACE
+    os.fdatasync = lambda fd: (sincs.append(fd), real_sync(fd))[1]
+    # a drenagem só pode acontecer em fronteira de bloco (BLOCK = 4 MiB),
+    # então PACE menor que isso não adianta: 32 MiB / 4 MiB = 8 drenagens.
+    fileops.PACE = fileops.BLOCK
+    try:
+        for removivel, minimo, rotulo in ((False, 0, "interno"), (True, 6, "removível")):
+            disks.dest_caps = lambda p, r=removivel: disks.DestCaps(
+                fstype="ext4", namemax=255, removable=r)
+            sincs.clear()
+            fileops.copy_to([os.path.join(src, "video.mkv")], dst,
+                            on_conflict=lambda s, d: "overwrite")
+            n = len(sincs)
+            if removivel:
+                assert n >= minimo, f"destino removível não drenou ({n} fdatasync)"
+            else:
+                # 1 é o fsync final ("copiado" tem que significar "no disco")
+                assert n <= 1, f"destino interno drenou demais ({n} fdatasync)"
+    finally:
+        os.fdatasync, disks.dest_caps, fileops.PACE = real_sync, real_caps, real_pace
+        shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
+    print("ok  F7   escrita em ritmo no removível, sem penalizar disco interno")
+
+
 def test_copy_into_itself():
     """Copiar uma pasta para dentro dela mesma não pode virar recursão infinita."""
     src = tempfile.mkdtemp(prefix="lfs_self_")
@@ -1445,6 +1481,7 @@ def main():
            test_dest_caps_rejects_non_utf8_names,
            test_cli_emits_bytes_for_hostile_names,
            test_preflight_flags_fat_problems,
+           test_copy_paces_writes_on_removable,
            test_copy_into_itself, test_qt_drag_and_clipboard_payload,
            test_default_file_manager_wins_over_dbus, test_build_info_visible_and_honest,
            test_fileops_has_no_destructive_api,
