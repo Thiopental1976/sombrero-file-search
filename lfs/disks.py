@@ -153,17 +153,66 @@ _NTFS = dict(max_file=None, symlinks=False, perms=False, times=True,
 _MTP = dict(max_file=None, symlinks=False, perms=False, times=False,
             charset=_DOS_BAD, reserved=False, label="MTP", maxchars=255, utf8_only=True)
 
+# Destinos de REDE por gvfs. A montagem gvfs é UMA só (fuse.gvfsd-fuse) para todos
+# os backends; quem distingue mtp:/sftp:/smb-share:/dav: é o ESQUEMA no primeiro
+# componente do caminho, lido em dest_caps() — nunca o fstype (ver §3.1 do achado
+# de campo). `net=True` marca "gargalo é a rede": sem pacing USB e statvfs não
+# confiável para "cabe?".
+_NET_POSIX = dict(max_file=None, symlinks=True, perms=True, times=True,
+                  charset="", reserved=False, label="SFTP", net=True)
+_NET_SMB = dict(max_file=None, symlinks=False, perms=False, times=True,
+                charset=_DOS_BAD, reserved=False, label="SMB", net=True)
+_NET_LIMITED = dict(max_file=None, symlinks=False, perms=False, times=False,
+                    charset="", reserved=False, label="WebDAV", net=True)
+# Esquema gvfs desconhecido ou raiz do gvfs sem componente: conservador. NÃO
+# degrada nomes sem evidência (charset livre) — a SONDA decide a gravabilidade.
+_NET_CONSERVATIVE = dict(max_file=None, symlinks=False, perms=False, times=False,
+                         charset="", reserved=False, label="rede", net=True)
+
 _FS_CAPS = {
     "vfat": _FAT, "fat": _FAT, "msdos": _FAT, "umsdos": _FAT,
     "exfat": _EXFAT, "fuse.exfat": _EXFAT, "exfat-fuse": _EXFAT,
     "ntfs": _NTFS, "ntfs3": _NTFS, "fuseblk": _NTFS, "fuse.ntfs-3g": _NTFS,
-    # celular/câmera: não é sistema de arquivos de verdade (sem mtime confiável)
+    # celular/câmera por FUSE REAL (jmtpfs/mtpfs): grava com open('wb'), estratégia
+    # GUARDED. O gvfs NÃO entra aqui — 'fuse.gvfsd-fuse' é resolvido por esquema em
+    # dest_caps(), porque o mesmo fstype serve sftp/smb/dav (que são POSIX/rede).
     "fuse.jmtpfs": _MTP, "fuse.simple-mtpfs": _MTP, "fuse.go-mtpfs": _MTP,
-    "mtpfs": _MTP, "fuse.gvfsd-fuse": _MTP, "gvfsd-fuse": _MTP,
+    "mtpfs": _MTP,
     # ISO/UDF montados são somente-leitura; tratados como erro na pré-checagem
     "iso9660": dict(max_file=None, symlinks=True, perms=False, times=False,
                     charset="", reserved=False, label="ISO9660", readonly=True),
 }
+
+# esquema gvfs (antes do ':' no primeiro componente do caminho) -> perfil de caps.
+# mtp/gphoto2/afc transferem OBJETOS inteiros: mesmas restrições e rota gvfs (GIO).
+_GVFS_SCHEMES = {
+    "mtp": _MTP, "gphoto2": _MTP, "afc": _MTP,
+    "sftp": _NET_POSIX, "ssh": _NET_POSIX,
+    "smb-share": _NET_SMB, "smb": _NET_SMB, "cifs": _NET_SMB,
+    "dav": _NET_LIMITED, "davs": _NET_LIMITED,
+}
+
+
+def _gvfs_scheme(path: str, mountpoint: str) -> str:
+    """Esquema do backend gvfs lido no primeiro componente do caminho abaixo da
+    raiz do mount: '/run/user/1000/gvfs/mtp:host=Philips/...' -> 'mtp'. Devolve ''
+    para o próprio ponto de montagem (sem componente) ou caminho fora dele."""
+    rel = os.path.relpath(os.path.abspath(path), mountpoint)
+    if rel in (".", "") or rel.startswith(".."):
+        return ""
+    comp = rel.split(os.sep, 1)[0]           # 'mtp:host=Philips_...'
+    return comp.split(":", 1)[0].lower()     # 'mtp'
+
+
+def _caps_for(fstype: str, path: str, mountpoint: str):
+    """(dict de capacidades, via_gvfs) a partir do fstype e — para o gvfs — do
+    ESQUEMA lido no caminho. Função PURA (não toca no disco), para ser testável
+    com caminhos sintéticos e com o contraexemplo sftp (§2 do desenho A2R)."""
+    fskey = fstype.lower()
+    if fskey in ("fuse.gvfsd-fuse", "gvfsd-fuse"):
+        base = _GVFS_SCHEMES.get(_gvfs_scheme(path, mountpoint), _NET_CONSERVATIVE)
+        return dict(base), (base is _MTP)    # gvfs-MTP liga a estratégia GIO (§3.3)
+    return dict(_FS_CAPS.get(fskey, _DEFAULT_CAPS)), False
 
 _DEFAULT_CAPS = dict(max_file=None, symlinks=True, perms=True, times=True,
                      charset="", reserved=False, label="POSIX")
@@ -191,11 +240,18 @@ class DestCaps:
     identificado -> assumimos POSIX (otimista), mas `namemax` do statvfs ainda
     vale, então nomes longos demais continuam sendo pegos."""
 
-    def __init__(self, fstype="", mountpoint="", namemax=255, readonly=False, **caps):
+    def __init__(self, fstype="", mountpoint="", namemax=255, readonly=False,
+                 via_gvfs=False, **caps):
         self.fstype = fstype
         self.mountpoint = mountpoint
         self.namemax = namemax or 255
         self.readonly = readonly
+        # via_gvfs: destino é backend gvfs cujo open('wb') NÃO grava (ponte FUSE
+        # devolve ENOTSUP) — a escrita vai pela estratégia GIO (`gio copy`).
+        self.via_gvfs = bool(via_gvfs)
+        # net: destino de rede (sftp/smb/dav). Sem pacing USB; f_bavail do statvfs
+        # é inventado, então "cabe?" é palpite, não garantia.
+        self.net = bool(caps.get("net"))
         self.max_file = caps.get("max_file")
         self.symlinks = caps.get("symlinks", True)
         self.perms = caps.get("perms", True)
@@ -351,7 +407,9 @@ def dest_caps(path: str) -> DestCaps:
     while probe != "/" and not os.path.exists(probe):
         probe = os.path.dirname(probe)
     dev, mp, fstype = _mount_entry(probe)
-    caps = dict(_FS_CAPS.get(fstype.lower(), _DEFAULT_CAPS))
+    # Esquema gvfs lido do caminho ORIGINAL (ap), não do probe: se o subdiretório
+    # ainda não existe, probe subiu, mas o componente 'mtp:host=' já está em ap.
+    caps, via_gvfs = _caps_for(fstype, ap, mp)
     readonly = bool(caps.pop("readonly", False))
     namemax = 255
     try:
@@ -362,7 +420,7 @@ def dest_caps(path: str) -> DestCaps:
     except OSError:
         pass
     return DestCaps(fstype=fstype, mountpoint=mp, namemax=namemax,
-                    readonly=readonly, removable=is_removable(dev),
+                    readonly=readonly, via_gvfs=via_gvfs, removable=is_removable(dev),
                     link_mbits=link_speed(dev), **caps)
 
 

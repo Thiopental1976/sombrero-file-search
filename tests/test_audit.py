@@ -1111,9 +1111,30 @@ def test_mount_entry_sees_mtp_gvfs():
     assert fstype == "fuse.gvfsd-fuse", f"não viu o MTP, viu {fstype!r} (regressão A1)"
     assert mp == "/run/user/1000/gvfs", f"ponto de montagem errado: {mp!r}"
     assert dev == "gvfsd-fuse", "dev do MTP deveria ser a source gvfs (sem /dev/)"
-    # e o fstype gvfs cai na tabela de caps de MTP (restritivo), não em POSIX
-    caps = disks._FS_CAPS.get(fstype.lower())
-    assert caps is disks._MTP, "fuse.gvfsd-fuse deveria mapear para caps de MTP"
+    # CLASSIFICAÇÃO POR ESQUEMA (§1.2/§2 do A2R): o fstype gvfs é UM só para todos
+    # os backends; quem decide o perfil é o esquema no primeiro componente do
+    # caminho. O contraexemplo sftp é obrigatório — sem ele o classificador não
+    # foi testado, só a coincidência de o exemplo ser MTP.
+    caps_mtp, via_mtp = disks._caps_for(fstype, mtp, mp)
+    assert caps_mtp["label"] == "MTP" and via_mtp, "gvfs-MTP: perfil MTP + via_gvfs"
+    sftp = "/run/user/1000/gvfs/sftp:host=servidorcedro/home/rodrigo/x"
+    caps_sftp, via_sftp = disks._caps_for(fstype, sftp, mp)
+    assert caps_sftp["label"] == "SFTP" and not via_sftp, \
+        "CONTRAEXEMPLO: sftp por gvfs é POSIX remoto, NÃO MTP (não degrada nomes)"
+    assert caps_sftp["symlinks"] and caps_sftp["perms"] and not caps_sftp["charset"], \
+        "sftp deveria manter symlink/perms/charset livre (POSIX pleno)"
+    smb = "/run/user/1000/gvfs/smb-share:server=nas,share=video/clipe.mp4"
+    assert disks._caps_for(fstype, smb, mp)[0]["label"] == "SMB"
+    assert disks._caps_for(fstype, "/run/user/1000/gvfs/dav:host=box/a", mp)[0]["label"] == "WebDAV"
+    # raiz do gvfs sem componente e esquema desconhecido: conservador, NÃO-MTP
+    for p in (mp, "/run/user/1000/gvfs/googledrive:host=x/a"):
+        c, v = disks._caps_for(fstype, p, mp)
+        assert not v and c["label"] == "rede", f"gvfs sem/esquema-novo deveria ser conservador: {p}"
+    # o mapa de fstype NÃO deve mais classificar gvfs como MTP (a armadilha do §3.1)
+    assert "fuse.gvfsd-fuse" not in disks._FS_CAPS and "gvfsd-fuse" not in disks._FS_CAPS, \
+        "fuse.gvfsd-fuse não pode voltar ao _FS_CAPS: mtp/sftp/smb compartilham o fstype"
+    # jmtpfs (FUSE real, fora do gvfs) continua MTP pela tabela de fstype
+    assert disks._caps_for("fuse.jmtpfs", "/home/rodrigo/mtp/x", "/home/rodrigo/mtp")[0]["label"] == "MTP"
     # um caminho de disco normal continua casando o /dev/ real (sem regressão)
     dev2, mp2, fs2 = disks._mount_entry("/home/rodrigo/x",
                                         mounts=disks._read_mounts(mounts))
