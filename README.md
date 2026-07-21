@@ -108,5 +108,6 @@ com paridade numérica < 1/255. O acervo é **somente leitura**; pesos derivados
 
 ## Licença
 
-**Aberto e gratuito** — baseada na MIT, porém **sem direito de revenda**: pode ser usado,
-copiado, modificado e distribuído livremente, mas **não pode ser vendido**. Veja [LICENSE](LICENSE).
+**GNU GPL v3 ou posterior** ([LICENSE](LICENSE)). Software livre: pode ser usado, estudado,
+modificado e redistribuído. Quem distribuir uma versão modificada tem que distribuir também o
+código-fonte, sob a mesma licença — ninguém pega este trabalho, fecha e vende como produto próprio.

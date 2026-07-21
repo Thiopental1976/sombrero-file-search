@@ -10,7 +10,7 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3776ab)
 ![PySide6](https://img.shields.io/badge/GUI-PySide6-41cd52)
 ![ripgrep](https://img.shields.io/badge/engine-ripgrep%20%2B%20fd-orange)
-![License](https://img.shields.io/badge/license-aberto%20e%20gratuito-blue)
+![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 
 </div>
 
@@ -117,6 +117,12 @@ esses discos:
 
 ## Licença
 
-**Aberto e gratuito** — baseada na MIT, porém **sem direito de revenda**: o software pode ser
-usado, copiado, modificado, publicado e distribuído livremente, mas **não pode ser vendido** como
-produto ou serviço pago; deve permanecer gratuito. Veja [LICENSE](LICENSE).
+**GNU GPL v3 ou posterior** ([LICENSE](LICENSE)) — `SPDX-License-Identifier: GPL-3.0-or-later`.
+
+Software livre de verdade: use, estude, modifique e redistribua à vontade. A única obrigação é
+recíproca — quem distribuir uma versão modificada precisa distribuir o código-fonte dela sob a
+mesma licença. É o que impede alguém fechar este trabalho e revendê-lo como produto próprio, e é
+também o que permite ao projeto entrar em repositórios como Flathub, Debian e AUR (licença caseira
+não é aceita por nenhum deles).
+
+Copyright (C) 2026 Rodrigo Toledo. Distribuído SEM QUALQUER GARANTIA.

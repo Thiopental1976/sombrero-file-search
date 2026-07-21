@@ -5,7 +5,7 @@
 > o modo documentos, o player de mídia, o sistema de temas e a matriz de dependências por distro.
 >
 > **Versão do documento:** 2026-07-14 · **Autor:** Rodrigo Toledo (com Andrômeda/Claude)
-> **Licença:** aberta e gratuita (baseada na MIT, sem direito de revenda)
+> **Licença:** GNU GPL v3 ou posterior (`SPDX-License-Identifier: GPL-3.0-or-later`)
 
 ---
 

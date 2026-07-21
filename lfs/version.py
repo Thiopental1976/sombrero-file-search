@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# Linux File Search — Copyright (C) 2026 Rodrigo Toledo
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Este programa é software livre: você pode redistribuí-lo e/ou modificá-lo sob
+# os termos da GNU General Public License, versão 3 ou posterior (ver LICENSE).
+# Distribuído na esperança de ser útil, mas SEM QUALQUER GARANTIA.
 """Linux File Search — which build am I?
 
 Why this module exists: the app is INSTALLED as a copy of the sources under
