@@ -115,15 +115,21 @@ def mount_ok(path: str) -> bool:
 #   times     — suporta ajustar mtime (utime)
 #   charset   — caracteres PROIBIDOS no nome
 #   reserved  — nomes reservados do DOS (CON, PRN, LPT1…) são inválidos
+#   maxchars  — limite de nome em CARACTERES (não bytes). FAT/exFAT/NTFS contam
+#               255 unidades UTF-16, mas o statvfs do vfat responde f_namemax
+#               =1530 (255x6, o pior caso do UTF-8): confiar nele fazia a
+#               pré-checagem aprovar um nome de 300 caracteres que o kernel
+#               recusa com ENAMETOOLONG na hora de escrever. Medido em FAT32
+#               real: 254 caracteres passam, 259 não.
 _DOS_BAD = '"*:<>?\\|'
 _FAT = dict(max_file=(1 << 32) - 1, symlinks=False, perms=False, times=True,
-            charset=_DOS_BAD, reserved=True, label="FAT32")
+            charset=_DOS_BAD, reserved=True, label="FAT32", maxchars=255)
 _EXFAT = dict(max_file=None, symlinks=False, perms=False, times=True,
-              charset=_DOS_BAD, reserved=False, label="exFAT")
+              charset=_DOS_BAD, reserved=False, label="exFAT", maxchars=255)
 _NTFS = dict(max_file=None, symlinks=False, perms=False, times=True,
-             charset=_DOS_BAD, reserved=True, label="NTFS")
+             charset=_DOS_BAD, reserved=True, label="NTFS", maxchars=255)
 _MTP = dict(max_file=None, symlinks=False, perms=False, times=False,
-            charset=_DOS_BAD, reserved=False, label="MTP")
+            charset=_DOS_BAD, reserved=False, label="MTP", maxchars=255)
 
 _FS_CAPS = {
     "vfat": _FAT, "fat": _FAT, "msdos": _FAT, "umsdos": _FAT,
@@ -160,6 +166,7 @@ class DestCaps:
         self.perms = caps.get("perms", True)
         self.times = caps.get("times", True)
         self.charset = caps.get("charset", "")
+        self.maxchars = caps.get("maxchars")     # limite em CARACTERES (UTF-16)
         self.reserved = caps.get("reserved", False)
         self.label = caps.get("label", "POSIX")
 
@@ -179,6 +186,8 @@ class DestCaps:
             return "charset"             # \n, \t: ilegais em FAT/exFAT/NTFS
         if len(os.fsencode(name)) > self.namemax:
             return "length"
+        if self.maxchars and len(name) > self.maxchars:
+            return "length"                  # FAT/exFAT/NTFS: 255 unidades UTF-16
         if self.reserved and os.path.splitext(name)[0].upper() in _RESERVED:
             return "reserved"
         if self.charset and (name.endswith(" ") or name.endswith(".")):
@@ -203,6 +212,8 @@ class DestCaps:
         sb = os.fsencode(stem)
         if len(sb) > room:
             stem = os.fsdecode(sb[:room]) or "_"
+        if self.maxchars:                             # e o limite em CARACTERES
+            stem = stem[:max(1, self.maxchars - len(ext))]
         return (stem + ext).rstrip(" .") or "_"
 
 

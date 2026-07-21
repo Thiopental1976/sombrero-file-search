@@ -81,13 +81,21 @@ def main():
               file=sys.stderr)
     sep = "\0" if args.print0 else "\n"
     n = [0]
+    # Escrevemos BYTES, não texto. Nome de arquivo no Linux é uma sequência de
+    # bytes que não precisa ser UTF-8 válido; o Python o carrega com
+    # surrogateescape, e sys.stdout.write() morre com UnicodeEncodeError na
+    # primeira foto de câmera com nome quebrado. os.fsencode devolve os bytes
+    # originais — que é exatamente o que um pipe para xargs/rm precisa receber.
+    wb = sys.stdout.buffer
+    def emit(s):
+        wb.write(os.fsencode(s))
     def out(m):
         n[0] += 1
         if args.files_only or not m.lines:
-            sys.stdout.write(m.path + sep)
+            emit(m.path + sep)
         else:
             for ln, txt in m.lines:
-                sys.stdout.write(f"{m.path}:{ln}:{txt}{sep}")
+                emit(f"{m.path}:{ln}:{txt}{sep}")
     if args.boolexpr:
         import boolean
         try:
@@ -96,6 +104,7 @@ def main():
             print(f"boolean expression error: {e}", file=sys.stderr); sys.exit(2)
     else:
         tot, dt = engine.search(q, out)
+    wb.flush()
     print(f"\n# {tot} files · {dt:.2f}s", file=sys.stderr)
 
 

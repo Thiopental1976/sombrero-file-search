@@ -1089,6 +1089,49 @@ def test_dest_caps_restrictive_filesystems():
     print("ok  F7   capacidades do destino: FAT/exFAT/NTFS pegos antes de copiar")
 
 
+def test_dest_caps_statvfs_lies_on_vfat():
+    """Achado do teste presencial (FAT32 real montado em loop): o statvfs do vfat
+    responde f_namemax=1530 — 255 x 6, o pior caso de UTF-8 por unidade UTF-16.
+    Confiar nele fazia a pré-checagem APROVAR um nome de 300 caracteres que o
+    kernel recusa com ENAMETOOLONG no meio da fila. O limite do FAT/exFAT/NTFS é
+    em CARACTERES (255 unidades UTF-16), não em bytes; medido no pendrive de
+    verdade: 255 passa, 256 não. Por isso a tabela de capacidades tem maxchars, e
+    ele manda no namemax que o kernel informou."""
+    fat = disks.DestCaps(fstype="vfat", namemax=1530, **disks._FAT)
+    assert fat.maxchars == 255
+    assert fat.name_problem("a" * 300) == "length", "acreditou no f_namemax mentiroso"
+    assert fat.name_problem("a" * 255) is None, "rejeitou nome que o FAT32 aceita"
+    # 200 emoji = 800 bytes (passa folgado em 1530) mas 200 caracteres: legal.
+    # 300 acentos = 600 bytes, também sob 1530, e ainda assim ilegal no FAT.
+    assert fat.name_problem("é" * 300) == "length"
+    s = fat.sanitize("é" * 300 + ".mkv")
+    assert fat.name_problem(s) is None and s.endswith(".mkv")
+    ext4 = disks.DestCaps(fstype="ext4", namemax=255)
+    assert ext4.maxchars is None, "limite de caracteres é coisa de FAT, não de POSIX"
+    print("ok  F7   limite de nome do FAT medido em caracteres, não no f_namemax")
+
+
+def test_cli_emits_bytes_for_hostile_names():
+    """Também do presencial: buscar uma pasta com foto de câmera de nome quebrado
+    matava a CLI inteira com UnicodeEncodeError na primeira linha — os resultados
+    seguintes se perdiam. Nome de arquivo é sequência de BYTES; a saída tem que
+    sair como bytes, senão `lfs ... -0 | xargs -0` não é confiável."""
+    src = tempfile.mkdtemp(prefix="lfs_cli_")
+    try:
+        quebrado = os.path.join(src, os.fsdecode(b"camera_\xff\xfe.jpg"))
+        open(quebrado, "w").close()
+        open(os.path.join(src, "depois.txt"), "w").close()
+        raiz = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+        out = subprocess.run([sys.executable, "-m", "lfs.cli", "-n", "*", "-l", src],
+                             capture_output=True, cwd=raiz)
+        assert out.returncode == 0, out.stderr.decode("utf-8", "replace")
+        assert os.fsencode(quebrado) in out.stdout, "o nome não-UTF-8 não saiu em bytes"
+        assert b"depois.txt" in out.stdout, "a busca morreu no nome quebrado"
+        print("ok  F7   CLI sobrevive a nome não-UTF-8 e emite os bytes originais")
+    finally:
+        shutil.rmtree(src, ignore_errors=True)
+
+
 def test_preflight_flags_fat_problems():
     """Com destino FAT32, a pré-varredura tem que listar o que vai falhar
     (tamanho e nome) e a cópia pular esses itens com motivo — nunca abortar no
@@ -1284,7 +1327,10 @@ def main():
            test_copy_hostile_names, test_copy_symlinks_and_cycles,
            test_copy_conflicts, test_copy_cancel_removes_partial,
            test_copy_never_touches_source, test_preflight_space_and_mount,
-           test_dest_caps_restrictive_filesystems, test_preflight_flags_fat_problems,
+           test_dest_caps_restrictive_filesystems,
+           test_dest_caps_statvfs_lies_on_vfat,
+           test_cli_emits_bytes_for_hostile_names,
+           test_preflight_flags_fat_problems,
            test_copy_into_itself, test_qt_drag_and_clipboard_payload,
            test_default_file_manager_wins_over_dbus, test_build_info_visible_and_honest,
            test_fileops_has_no_destructive_api]
