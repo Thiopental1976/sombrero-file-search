@@ -1190,6 +1190,28 @@ def test_qt_drag_and_clipboard_payload():
     print("ok  F7   payload Qt: 3 formatos, só CopyAction, ShowItems bem montado")
 
 
+def test_default_file_manager_wins_over_dbus():
+    """A janela de "abrir pasta contendo" tem que ser a do gerenciador PADRÃO DO
+    USUÁRIO. O ShowItems é ativado por NOME no barramento, e quem responde pode
+    não ser o padrão (no Mint o Nemo registra o FileManager1 mesmo quando o
+    padrão é outro): por isso só usamos o barramento quando o padrão é um
+    implementador conhecido; senão lançamos o padrão direto."""
+    import xdg
+    mk = lambda did, ex: xdg.DesktopApp(did, "/x/" + did, did, ex)
+    for did, ex in (("nemo.desktop", "nemo %U"),
+                    ("org.gnome.Nautilus.desktop", "nautilus --new-window %U"),
+                    ("org.kde.dolphin.desktop", "dolphin %u")):
+        assert xdg.implements_showitems(mk(did, ex)), did
+    for did, ex in (("pcmanfm.desktop", "pcmanfm %U"),
+                    ("doublecmd.desktop", "doublecmd %F"),
+                    ("spacefm.desktop", "spacefm %F")):
+        assert not xdg.implements_showitems(mk(did, ex)), did
+    assert not xdg.implements_showitems(None)
+    fm = xdg.default_file_manager()      # depende da máquina; só não pode explodir
+    assert fm is None or isinstance(fm, xdg.DesktopApp)
+    print("ok  F7   pasta abre no gerenciador padrão (D-Bus só se ele fizer ShowItems)")
+
+
 def test_fileops_has_no_destructive_api():
     """Garantia estrutural: o motor de cópia não expõe NENHUMA função capaz de
     apagar, mover ou renomear a origem. É a versão executável do princípio —
@@ -1233,6 +1255,7 @@ def main():
            test_copy_never_touches_source, test_preflight_space_and_mount,
            test_dest_caps_restrictive_filesystems, test_preflight_flags_fat_problems,
            test_copy_into_itself, test_qt_drag_and_clipboard_payload,
+           test_default_file_manager_wins_over_dbus,
            test_fileops_has_no_destructive_api]
     fail = 0
     for fn in fns:

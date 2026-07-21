@@ -164,6 +164,40 @@ def apps_for(path: str, limit: int = 12):
     return out
 
 
+# Gerenciadores que implementam org.freedesktop.FileManager1 (ShowItems). Só
+# vale ativar o serviço no barramento se o gerenciador PADRÃO do usuário for um
+# destes: no Mint, o Nemo registra o FileManager1 mesmo quando o padrão é outro,
+# e a janela abriria no gerenciador errado.
+_FM1_IMPLEMENTERS = ("nemo", "nautilus", "dolphin", "thunar", "caja",
+                     "pcmanfm-qt", "nemo-desktop", "index", "krusader")
+
+
+def default_file_manager():
+    """O gerenciador de arquivos PADRÃO do usuário (associação de
+    inode/directory), ou None se o sistema não declara nenhum."""
+    by_id = _iter_desktop_files()
+    for did in _mimeapps_order("inode/directory"):
+        p = by_id.get(did)
+        app = _parse_desktop(p) if p else None
+        if app:
+            return app
+    return None
+
+
+def implements_showitems(app: DesktopApp) -> bool:
+    """Este gerenciador atende ShowItems do FileManager1? Casamos pelo binário do
+    Exec= (e pelo desktop_id), não pela lista de serviços do barramento: quem
+    responde no barramento pode não ser o padrão do usuário."""
+    if app is None:
+        return False
+    try:
+        argv0 = os.path.basename(shlex.split(app.exec_line)[0]).lower()
+    except (ValueError, IndexError):
+        argv0 = ""
+    did = app.desktop_id.lower()
+    return any(n in argv0 or n in did for n in _FM1_IMPLEMENTERS)
+
+
 def expand_exec(exec_line: str, paths):
     """Exec= do .desktop -> argv. Expande %f/%F/%u/%U com os caminhos e descarta
     os campos que não se aplicam (%i %c %k %d %n %v %m). %% é um '%' literal."""

@@ -1575,11 +1575,19 @@ class MainWindow(QMainWindow):
         ms = self._sel_matches()[:10]
         if not ms:
             return
-        if self._show_items([m.path for m in ms]):
+        dirs = list(dict.fromkeys(os.path.dirname(m.path) for m in ms))
+        # A janela tem que abrir no gerenciador PADRÃO DO USUÁRIO. O ShowItems é
+        # ativado por nome no barramento, e quem registra o FileManager1 pode não
+        # ser o padrão dele (no Mint o Nemo registra mesmo se o padrão for outro).
+        # Então: só usa o barramento se o padrão for um implementador conhecido.
+        fm = xdg.default_file_manager()
+        if fm is None or xdg.implements_showitems(fm):
+            if self._show_items([m.path for m in ms]):
+                return
+        if fm is not None and xdg.launch(fm, dirs):   # padrão do usuário, sem seleção
             return
-        # fallback: sem serviço no barramento (WM exótico, distro sem gerenciador
-        # registrado) — abre a pasta simples, comportamento antigo
-        for d in dict.fromkeys(os.path.dirname(m.path) for m in ms):
+        # último recurso: xdg-open pelo Qt (WM exótico, sistema sem associação)
+        for d in dirs:
             QDesktopServices.openUrl(QUrl.fromLocalFile(d))
 
     def _show_items(self, paths) -> bool:
