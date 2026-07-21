@@ -1090,6 +1090,40 @@ def test_dest_caps_restrictive_filesystems():
     print("ok  F7   capacidades do destino: FAT/exFAT/NTFS pegos antes de copiar")
 
 
+def test_mount_entry_sees_mtp_gvfs():
+    """A1 (parecer Fable, confirmado AO VIVO no Philips PMC7230): um telefone/media
+    player via MTP aparece no /proc/mounts como 'gvfsd-fuse … fuse.gvfsd-fuse', SEM
+    nó em /dev/. O filtro antigo por /dev/ descartava essa linha, o casamento subia
+    até '/' e o aparelho era classificado como o DISCO DE SISTEMA ext4 — o pior erro
+    possível para uma cópia (sem aviso de MTP, sem checagem de nome).
+
+    Linha e caminho são exatamente os capturados do PMC7230 em 2026-07-21."""
+    mounts = [
+        "/dev/mapper/vgmint-root / ext4 rw,relatime 0 0\n",
+        "tmpfs /run tmpfs rw,nosuid,nodev 0 0\n",
+        "tmpfs /run/user/1000 tmpfs rw,nosuid,relatime 0 0\n",
+        "gvfsd-fuse /run/user/1000/gvfs fuse.gvfsd-fuse rw,nosuid,nodev,relatime,"
+        "user_id=1000,group_id=1000 0 0\n",
+    ]
+    mtp = ("/run/user/1000/gvfs/mtp:host=Philips_Philips_PMC7230_4dbc38a7_-_"
+           "527b8946_-_0e823200_-_0d411f79/Storage/Video")
+    dev, mp, fstype = disks._mount_entry(mtp, mounts=disks._read_mounts(mounts))
+    assert fstype == "fuse.gvfsd-fuse", f"não viu o MTP, viu {fstype!r} (regressão A1)"
+    assert mp == "/run/user/1000/gvfs", f"ponto de montagem errado: {mp!r}"
+    assert dev == "gvfsd-fuse", "dev do MTP deveria ser a source gvfs (sem /dev/)"
+    # e o fstype gvfs cai na tabela de caps de MTP (restritivo), não em POSIX
+    caps = disks._FS_CAPS.get(fstype.lower())
+    assert caps is disks._MTP, "fuse.gvfsd-fuse deveria mapear para caps de MTP"
+    # um caminho de disco normal continua casando o /dev/ real (sem regressão)
+    dev2, mp2, fs2 = disks._mount_entry("/home/rodrigo/x",
+                                        mounts=disks._read_mounts(mounts))
+    assert dev2 == "/dev/mapper/vgmint-root" and fs2 == "ext4"
+    # o leitor decodifica espaço escapado (\040) no ponto de montagem
+    got = disks._read_mounts(["/dev/sdb1 /media/pen\\040drive vfat rw 0 0\n"])
+    assert got == [("/dev/sdb1", "/media/pen drive", "vfat")]
+    print("ok  A1   MTP/gvfs visível no mounts (PMC7230): não mais 'ext4 interno'")
+
+
 def test_dest_caps_statvfs_lies_on_vfat():
     """Achado do teste presencial (FAT32 real montado em loop): o statvfs do vfat
     responde f_namemax=1530 — 255 x 6, o pior caso de UTF-8 por unidade UTF-16.
@@ -1592,6 +1626,7 @@ def main():
            test_copy_conflicts, test_copy_cancel_removes_partial,
            test_copy_never_touches_source, test_preflight_space_and_mount,
            test_dest_caps_restrictive_filesystems,
+           test_mount_entry_sees_mtp_gvfs,
            test_dest_caps_statvfs_lies_on_vfat,
            test_dest_caps_rejects_non_utf8_names,
            test_cli_emits_bytes_for_hostile_names,

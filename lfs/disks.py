@@ -40,23 +40,39 @@ def _under_mount(ap: str) -> bool:
     return any(ap == pre or ap.startswith(pre + os.sep) for pre in _MNT_PREFIXES)
 
 
-def _mount_entry(ap: str):
-    """(dev, mountpoint, fstype) do mount de prefixo MAIS LONGO que cobre `ap`,
-    lido de /proc/mounts. ("", "", "") se não achar."""
+def _read_mounts(src="/proc/mounts"):
+    """/proc/mounts como lista de (dev, mountpoint, fstype). `src` pode ser um
+    caminho OU um iterável de linhas — é o que torna testável o casamento de
+    caminho com montagens que NÃO têm nó em /dev/ (MTP, gvfs, sshfs)."""
+    linhas = open(src, encoding="utf-8").readlines() if isinstance(src, str) else list(src)
+    out = []
+    for line in linhas:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        # espaço no ponto de montagem vem escapado como \040 no /proc/mounts
+        out.append((parts[0], parts[1].replace("\\040", " "), parts[2]))
+    return out
+
+
+def _mount_entry(ap: str, mounts=None):
+    """(dev, mountpoint, fstype) do mount de prefixo MAIS LONGO que cobre `ap`.
+    ("", "", "") se não achar.
+
+    NÃO exige source em /dev/: um telefone via MTP/gvfs aparece como
+    `gvfsd-fuse /run/user/1000/gvfs fuse.gvfsd-fuse`, sem nó de bloco. Filtrar por
+    /dev/ fazia o casamento subir até `/` e classificar o celular como o disco de
+    sistema ext4 — o pior erro possível para uma cópia (sem aviso, sem ritmo). O
+    dev fica "" nesses casos, e is_removable/rotational lidam bem com isso."""
     best = ("", "", "")
     try:
-        with open("/proc/mounts", encoding="utf-8") as f:
-            for line in f:
-                parts = line.split()
-                if len(parts) < 3 or not parts[0].startswith("/dev/"):
-                    continue
-                dev = parts[0]
-                mp = parts[1].replace("\\040", " ")   # espaço é escapado no mounts
-                if ap == mp or mp == "/" or ap.startswith(mp.rstrip("/") + "/"):
-                    if len(mp) >= len(best[1]):       # prefixo mais específico vence
-                        best = (dev, mp, parts[2])
+        entradas = mounts if mounts is not None else _read_mounts()
     except OSError:
         return ("", "", "")
+    for dev, mp, fstype in entradas:
+        if ap == mp or mp == "/" or ap.startswith(mp.rstrip("/") + "/"):
+            if len(mp) >= len(best[1]):               # prefixo mais específico vence
+                best = (dev, mp, fstype)
     return best
 
 
