@@ -622,8 +622,15 @@ class PreflightDialog(QDialog):
                         dest=pf.dest_dir))
         head.setWordWrap(True)
         v.addWidget(head)
-        v.addWidget(QLabel(t("Destination filesystem: {fs} · {free} free",
-                             fs=pf.caps.label, free=human_size(pf.free_bytes))))
+        # A velocidade do link explica sozinha a maior parte das cópias "lentas
+        # demais": num USB 2.0 (11 MB/s reais) 20 GiB levam meia hora, e isso é o
+        # cabo, não o programa. Melhor dizer antes do que ouvir depois.
+        linha = t("Destination filesystem: {fs} · {free} free",
+                  fs=pf.caps.label, free=human_size(pf.free_bytes))
+        enlace = disks.link_label(pf.caps.link_mbits)
+        if enlace:
+            linha += " · " + enlace
+        v.addWidget(QLabel(linha))
 
         self.details = QPlainTextEdit()
         self.details.setReadOnly(True)
@@ -742,7 +749,10 @@ class PropertiesDialog(QDialog):
         except OSError as e:
             form.addRow(t("Error:"), self._sel(str(e)))
         fs = disks.dest_caps(m.path)
-        form.addRow(t("Filesystem:"), self._sel("%s (%s)" % (fs.label, fs.fstype or "?")))
+        texto_fs = "%s (%s)" % (fs.label, fs.fstype or "?")
+        if disks.link_label(fs.link_mbits):
+            texto_fs += " · " + disks.link_label(fs.link_mbits)
+        form.addRow(t("Filesystem:"), self._sel(texto_fs))
         v.addLayout(form)
 
         h = QHBoxLayout()
