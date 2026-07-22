@@ -1867,6 +1867,135 @@ def test_preflight_a2r_surfacing():
     print("ok  A2R  GUI: probe_text explica bloqueio + strategy_note informa rota (GIO/rede)")
 
 
+def test_a4_1_copy_bytes_excludes_too_big():
+    """A4.1: too_big é PULADO na cópia — não pode inflar a exigência de espaço.
+    copy_bytes tem que descontá-lo; fits julga só o que vai ser gravado."""
+    src = tempfile.mkdtemp(prefix="lfs_a41_")
+    dst = tempfile.mkdtemp(prefix="lfs_a41_dst_")
+    old = disks.dest_caps
+    disks.dest_caps = lambda p: disks.DestCaps(fstype="vfat", namemax=255, **disks._FAT)
+    try:
+        with open(os.path.join(src, "ok.mp4"), "w") as f:
+            f.write("x" * 100)
+        grande = os.path.join(src, "gigante.mkv")
+        with open(grande, "wb") as f:
+            f.truncate(5 * (1 << 30))               # esparso, >4 GiB do FAT
+        pf = fileops.preflight([src], dst)
+        assert [p for p, _ in pf.too_big] == [grande]
+        # total_bytes inclui o gigante; copy_bytes NÃO
+        assert pf.total_bytes >= 5 * (1 << 30)
+        assert pf.copy_bytes < 1024, pf.copy_bytes
+        # com o gigante fora, cabe folgado; fits não pode ser refém do que é pulado
+        pf.free_bytes = 10 * 1024
+        assert pf.fits, (pf.free_bytes, pf.copy_bytes, pf.total_bytes)
+        print("ok  A4.1 copy_bytes desconta too_big; fits julga só o que grava")
+    finally:
+        disks.dest_caps = old
+        shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
+
+
+def test_a4_2_native_symlink_counts_in_total():
+    """A4.2: symlink recriado como link nativo incrementa done_files no loop;
+    o preflight tem que contá-lo em total_files, senão a barra passa de 100%."""
+    src = tempfile.mkdtemp(prefix="lfs_a42_")
+    dst = tempfile.mkdtemp(prefix="lfs_a42_dst_")
+    try:
+        with open(os.path.join(src, "alvo.txt"), "w") as f:
+            f.write("conteudo")
+        os.symlink("alvo.txt", os.path.join(src, "atalho"))   # symlink válido
+        pf = fileops.preflight([src], dst)                    # destino ext4: symlinks OK
+        seen = []
+        fileops.copy_to([src], dst, plan=pf,
+                        on_progress=lambda p: seen.append((p.done_files, p.total_files)))
+        assert seen, "progresso nunca reportado"
+        done_max = max(d for d, _ in seen)
+        total = seen[-1][1]
+        assert done_max <= total, (done_max, total)
+        base = os.path.join(dst, os.path.basename(src))
+        assert os.path.islink(os.path.join(base, "atalho")), "symlink devia ser nativo"
+        print("ok  A4.2 symlink nativo entra em total_files (done nunca passa total)")
+    finally:
+        shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
+
+
+def test_a4_3_out_of_space_flag():
+    """A4.3: ENOSPC marca out_of_space (≠ cancelamento do usuário), pra GUI dar
+    o motivo certo em vez de 'Cópia cancelada'."""
+    src = tempfile.mkdtemp(prefix="lfs_a43_")
+    dst = tempfile.mkdtemp(prefix="lfs_a43_dst_")
+    old = fileops._write_file
+    def _no_space(*a, **k):
+        raise OSError(errno.ENOSPC, "No space left on device")
+    try:
+        with open(os.path.join(src, "a.bin"), "w") as f:
+            f.write("dado")
+        fileops._write_file = _no_space
+        res = fileops.copy_to([src], dst)
+        assert res.out_of_space is True, "ENOSPC devia marcar out_of_space"
+        assert res.cancelled is True, "e ainda interrompe o lote"
+        assert res.failed, "o arquivo que estourou vai p/ failed"
+        # cancelamento REAL do usuário não é out_of_space
+        fileops._write_file = old
+        res2 = fileops.copy_to([src], dst, cancel=_CancelAfter(1))
+        assert res2.out_of_space is False
+        print("ok  A4.3 out_of_space distingue 'encheu' de 'cancelado'")
+    finally:
+        fileops._write_file = old
+        shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
+
+
+def test_a4_4_sys_disk_whole_disk():
+    """A4.4: disco inteiro sem partição (mmcblk0, nvme0n1) não pode ter o dígito
+    comido pela regex — o próprio nome é o disco."""
+    real = os.path.realpath
+    listed = {"/sys/block/mmcblk0", "/sys/block/nvme0n1", "/sys/block/sda"}
+    old_real, old_isdir = os.path.realpath, os.path.isdir
+    def _fake_isdir(p):
+        if p.startswith("/sys/block/"):
+            return p in listed
+        return old_isdir(p)
+    try:
+        os.path.realpath = lambda p: p
+        os.path.isdir = _fake_isdir
+        assert disks._sys_disk("/dev/mmcblk0") == "mmcblk0"
+        assert disks._sys_disk("/dev/nvme0n1") == "nvme0n1"
+        assert disks._sys_disk("/dev/nvme0n1p3") == "nvme0n1"   # partição ainda sobe
+        assert disks._sys_disk("/dev/sda1") == "sda"            # sd sem regressão
+        assert disks._sys_disk("/dev/sda") == "sda"
+        print("ok  A4.4 _sys_disk devolve o disco inteiro (mmcblk0/nvme0n1), não come o dígito")
+    finally:
+        os.path.realpath = old_real
+        os.path.isdir = old_isdir
+
+
+def test_a3_same_op_sanitize_collision():
+    """A3: dois nomes ilegais que o sanitize funde ('a?b'/'a*b' -> 'a_b') não
+    podem disparar o diálogo de conflito como se fosse arquivo pré-existente —
+    a intenção de adaptar é óbvia, então numera sozinho ('a_b (1)')."""
+    src = tempfile.mkdtemp(prefix="lfs_a3_")
+    dst = tempfile.mkdtemp(prefix="lfs_a3_dst_")
+    old = disks.dest_caps
+    disks.dest_caps = lambda p: disks.DestCaps(fstype="vfat", namemax=255, **disks._FAT)
+    try:
+        with open(os.path.join(src, "a?b.mkv"), "w") as f:
+            f.write("primeiro")
+        with open(os.path.join(src, "a*b.mkv"), "w") as f:
+            f.write("segundo")
+        asked = []
+        pf = fileops.preflight([src], dst)
+        res = fileops.copy_to([src], dst, plan=pf, sanitize_names=True,
+                              on_conflict=lambda s, d, a: asked.append(d) or "skip")
+        assert not asked, "sanitize-colisão da MESMA operação não devia perguntar"
+        base = os.path.join(dst, os.path.basename(src))
+        nomes = sorted(os.listdir(base))
+        assert "a_b.mkv" in nomes and "a_b (1).mkv" in nomes, nomes
+        assert len(res.copied) == 2, res.copied
+        print("ok  A3   colisão pós-sanitize da mesma operação numera sozinha (sem diálogo)")
+    finally:
+        disks.dest_caps = old
+        shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
+
+
 def main():
     fns = [test_parse_size, test_reap_kills_process, test_no_orphan_on_cancel,
            test_glob_case_insensitive, test_boolean_name_regex,
@@ -1894,6 +2023,10 @@ def main():
            test_write_probe_classifies_errno, test_decide_strategy_machine,
            test_part_path_respects_name_limits, test_gio_strategy_uri_and_runner,
            test_write_strategies_atomic_and_guarded, test_preflight_a2r_surfacing,
+           test_a4_1_copy_bytes_excludes_too_big,
+           test_a4_2_native_symlink_counts_in_total,
+           test_a4_3_out_of_space_flag, test_a4_4_sys_disk_whole_disk,
+           test_a3_same_op_sanitize_collision,
            test_dest_caps_statvfs_lies_on_vfat,
            test_dest_caps_rejects_non_utf8_names,
            test_cli_emits_bytes_for_hostile_names,

@@ -355,6 +355,10 @@ def _sys_disk(dev: str) -> str:
             base = sorted(os.listdir("/sys/block/%s/slaves" % base))[0]
         except (OSError, IndexError):
             return ""
+    # A4.4: se `base` JÁ é um disco inteiro (mmcblk0, nvme0n1, sda sem partição),
+    # ele é a resposta — cortar dígitos aqui comeria o "0"/"1" do nome do disco.
+    if os.path.isdir("/sys/block/%s" % base):
+        return base
     disco = re.sub(r"(p?\d+)$", "", base) if not base.startswith("sd") else base.rstrip("0123456789")
     return disco if os.path.isdir("/sys/block/%s" % disco) else ""
 

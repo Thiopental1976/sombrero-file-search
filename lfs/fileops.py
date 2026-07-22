@@ -105,9 +105,15 @@ class Preflight:
         self.strategy = ""                  # ATOMIC|GUARDED|GIO|BLOCKED (decidido no preflight)
 
     @property
+    def copy_bytes(self) -> int:
+        """Bytes que REALMENTE serão gravados: exclui os too_big, que são pulados
+        (não adianta exigir espaço para o que nunca será copiado — A4.1)."""
+        return self.total_bytes - sum(sz for _, sz in self.too_big)
+
+    @property
     def fits(self) -> bool:
         # 2% de folga: metadados/cluster slack de FAT enchem mais que o soma-bytes
-        return self.free_bytes >= self.total_bytes * 1.02
+        return self.free_bytes >= self.copy_bytes * 1.02
 
     @property
     def blocked(self) -> bool:
@@ -233,6 +239,7 @@ class CopyResult:
         self.failed: list[tuple] = []       # (src, mensagem de erro)
         self.bytes_copied = 0
         self.cancelled = False
+        self.out_of_space = False           # encheu no meio (≠ cancelado pelo usuário)
 
 
 # ------------------------------------------------------------------ planejamento
@@ -316,6 +323,10 @@ def preflight(sources, dest_dir) -> Preflight:
                     pass
             else:
                 pf.links_broken.append(e.src)
+        elif e.kind == "link":
+            # destino suporta symlink: recriado como link nativo — conta como 1
+            # "arquivo" pra barra fechar em 100% (A4.2: antes done_files passava total)
+            pf.total_files += 1
         # nome ilegal no destino? checa CADA componente do caminho relativo
         for part in e.rel.split(os.sep):
             why = caps.name_problem(part) if part else None
@@ -561,7 +572,7 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
     pace = PACE if getattr(caps, "removable", False) else 0
 
     prog = CopyProgress()
-    prog.total_files, prog.total_bytes = pf.total_files, pf.total_bytes
+    prog.total_files, prog.total_bytes = pf.total_files, pf.copy_bytes
     t0 = time.time()
     last = [0.0]
 
@@ -592,6 +603,7 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
     too_big = {p for p, _ in pf.too_big}
     bad = {p for p, _ in pf.bad_names}
     strategy = pf.strategy or STRAT_ATOMIC     # decidida no preflight (§3.5)
+    made_this_op: set[str] = set()             # destinos que ESTA cópia já criou (A3)
 
     for e in pf.entries:
         if cancel is not None and cancel.is_set():
@@ -621,7 +633,11 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
 
         # conflito: só sobrescreve por escolha EXPLÍCITA do usuário
         overwrite = False
-        if os.path.lexists(dst):
+        if sanitize_names and dst in made_this_op:
+            # A3: o próprio sanitize colou dois nomes ("a?b"/"a*b" -> "a_b").
+            # Não é arquivo pré-existente — é intenção óbvia de adaptar: numera sozinho.
+            dst = _unique(dst)
+        elif os.path.lexists(dst):
             ans = resolve_conflict(e.src, dst)
             if ans == "cancel":
                 res.cancelled = True
@@ -662,6 +678,7 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
                 res.bytes_copied += n
                 _apply_meta(e.src, dst, caps)
             res.copied.append(dst)
+            made_this_op.add(dst)            # A3: marca p/ detectar colisão intra-operação
         except OSError as ex:
             msg = str(ex)
             if ex.errno == errno.EFBIG:           # FS recusou o tamanho
@@ -669,6 +686,7 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
             elif ex.errno == errno.ENOSPC:
                 res.failed.append((e.src, msg))
                 res.cancelled = True              # encheu: parar já, não errar 300x
+                res.out_of_space = True           # motivo específico p/ a GUI (A4.3)
                 break
             else:
                 res.failed.append((e.src, msg))

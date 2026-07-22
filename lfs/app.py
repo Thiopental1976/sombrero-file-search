@@ -2156,10 +2156,18 @@ class MainWindow(QMainWindow):
             parts.append(t("{n} skipped", n=len(res.skipped)))
         if res.failed:
             parts.append(t("{n} failed", n=len(res.failed)))
-        self.status.setText(t("✔  Copy to {dest}: {summary}  ·  {size}  ·  "
-                              "nothing in the source was modified.",
-                              dest=dest, summary=", ".join(parts),
-                              size=human_size(res.bytes_copied)))
+        if getattr(res, "out_of_space", False):
+            # A4.3: encher o destino não é "cancelar" — dá o motivo exato
+            self.status.setText(t("✖  Copy to {dest} stopped — the destination "
+                                  "ran out of space ({summary})  ·  {size}  ·  "
+                                  "nothing in the source was modified.",
+                                  dest=dest, summary=", ".join(parts),
+                                  size=human_size(res.bytes_copied)))
+        else:
+            self.status.setText(t("✔  Copy to {dest}: {summary}  ·  {size}  ·  "
+                                  "nothing in the source was modified.",
+                                  dest=dest, summary=", ".join(parts),
+                                  size=human_size(res.bytes_copied)))
         if res.failed:
             QMessageBox.warning(self, t("Copy finished with errors"),
                                 "\n".join("%s: %s" % (os.path.basename(p), e)

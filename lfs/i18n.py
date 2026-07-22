@@ -244,6 +244,10 @@ _PT = {
     "nothing in the source was modified.":
         "✔  Cópia para {dest}: {summary}  ·  {size}  ·  "
         "nada na origem foi modificado.",
+    "✖  Copy to {dest} stopped — the destination ran out of space "
+    "({summary})  ·  {size}  ·  nothing in the source was modified.":
+        "✖  Cópia para {dest} parou — o destino ficou sem espaço "
+        "({summary})  ·  {size}  ·  nada na origem foi modificado.",
     "Copy finished with errors": "Cópia terminou com erros",
     "{n} item(s) copied to the clipboard.":
         "{n} item(ns) copiado(s) para a área de transferência.",
