@@ -129,6 +129,27 @@ lfs /dados -c erro -l --print0 | xargs -0 ...    # pipeline
 `-c` conteúdo · `-n` nome · `-b/--bool` booleano · `-D/--docs` documentos · `-l` só caminhos ·
 `--print0` separador nulo. Rode `lfs --help` para tudo.
 
+## Paridade `rg` ↔ fallback Python (divergências conhecidas)
+
+O fallback em Python puro devolve o **mesmo resultado** do ripgrep na esmagadora maioria
+dos casos — o harness de paridade roda 500 expressões booleanas aleatórias × 2000 arquivos
+e exige zero divergência (`tests/test_parity_rg_python.py`). As poucas diferenças que existem
+estão **documentadas de propósito** — nenhuma é surpresa:
+
+- **`nmatch` (contador de "quão quente")** — com `rg`, conta por **ocorrência**; no fallback,
+  por **linha que casa**. Só difere quando a mesma linha tem o termo mais de uma vez. O conjunto
+  de arquivos e as linhas (número + texto) são idênticos. É um indicador, não um contrato.
+- **UTF-16/UTF-32 com BOM** — o `rg` detecta o BOM e decodifica; o fallback abre em texto
+  (UTF-8/locale) e **não acha** o termo. Afeta só o modo **sem ripgrep**, em arquivos de origem
+  Windows. Instalar o `ripgrep` (é *Recommends*) resolve.
+- **CRLF (`\r\n`)** — o `rg` entrega o texto da linha **com** o `\r` final; o fallback (leitura
+  universal-newline) entrega **sem**. Só o texto do *preview* difere — arquivo, número da linha
+  e match são iguais.
+- **Codificações legadas sem BOM (Shift-JIS, GBK, EUC-KR…)** — aqui `rg` e fallback **concordam**:
+  nenhum acha, porque o termo de busca é UTF-8 e o arquivo não. Não é divergência, é limitação
+  compartilhada (qualquer ferramenta Unix). **CJK em UTF-8** — nomes de arquivo e conteúdo —
+  funciona 100% nos dois motores.
+
 ## Arquitetura
 
 ```

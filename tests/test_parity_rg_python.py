@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+"""Campanha 2 / Bloco 1 (Fable) — PARIDADE rg ↔ fallback Python.
+
+Ninguém jamais afirmou que os dois motores devolvem O MESMO resultado, e o T2
+provou que já divergiram (linhas). Este harness roda a MESMA Query duas vezes —
+com os binários reais (rg/fd) e com `engine.RG=engine.FD=""` — e compara:
+conjunto de caminhos, `nmatch` por arquivo, e as `lines` (número + texto).
+
+Divergência SILENCIOSA = bug (falha o teste). Divergência CONHECIDA e
+documentada = registrada em DIVERGENCIAS_CONHECIDAS abaixo, com o mesmo texto no
+README. Ver Fable, Bloco 1: "Divergência conhecida vira comentário no código +
+linha no README, nunca surpresa."
+
+Precisa de rg E fd reais no PATH; sem eles, os casos de paridade são PULADOS
+(não há dois mundos para comparar).
+
+Rode:  python3 tests/test_parity_rg_python.py
+"""
+from __future__ import annotations
+import os, sys, random, tempfile, shutil
+
+RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+sys.path.insert(0, os.path.join(RAIZ, "lfs"))
+import engine
+import boolean
+from engine import Query
+
+HAVE_RG = bool(engine.RG)
+HAVE_FD = bool(engine.FD)
+
+# --------------------------------------------------------------- divergências conhecidas
+# Cada entrada: (id, quando_ocorre, decisão). Espelhado no README (seção Paridade).
+DIVERGENCIAS_CONHECIDAS = {
+    "content_nmatch_submatches_vs_linhas":
+        "Na busca de CONTEÚDO simples, rg conta nmatch por OCORRÊNCIA (submatch) e "
+        "o fallback Python conta por LINHA que casa. Só diverge quando uma linha tem "
+        ">1 ocorrência do termo. As LINHAS (nº+texto) e o conjunto de arquivos batem. "
+        "Decisão: aceito; nmatch é indicador de 'quão quente', não contrato exato.",
+    "utf16_bom_fallback_nao_decodifica":
+        "O rg detecta o BOM UTF-16/UTF-32 e decodifica o arquivo; o fallback Python "
+        "abre em modo texto (locale/UTF-8) e NÃO acha o termo em arquivo UTF-16. Só "
+        "afeta o modo SEM ripgrep, em arquivos UTF-16/32 com BOM (raros no Linux, "
+        "origem Windows). Decisão: documentado; sem rg, texto UTF-16 fica invisível "
+        "na busca de conteúdo. Instalar ripgrep (Recommends) resolve.",
+    "crlf_trailing_cr_no_texto_da_linha":
+        "Em arquivos CRLF (\\r\\n, origem Windows), o rg entrega o texto da linha COM "
+        "o \\r final; o fallback Python lê em modo texto (universal newlines) e o \\r "
+        "some. Só o TEXTO do preview difere — o conjunto de arquivos, o número da "
+        "linha e o match são idênticos. Decisão pendente com o Fable (semântica de "
+        "paridade): recomendo normalizar 1 \\r final nos DOIS motores para o preview "
+        "não mostrar CR solto na GUI. Até lá, harness normaliza para não mascarar "
+        "divergências reais de texto.",
+}
+
+PASS, FAIL, KNOWN = [], [], []
+def _ok(name):   PASS.append(name);  print(f"ok    {name}")
+def _known(name, div_id): KNOWN.append((name, div_id)); print(f"~know {name}  [{div_id}]")
+def _bug(name, detail):   FAIL.append((name, detail)); print(f"XXXXX {name}\n        {detail}")
+
+
+# --------------------------------------------------------------- motor: roda nos 2 mundos
+def _run(q, use_rg):
+    orig = (engine.RG, engine.RGA, engine.FD)
+    if not use_rg:
+        engine.RG = engine.RGA = engine.FD = ""
+    try:
+        got = []
+        engine.search(q, lambda m: got.append(m))
+        return got
+    finally:
+        engine.RG, engine.RGA, engine.FD = orig
+
+def _run_bool(q, expr, use_rg):
+    orig = (engine.RG, engine.RGA, engine.FD)
+    if not use_rg:
+        engine.RG = engine.RGA = engine.FD = ""
+    try:
+        got = []
+        boolean.search_boolean(q, expr, lambda m: got.append(m))
+        return got
+    finally:
+        engine.RG, engine.RGA, engine.FD = orig
+
+def _norm(matches):
+    d = {}
+    for m in matches:
+        # Divergência conhecida crlf_trailing_cr_no_texto_da_linha: o rg preserva o
+        # \r final de arquivos CRLF; o Python (universal newlines) não. Normalizamos
+        # 1 \r final dos DOIS lados para não mascarar divergências REAIS de texto.
+        d[os.path.abspath(m.path)] = {
+            "nmatch": m.nmatch,
+            "lines": sorted((ln, txt[:-1] if txt.endswith("\r") else txt)
+                            for ln, txt in m.lines),
+        }
+    return d
+
+def _rel(paths, root):
+    return sorted(os.path.relpath(p, root) for p in paths)
+
+
+def compare(name, q, root, *, is_bool=False, expr=None,
+            allow_nmatch_divergence=False, compare_lines=True,
+            known_encoding=frozenset()):
+    """Roda os 2 mundos e classifica. `known_encoding` = basenames que podem
+    divergir SÓ por codificação (rg decodifica UTF-16/BOM, Python não) — são
+    registrados como conhecidos e removidos antes das demais comparações, para
+    não mascarar divergências reais. Retorna True se paridade OK/conhecida."""
+    if not (HAVE_RG and HAVE_FD):
+        return None  # pulado
+    a = _norm(_run_bool(q, expr, True) if is_bool else _run(q, True))    # rg
+    b = _norm(_run_bool(q, expr, False) if is_bool else _run(q, False))  # python
+    # 1) conjunto de caminhos — descontando divergências de codificação conhecidas
+    diff = set(a) ^ set(b)
+    enc_diff = {p for p in diff if os.path.basename(p) in known_encoding}
+    real_diff = diff - enc_diff
+    if enc_diff:
+        _known(name + " [enc]", "utf16_bom_fallback_nao_decodifica")
+        for p in enc_diff:          # remove dos dois lados p/ seguir comparando o resto
+            a.pop(p, None); b.pop(p, None)
+    if real_diff:
+        so, sp = _rel(set(a) - set(b), root), _rel(set(b) - set(a), root)
+        _bug(name, f"conjuntos divergem — só_rg={so}  só_py={sp}")
+        return False
+    # 2) linhas (nº + texto)
+    if compare_lines:
+        for p in a:
+            if a[p]["lines"] != b[p]["lines"]:
+                _bug(name, f"linhas divergem em {os.path.relpath(p, root)}\n"
+                           f"        rg={a[p]['lines'][:4]}\n"
+                           f"        py={b[p]['lines'][:4]}")
+                return False
+    # 3) nmatch
+    nmatch_div = [p for p in a if a[p]["nmatch"] != b[p]["nmatch"]]
+    if nmatch_div:
+        if allow_nmatch_divergence:
+            _known(name, "content_nmatch_submatches_vs_linhas")
+            return True
+        p = nmatch_div[0]
+        _bug(name, f"nmatch diverge em {os.path.relpath(p, root)}: "
+                   f"rg={a[p]['nmatch']} py={b[p]['nmatch']} (linhas iguais)")
+        return False
+    _ok(name)
+    return True
+
+
+# =============================================================== 1.2 CASOS DIRIGIDOS
+def caso_dirigidos():
+    d = tempfile.mkdtemp(prefix="par_dir_")
+    try:
+        W = lambda rel, data, mode="w", **kw: _w(d, rel, data, mode, **kw)
+        # arquivos variados
+        W("plain.txt", "Paciente com laudo\nlinha sem nada\nlaudo laudo laudo aqui\n")
+        W("case.txt", "LAUDO Laudo laudo\n")
+        W("word.txt", "laudo\nlaudos\nprelaudo\nlaudo!\n")
+        W("anchor.txt", "laudo no comeco\nno fim laudo\nmeio laudo meio\n")
+        W("acento.txt", "LAUDO com ÁGUA\nlaudo com água\n")
+        W("nonl.txt", "laudo sem newline final", )      # sem \n no fim
+        W("crlf.txt", "laudo linha um\r\nlaudo linha dois\r\n", mode="wb",
+          enc=lambda s: s.encode())
+        W("hidden/.oculto.txt", "laudo escondido\n")
+        W("d1/d2/deep.txt", "laudo fundo\n")
+        # linha de 2 MB com o termo no fim
+        W("bigline.txt", ("x" * (2*1024*1024)) + " laudo\n")
+        # UTF-16 com BOM
+        W("utf16.txt", "laudo em utf16\noutra linha\n", mode="wb",
+          enc=lambda s: s.encode("utf-16"))
+
+        base = dict(paths=[d], content="laudo")
+        ENC = {"utf16.txt"}     # divergência de codificação conhecida (rg decodifica, py não)
+        # case-insensitive (default) — linha com 3 ocorrências => nmatch diverge (conhecido)
+        compare("1.2a case-insensitive (default)", Query(**base), d,
+                allow_nmatch_divergence=True, known_encoding=ENC)
+        # case-sensitive
+        compare("1.2b case-sensitive", Query(**base, case_sensitive=True), d,
+                allow_nmatch_divergence=True, known_encoding=ENC)
+        # whole_word: laudo != laudos/prelaudo, mas casa 'laudo!' (fronteira)
+        compare("1.2c whole_word", Query(**base, whole_word=True), d,
+                allow_nmatch_divergence=True, known_encoding=ENC)
+        # regex de conteúdo com âncoras
+        compare("1.2d regex ^laudo", Query(paths=[d], content=r"^laudo",
+                content_is_regex=True), d, allow_nmatch_divergence=True, known_encoding=ENC)
+        compare("1.2e regex laudo$", Query(paths=[d], content=r"laudo$",
+                content_is_regex=True), d, allow_nmatch_divergence=True, known_encoding=ENC)
+        compare("1.2f regex classe [Ll]audo", Query(paths=[d], content=r"[Ll]audo",
+                content_is_regex=True), d, allow_nmatch_divergence=True, known_encoding=ENC)
+        # max_depth 0/1/2 (só nome, sem conteúdo, p/ isolar profundidade)
+        for md in (0, 1, 2):
+            compare(f"1.2g max_depth={md} (nome *.txt)",
+                    Query(paths=[d], name_patterns=["*.txt"], max_depth=md), d,
+                    compare_lines=False)
+        # include_hidden
+        compare("1.2h include_hidden (nome)", Query(paths=[d],
+                name_patterns=["*.txt"], include_hidden=True), d, compare_lines=False)
+        compare("1.2i sem hidden (nome)", Query(paths=[d],
+                name_patterns=["*.txt"]), d, compare_lines=False)
+        # nome-regex vs glob
+        compare("1.2j nome-regex", Query(paths=[d], name_patterns=[r"^c.*\.txt$"],
+                name_is_regex=True), d, compare_lines=False)
+        # acento casefold (Á vs á) — busca 'água' minúsculo, case-insensitive
+        compare("1.2k acento casefold (água)", Query(paths=[d], content="água"), d,
+                allow_nmatch_divergence=True)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _w(d, rel, data, mode="w", enc=None):
+    p = os.path.join(d, rel)
+    os.makedirs(os.path.dirname(p), exist_ok=True) if os.path.dirname(rel) else None
+    if "b" in mode:
+        with open(p, "wb") as f: f.write(enc(data) if enc else data)
+    else:
+        with open(p, "w") as f: f.write(data)
+
+
+# =============================================================== 1.3 PROPRIEDADE (booleano)
+VOCAB = ["laudo", "nota", "exame", "paciente", "rascunho", "urgente"]
+
+def _rand_expr(rng, depth=0):
+    """Gera expressão booleana válida com AND/OR/NOT e parênteses."""
+    if depth >= 3 or (depth > 0 and rng.random() < 0.5):
+        return rng.choice(VOCAB)
+    op = rng.choice(["AND", "OR", "NOT", "AND", "OR"])   # NOT menos frequente
+    if op == "NOT":
+        return f"{_rand_expr(rng, depth+1)} NOT {rng.choice(VOCAB)}"
+    left = _rand_expr(rng, depth+1)
+    right = _rand_expr(rng, depth+1)
+    inner = f"{left} {op} {right}"
+    return f"({inner})" if rng.random() < 0.5 else inner
+
+def caso_propriedade(n_expr=500, n_files=2000, seed=20260722):
+    if not (HAVE_RG and HAVE_FD):
+        print("~skip 1.3 propriedade (sem rg/fd)"); return
+    rng = random.Random(seed)
+    d = tempfile.mkdtemp(prefix="par_prop_")
+    try:
+        # árvore sintética: cada arquivo recebe um subconjunto aleatório do vocab
+        for i in range(n_files):
+            words = [w for w in VOCAB if rng.random() < 0.4]
+            sub = os.path.join(d, f"s{i % 20:02d}")
+            os.makedirs(sub, exist_ok=True)
+            with open(os.path.join(sub, f"f{i:05d}.txt"), "w") as f:
+                f.write("\n".join(words) + "\n" if words else "vazio\n")
+        divergentes = 0
+        exemplos = []
+        for k in range(n_expr):
+            expr = _rand_expr(rng)
+            try:
+                a = {os.path.abspath(m.path) for m in _run_bool(Query(paths=[d]), expr, True)}
+                b = {os.path.abspath(m.path) for m in _run_bool(Query(paths=[d]), expr, False)}
+            except Exception as e:
+                _bug(f"1.3 expr#{k} exceção", f"{expr!r} -> {e}")
+                divergentes += 1; continue
+            if a != b:
+                divergentes += 1
+                if len(exemplos) < 5:
+                    exemplos.append((expr, len(a - b), len(b - a)))
+        if divergentes == 0:
+            _ok(f"1.3 propriedade: {n_expr} expr × {n_files} arq — zero divergências")
+        else:
+            _bug("1.3 propriedade",
+                 f"{divergentes}/{n_expr} expressões divergem. Ex: {exemplos}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+# =============================================================== 1.1 harness p/ suíte
+def test_parity_directed_and_property():
+    """Ponto de entrada p/ o test_audit: roda os casos dirigidos + uma amostra
+    da propriedade (menor, p/ caber no tempo da suíte). Sem rg/fd, é no-op."""
+    if not (HAVE_RG and HAVE_FD):
+        print("ok  Bloco1 paridade: PULADO (sem rg/fd — não há 2 mundos)"); return
+    caso_dirigidos()
+    caso_propriedade(n_expr=120, n_files=400, seed=1)   # amostra rápida
+    assert not FAIL, f"divergências SILENCIOSAS: {FAIL}"
+    print(f"ok  Bloco1 paridade: {len(PASS)} casos OK, {len(KNOWN)} divergências conhecidas")
+
+
+def main():
+    print(f"rg={'sim' if HAVE_RG else 'NÃO'}  fd={'sim' if HAVE_FD else 'NÃO'}")
+    if not (HAVE_RG and HAVE_FD):
+        print("Sem rg/fd reais — nada a comparar. Instale ripgrep+fd."); return 0
+    caso_dirigidos()
+    caso_propriedade()          # 500 × 2000, o completo
+    print("\n" + "=" * 64)
+    print(f"PARIDADE: {len(PASS)} OK · {len(KNOWN)} conhecidas · {len(FAIL)} BUGS")
+    for nm, did in KNOWN:
+        print(f"  ~ {nm}: {DIVERGENCIAS_CONHECIDAS.get(did, did)[:70]}…")
+    if FAIL:
+        print("\nBUGS (divergência silenciosa):")
+        for nm, det in FAIL:
+            print(f"  XX {nm}: {det}")
+        return 1
+    print("Zero divergências silenciosas.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -13,6 +13,8 @@ RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(RAIZ, "lfs"))
 import engine, boolean, i18n
 from engine import Query
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from test_parity_rg_python import test_parity_directed_and_property
 
 
 def _tree():
@@ -2175,7 +2177,9 @@ def main():
            # F6 — empacotamento
            test_deb_version_is_dpkg_comparable,
            test_deb_package_builds_and_is_well_formed,
-           test_appimage_recipe_is_coherent]
+           test_appimage_recipe_is_coherent,
+           # Campanha 2 / Bloco 1 — paridade rg ↔ fallback Python
+           test_parity_directed_and_property]
     fail = 0
     for fn in fns:
         try:
