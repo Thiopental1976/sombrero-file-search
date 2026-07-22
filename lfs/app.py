@@ -21,7 +21,7 @@ from urllib.parse import quote
 from PySide6.QtCore import (Qt, QThread, Signal, QAbstractTableModel, QModelIndex,
                             QUrl, QTimer, QSortFilterProxyModel, QRect, QSize,
                             QByteArray, QMimeData)
-from PySide6.QtGui import (QAction, QColor, QDesktopServices, QFont, QGuiApplication,
+from PySide6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication,
                            QIcon, QImageReader, QPixmap, QKeySequence, QShortcut,
                            QTextCharFormat, QTextCursor, QTextDocument)
 from PySide6.QtWidgets import (
@@ -40,7 +40,7 @@ except ImportError:                     # QtMultimedia opcional (portabilidade)
     HAS_MEDIA = False
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import engine, boolean, i18n, disks, fileops, xdg, version, searches
+import engine, boolean, disks, fileops, xdg, version, searches
 from engine import Query, Match
 from i18n import t
 

@@ -133,6 +133,69 @@ def test_display_lines_batched():
         shutil.rmtree(d, ignore_errors=True)
 
 
+# --------------------------------------------------- T1 (Fable): FIFO não trava
+def test_t1_fifo_no_hang():
+    """T1 (stress-test Fable): um FIFO/pipe na árvore fazia o open() do fallback
+    Python bloquear PARA SEMPRE (pipe sem escritor). Guarda S_ISREG em
+    _iter_content_python e _is_probably_text. Primeiro teste do projeto com
+    arquivo não-regular. Roda a busca numa thread com timeout: se travar, o teste
+    ACUSA em vez de pendurar a suíte."""
+    import threading
+    if not hasattr(os, "mkfifo"):
+        print("ok  T1  (plataforma sem mkfifo — pulado)"); return
+    d = tempfile.mkdtemp(prefix="lfs_fifo_")
+    old_rg, old_rga = engine.RG, engine.RGA
+    try:
+        with open(os.path.join(d, "a.txt"), "w") as f: f.write("nada aqui\n")
+        with open(os.path.join(d, "b.txt"), "w") as f: f.write("tem laudo aqui\n")
+        os.mkfifo(os.path.join(d, "pipe.txt"))     # o vilão: open() sem escritor pendura
+        engine.RG = engine.RGA = ""                # força o fallback Python (sem rg)
+        out = {}
+        def _go():
+            got = []
+            # positivo cai no _display_lines_py; o NOT exercita o _is_probably_text
+            boolean.search_boolean(Query(paths=[d], content=""),
+                                   "laudo NOT inexistentexyz",
+                                   lambda m: got.append(m.path))
+            out["files"] = {os.path.basename(p) for p in got}
+        th = threading.Thread(target=_go, daemon=True)
+        th.start(); th.join(timeout=15)
+        assert not th.is_alive(), "T1: a busca TRAVOU no FIFO (open sem escritor)"
+        assert out.get("files") == {"b.txt"}, f"esperava só b.txt, veio {out.get('files')}"
+        print("ok  T1  FIFO na árvore não trava a busca de conteúdo (guarda S_ISREG)")
+    finally:
+        engine.RG, engine.RGA = old_rg, old_rga
+        shutil.rmtree(d, ignore_errors=True)
+
+
+# --------------------------------------------------- T2 (Fable): linhas sem rg
+def test_t2_boolean_lines_without_rg():
+    """T2 (stress-test Fable): sem ripgrep (Recommends recusável), a busca BOOLEANA
+    devolvia arquivos SEM número de linha nem preview — enquanto a busca simples
+    mostrava as linhas. Agora _display_lines colhe as linhas em Python. Bimodal:
+    a asserção é a mesma com rg e sem rg."""
+    d = tempfile.mkdtemp(prefix="lfs_t2_")
+    old_rg, old_rga = engine.RG, engine.RGA
+    try:
+        p = os.path.join(d, "x.txt")
+        with open(p, "w") as f: f.write("cabecalho\nlinha com laudo\nfim\n")
+        for rg_on in (bool(old_rg), False):        # com rg (se houver) e sem rg
+            engine.RG = old_rg if rg_on else ""
+            engine.RGA = old_rga if rg_on else ""
+            got = []
+            boolean.search_boolean(Query(paths=[d], content=""),
+                                   "laudo", lambda m: got.append(m))
+            modo = "com rg" if rg_on else "sem rg"
+            assert len(got) == 1, f"[{modo}] esperava 1 arquivo, veio {len(got)}"
+            m = got[0]
+            assert m.lines, f"[{modo}] busca booleana perdeu as linhas (preview vazio)"
+            assert m.lines[0][0] == 2 and "laudo" in m.lines[0][1], f"[{modo}] {m.lines}"
+        print("ok  T2  busca booleana traz linhas com E sem ripgrep (paridade)")
+    finally:
+        engine.RG, engine.RGA = old_rg, old_rga
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # ------------------------------------------------------------------ B9 one_file_system fallback
 def test_one_file_system_fallback():
     """Fallback Python com one_file_system=True não cruza mounts e não perde
@@ -149,7 +212,7 @@ def test_one_file_system_fallback():
 
 # ------------------------------------------------------------------ §4 parser booleano
 def test_boolean_parser():
-    from boolean import parse, positive_terms, And, Or, Not, Term
+    from boolean import parse, positive_terms, And, Or
     assert isinstance(parse("a AND b"), And)
     assert isinstance(parse("a OR b"), Or)
     assert isinstance(parse("a b").__class__, type)          # adjacência = AND
@@ -1947,7 +2010,6 @@ def test_a4_3_out_of_space_flag():
 def test_a4_4_sys_disk_whole_disk():
     """A4.4: disco inteiro sem partição (mmcblk0, nvme0n1) não pode ter o dígito
     comido pela regex — o próprio nome é o disco."""
-    real = os.path.realpath
     listed = {"/sys/block/mmcblk0", "/sys/block/nvme0n1", "/sys/block/sda"}
     old_real, old_isdir = os.path.realpath, os.path.isdir
     def _fake_isdir(p):
@@ -2069,7 +2131,8 @@ def test_a3_same_op_sanitize_collision():
 def main():
     fns = [test_parse_size, test_reap_kills_process, test_no_orphan_on_cancel,
            test_glob_case_insensitive, test_boolean_name_regex,
-           test_display_lines_batched, test_one_file_system_fallback,
+           test_display_lines_batched, test_t1_fifo_no_hang,
+           test_t2_boolean_lines_without_rg, test_one_file_system_fallback,
            test_boolean_parser, test_boolean_unterminated_quote,
            test_boolean_empty_quoted_term, test_name_contains_semantics,
            test_user_mounts_parsing, test_fd_case_sensitive,

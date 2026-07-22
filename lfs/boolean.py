@@ -21,10 +21,9 @@ Estratégia (casada com o desenho do Fable):
 Sem Qt aqui. O motor devolve Matches iguais aos de engine.py (a GUI/CLI reaproveitam).
 """
 from __future__ import annotations
-import os, re, json, subprocess, threading, tempfile
+import os, re, json, stat, subprocess, threading, tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Optional
 
 try:                       # funciona como pacote (-m lfs.boolean / GUI) e flat (cli.py)
     from . import engine    # RG, Query, Match, _passes_meta, _iter_content_python
@@ -260,6 +259,9 @@ def _is_probably_text(path: str, _chunk: int = 8192) -> bool:
     primeiros KB não têm byte NUL. Usado só quando rg está ausente (universo do
     NOT deve ser só-texto, o mesmo domínio dos conjuntos de termo)."""
     try:
+        # T1: só arquivo regular; FIFO/socket/device bloqueiam o open() pra sempre.
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            return False
         with open(path, "rb") as fh:
             return b"\x00" not in fh.read(_chunk)
     except OSError:
@@ -599,8 +601,10 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
     """Para os arquivos-resultado, extrai linhas que casam QUALQUER termo positivo.
     B4: processa em lotes p/ não estourar o argv (60k caminhos matariam o exec).
     N2: `stats` recebe 'denied' contados do stderr do rg."""
-    if not files or not engine.RG:
+    if not files:
         return {}
+    if not engine.RG:                       # T2: sem rg, colhe as linhas em Python
+        return _display_lines_py(pos_terms, files, q, cancel)
     base = _rg_base(q) + ["--json"]
     if not q.content_is_regex: base.append("--fixed-strings")
     for term in pos_terms: base += ["-e", term]   # B6: não sombrear o tradutor t()
@@ -631,6 +635,32 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
                         lst.append((ln, txt))
         finally:
             _reap_stats(proc, errf, stats)        # B1 + N2: mata órfão e conta inacessíveis
+    return res
+
+
+def _display_lines_py(pos_terms, files, q: engine.Query, cancel) -> dict:
+    """T2: fallback do _display_lines quando não há rg. Lê SÓ os arquivos-resultado
+    (conjunto já filtrado) e coleta as linhas que casam QUALQUER termo positivo,
+    com a mesma semântica (case/regex/word) da busca. Guarda S_ISREG (T1) e pula
+    binário (NUL), igual ao _iter_content_python. Uma passada por arquivo."""
+    rxs = [engine._content_regex(t, q) for t in pos_terms]
+    res: dict = {}
+    for fp in files:
+        if cancel(): break
+        try:
+            if not stat.S_ISREG(os.stat(fp, follow_symlinks=q.follow_symlinks).st_mode):
+                continue
+            with open(fp, "r", errors="ignore") as fh:
+                lst: list = []
+                for i, line in enumerate(fh, 1):
+                    if "\x00" in line:            # binário: descarta o arquivo inteiro
+                        lst = []; break
+                    if any(rx.search(line) for rx in rxs) and len(lst) < 200:
+                        lst.append((i, line.rstrip("\n")))
+                if lst:
+                    res[os.path.abspath(fp)] = lst
+        except OSError:
+            continue
     return res
 
 

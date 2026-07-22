@@ -20,7 +20,7 @@ pra interface nunca travar (foi o defeito do menu do Cinnamon: busca síncrona).
 from __future__ import annotations
 import os, re, fnmatch, shutil, subprocess, json, stat, time, tempfile
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Optional
+from typing import Callable, Optional
 
 
 # ---------------------------------------------------------------- detecção
@@ -518,19 +518,29 @@ def _iter_content_rg(q: Query, cancel, stats=None):
         _reap(proc, errf, stats)                    # B1/B8
 
 
+def _content_regex(content: str, q: Query) -> "re.Pattern":
+    """Regex de conteúdo com as MESMAS flags que o fallback usa (case/regex/word).
+    Fatorado p/ o fallback de linhas do booleano casar idêntico à busca do termo."""
+    flags = 0 if q.case_sensitive else re.IGNORECASE
+    if q.whole_word and not q.content_is_regex:
+        return re.compile(r"\b" + re.escape(content) + r"\b", flags)
+    return re.compile(content if q.content_is_regex else re.escape(content), flags)
+
+
 def _iter_content_python(q: Query, cancel, stats=None):
     """Fallback: varre nomes e faz grep em Python (blocos, ignora binário).
     N2: conta 'denied' de diretórios (os.walk) e de arquivos sem permissão."""
-    if q.case_sensitive:
-        rx = re.compile(q.content if q.content_is_regex else re.escape(q.content))
-    else:
-        rx = re.compile(q.content if q.content_is_regex else re.escape(q.content), re.IGNORECASE)
-    if q.whole_word and not q.content_is_regex:
-        rx = re.compile(r"\b" + re.escape(q.content) + r"\b",
-                        0 if q.case_sensitive else re.IGNORECASE)
+    rx = _content_regex(q.content, q)
     for m in _iter_names_python(q, stats, cancel):
         if cancel():
             return
+        try:
+            # T1: FIFO/socket/device fazem open() bloquear pra sempre (pipe sem
+            # escritor). O rg pula não-regulares sozinho; no fallback a guarda é nossa.
+            if not stat.S_ISREG(os.stat(m.path, follow_symlinks=q.follow_symlinks).st_mode):
+                continue
+        except OSError:
+            continue
         try:
             with open(m.path, "r", errors="ignore") as fh:
                 hit = None
