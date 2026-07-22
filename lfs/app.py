@@ -15,7 +15,7 @@ Recursos: nome+conteúdo, booleano (A OR B) AND C NOT D, documentos (PDF/docx/ep
 Desenho: GARIMPO_Desenho_Busca_ripgrep.md (Fable 5) — nome final "Sombrero File Search".
 """
 from __future__ import annotations
-import os, sys, threading, time
+import os, sys, threading, time, queue
 from urllib.parse import quote
 
 from PySide6.QtCore import (Qt, QThread, Signal, QAbstractTableModel, QModelIndex,
@@ -492,12 +492,31 @@ class Ask:
 class CopyQueue:
     """FIFO de um worker só — decisão deliberada do desenho: a origem costuma ser
     SMR, e paralelizar leitura é o seek thrash que este projeto existe para
-    evitar. Uma barra, um cancelar, raciocínio trivial (modelo Nemo)."""
+    evitar. Uma barra, um cancelar, raciocínio trivial (modelo Nemo).
+
+    A6: fila BLOQUEANTE (queue.Queue). O worker persistente dorme em get() sem
+    gastar CPU e acorda no instante em que um job chega — nada de recriar QThread
+    por arrasto (a corrida antiga de reatribuir self.copier morreu com isso)."""
 
     def __init__(self):
-        self.lock = threading.Lock()
-        self.jobs = []                     # [(sources, dest, sanitize)]
-        self.running = False
+        self._q = queue.Queue()
+
+    def put(self, job):
+        self._q.put(job)
+
+    def get(self):
+        return self._q.get()               # bloqueia até haver trabalho (ou sentinela)
+
+    def pending(self) -> int:
+        return self._q.qsize()             # aproximado, mas só alimenta um rótulo
+
+    def drain(self):
+        """Descarta os jobs ainda não iniciados (o 'cancelar tudo' da barra)."""
+        try:
+            while True:
+                self._q.get_nowait()
+        except queue.Empty:
+            pass
 
 
 class CopyWorker(QThread):
@@ -512,19 +531,25 @@ class CopyWorker(QThread):
         super().__init__()
         self.q = queue
         self.cancel_ev = threading.Event()
-        self._stop = False
+        self._shutdown = False
 
     def cancel_all(self):
-        """Cancela o trabalho atual E esvazia a fila — é o que um botão
-        'Cancelar' significa para quem está olhando uma barra só."""
-        self._stop = True
+        """Cancela o job atual E descarta os pendentes — o 'Cancelar' de quem olha
+        uma barra só. NÃO mata a thread (A6): ela volta a dormir na fila, pronta
+        para o próximo arrasto. cancel_ev é rearmado no topo da próxima rodada."""
         self.cancel_ev.set()
-        with self.q.lock:
-            self.q.jobs.clear()
+        self.q.drain()
+
+    def shutdown(self):
+        """Encerra a thread de vez (só no closeEvent): aborta o job atual e injeta
+        a sentinela que rompe o get() bloqueante. Sem terminate() no caminho feliz."""
+        self._shutdown = True
+        self.cancel_ev.set()
+        self.q.put(None)
 
     def _await(self, ask: Ask, on_cancel):
         while not ask.wait(0.2):
-            if self._stop or self.cancel_ev.is_set():
+            if self._shutdown or self.cancel_ev.is_set():
                 return on_cancel
         return ask.value if ask.value is not None else on_cancel
 
@@ -534,24 +559,27 @@ class CopyWorker(QThread):
         return self._await(a, ("cancel", True))
 
     def run(self):
+        """Vive enquanto o app viver: dorme em get(), acorda por job, e ao fim de
+        cada um volta a dormir. Um único QThread para toda a sessão."""
         while True:
-            with self.q.lock:
-                if self._stop or not self.q.jobs:
-                    self.q.running = False
-                    break
-                sources, dest, sanitize = self.q.jobs.pop(0)
-                pending = len(self.q.jobs)
-            self.job_started.emit(dest, pending)
+            job = self.q.get()                      # BLOQUEIA (sentinela None = sair)
+            if job is None or self._shutdown:
+                break
+            self.cancel_ev.clear()                  # zera o cancelamento da rodada anterior
+            sources, dest, sanitize = job
+            self.job_started.emit(dest, self.q.pending())
             try:
                 pf = fileops.preflight(sources, dest)
             except Exception as e:                  # varredura nunca derruba a GUI
                 self.job_done.emit(None, f"{dest}\n{e}")
+                self._maybe_idle()
                 continue
             a = Ask()
             self.ask_preflight.emit(pf, a)          # a GUI decide seguir ou não
             go = self._await(a, None)
             if not go:
                 self.job_done.emit(None, dest)
+                self._maybe_idle()
                 continue
             sanitize = bool(go.get("sanitize", sanitize))
             res = fileops.copy_to(sources, dest,
@@ -560,7 +588,13 @@ class CopyWorker(QThread):
                                   cancel=self.cancel_ev,
                                   sanitize_names=sanitize, plan=pf)
             self.job_done.emit(res, dest)
-        self.all_done.emit()
+            self._maybe_idle()
+
+    def _maybe_idle(self):
+        """Fila vazia → avisa a GUI que pode esconder a barra. (Se um novo job já
+        chegou, o próximo get() o pega sem esconder nada.)"""
+        if self.q.pending() == 0:
+            self.all_done.emit()
 
 
 class ConflictDialog(QDialog):
@@ -945,7 +979,16 @@ class MainWindow(QMainWindow):
         self._tick.timeout.connect(self._heartbeat)
         self.cfg = load_cfg()
         self.copy_q = CopyQueue()                 # F7: fila de cópia (um worker)
-        self.copier: CopyWorker | None = None
+        # A6: worker persistente — criado UMA vez, vive toda a sessão, dorme na
+        # fila entre jobs. Fim das QThreads recriadas por arrasto (e da corrida).
+        self.copier = CopyWorker(self.copy_q)
+        self.copier.ask_preflight.connect(self.on_ask_preflight)
+        self.copier.ask_conflict.connect(self.on_ask_conflict)
+        self.copier.progress.connect(self.on_copy_progress)
+        self.copier.job_started.connect(self.on_copy_started)
+        self.copier.job_done.connect(self.on_copy_done)
+        self.copier.all_done.connect(self.on_copy_all_done)
+        self.copier.start()
         self.muted = bool(self.cfg.get("muted", True))   # B13: mídia começa muda
         self.theme = self.cfg.get("theme", "dark")
         if self.theme not in THEMES:
@@ -1655,14 +1698,14 @@ class MainWindow(QMainWindow):
         # o parcial do destino ao ser cancelado, e terminate() puro pularia isso,
         # deixando meio-vídeo no pendrive com cara de arquivo bom.
         if self.copier is not None and self.copier.isRunning():
-            self.copier.cancel_all()
+            self.copier.shutdown()                # A6: sentinela rompe o get() + aborta o job
             deadline = time.time() + 8.0
             while self.copier.isRunning() and time.time() < deadline:
                 if self.copier.wait(100):
                     break
                 QApplication.processEvents()      # libera diálogos que a thread espera
             if self.copier.isRunning():
-                self.copier.terminate()
+                self.copier.terminate()           # último recurso (job travado num I/O)
                 self.copier.wait(2000)
         self._stop_media()
         super().closeEvent(ev)
@@ -2096,31 +2139,12 @@ class MainWindow(QMainWindow):
         self.enqueue_copy([m.path for m in ms], dest)
 
     def enqueue_copy(self, sources, dest):
-        with self.copy_q.lock:
-            self.copy_q.jobs.append((sources, dest, False))
-            pending = len(self.copy_q.jobs)
-            start = not self.copy_q.running
-            if start:
-                self.copy_q.running = True
-        if start:
-            # CORRIDA: o worker anterior marca `running = False` DENTRO do laço e
-            # só depois a QThread termina de fato. Um segundo arrasto que caia
-            # nessa fresta chegaria aqui com o objeto antigo ainda rodando, e
-            # reatribuir self.copier soltaria a última referência — destruir uma
-            # QThread viva aborta o processo (é o mesmo perigo que o closeEvent
-            # trata). Ele já saiu do laço, então isto retorna em microssegundos.
-            if self.copier is not None and self.copier.isRunning():
-                self.copier.wait(3000)
-            self.copier = CopyWorker(self.copy_q)
-            self.copier.ask_preflight.connect(self.on_ask_preflight)
-            self.copier.ask_conflict.connect(self.on_ask_conflict)
-            self.copier.progress.connect(self.on_copy_progress)
-            self.copier.job_started.connect(self.on_copy_started)
-            self.copier.job_done.connect(self.on_copy_done)
-            self.copier.all_done.connect(self.on_copy_all_done)
-            self.copier.start()
-        else:
-            self.status.setText(t("Queued — {n} copy job(s) pending.", n=pending))
+        # A6: só enfileira. O worker persistente está dormindo em get() e acorda
+        # sozinho — sem recriar QThread, sem flag `running`, sem corrida.
+        self.copy_q.put((sources, dest, False))
+        pending = self.copy_q.pending()
+        if pending > 1:
+            self.status.setText(t("Queued — {n} copy job(s) pending.", n=pending - 1))
 
     def on_ask_preflight(self, pf, ask):
         dlg = PreflightDialog(self, pf)

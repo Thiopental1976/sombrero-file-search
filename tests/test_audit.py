@@ -1968,6 +1968,76 @@ def test_a4_4_sys_disk_whole_disk():
         os.path.isdir = old_isdir
 
 
+def test_a6_persistent_copy_worker():
+    """A6: um único CopyWorker vive a sessão inteira, dormindo numa fila
+    bloqueante. Sem PySide6 aqui, então verifico os invariantes por AST no fonte:
+    (1) CopyWorker é construído UMA vez e NÃO dentro de enqueue_copy; (2) enqueue
+    só enfileira; (3) CopyQueue é bloqueante (get/put/drain, sem lista `jobs`);
+    (4) run() dorme em self.q.get(); (5) há shutdown() e o closeEvent o chama."""
+    import ast
+    raiz = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    tree = ast.parse(open(os.path.join(raiz, "lfs", "app.py")).read())
+
+    def _find_class(name):
+        return next(n for n in ast.walk(tree)
+                    if isinstance(n, ast.ClassDef) and n.name == name)
+
+    def _methods(cls):
+        return {m.name for m in cls.body if isinstance(m, ast.FunctionDef)}
+
+    def _func_in_class(cls, name):
+        return next(m for m in cls.body
+                    if isinstance(m, ast.FunctionDef) and m.name == name)
+
+    def _calls_named(node, fname):
+        return [c for c in ast.walk(node)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                and c.func.id == fname]
+
+    def _calls_attr(node, attr):
+        return [c for c in ast.walk(node)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                and c.func.attr == attr]
+
+    cq = _find_class("CopyQueue")
+    cw = _find_class("CopyWorker")
+    mw = _find_class("MainWindow")
+
+    # (3) fila bloqueante: interface de queue, nada de lista `jobs`/flag `running`
+    cq_methods = _methods(cq)
+    assert {"put", "get", "drain", "pending"} <= cq_methods, cq_methods
+    cq_src = ast.get_source_segment(open(os.path.join(raiz, "lfs", "app.py")).read(), cq)
+    assert "queue.Queue" in cq_src, "CopyQueue devia embrulhar queue.Queue"
+    assert ".jobs" not in cq_src and "running" not in cq_src, \
+        "sobrou o modelo antigo de lista/flag na CopyQueue"
+
+    # (1) CopyWorker construído UMA vez em todo o módulo
+    builds = [c for c in ast.walk(tree)
+              if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+              and c.func.id == "CopyWorker"]
+    assert len(builds) == 1, "CopyWorker deve ser criado exatamente uma vez, achei %d" % len(builds)
+
+    # (2) e esse build NÃO está em enqueue_copy; enqueue só chama put()
+    enq = _func_in_class(mw, "enqueue_copy")
+    assert not _calls_named(enq, "CopyWorker"), "enqueue_copy não pode recriar o worker"
+    assert _calls_attr(enq, "put"), "enqueue_copy devia só enfileirar (put)"
+    assert not _calls_attr(enq, "start"), "enqueue_copy não pode dar start no worker"
+
+    # o build único vive no __init__ da janela, com start()
+    init = _func_in_class(mw, "__init__")
+    assert _calls_named(init, "CopyWorker"), "worker deve nascer no __init__"
+    assert _calls_attr(init, "start"), "worker deve ser iniciado no __init__"
+
+    # (4) run() dorme na fila; (5) shutdown existe e o closeEvent o aciona
+    run = _func_in_class(cw, "run")
+    assert any(c.func.attr == "get" for c in _calls_attr(run, "get")), \
+        "run() deve bloquear em self.q.get()"
+    assert "shutdown" in _methods(cw), "falta o desligamento limpo (shutdown)"
+    close = _func_in_class(mw, "closeEvent")
+    assert _calls_attr(close, "shutdown"), "closeEvent deve chamar copier.shutdown()"
+    print("ok  A6   CopyWorker persistente: 1 thread p/ a sessão, fila bloqueante, shutdown limpo")
+
+
 def test_a3_same_op_sanitize_collision():
     """A3: dois nomes ilegais que o sanitize funde ('a?b'/'a*b' -> 'a_b') não
     podem disparar o diálogo de conflito como se fosse arquivo pré-existente —
@@ -2026,7 +2096,7 @@ def main():
            test_a4_1_copy_bytes_excludes_too_big,
            test_a4_2_native_symlink_counts_in_total,
            test_a4_3_out_of_space_flag, test_a4_4_sys_disk_whole_disk,
-           test_a3_same_op_sanitize_collision,
+           test_a3_same_op_sanitize_collision, test_a6_persistent_copy_worker,
            test_dest_caps_statvfs_lies_on_vfat,
            test_dest_caps_rejects_non_utf8_names,
            test_cli_emits_bytes_for_hostile_names,
