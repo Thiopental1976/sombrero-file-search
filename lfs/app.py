@@ -626,6 +626,33 @@ class PreflightDialog(QDialog):
             "encoding": t("name is not valid UTF-8 (rejected by this filesystem)"),
         }.get(why, why)
 
+    @staticmethod
+    def probe_text(kind):
+        """Motivo do bloqueio pela sonda de escrita (§1.1) -> frase traduzida.
+        Só aparece quando a estratégia foi BLOCKED: a rota de gravação não existe."""
+        return {
+            "notsup": t("BLOCKED: this destination does not accept direct file "
+                        "writing through its current mount. Connect the device "
+                        "through the file manager (MTP) to copy here."),
+            "perm": t("BLOCKED: no permission to write to this destination."),
+            "readonly": t("BLOCKED: the destination is mounted read-only."),
+            "nospace": t("BLOCKED: the destination reports no room for a test write."),
+        }.get(kind, t("BLOCKED: a test write to the destination failed."))
+
+    @staticmethod
+    def strategy_note(pf):
+        """Nota informativa (NÃO bloqueia) sobre COMO a cópia será feita: destino
+        MTP vai pela transferência do sistema (gio, a rota do Nemo); destino de
+        rede tem estimativa de espaço não-confiável."""
+        if pf.strategy == fileops.STRAT_GIO:
+            return t("MTP device: files are copied through the system transfer "
+                     "service (gio), like the file manager does — progress "
+                     "updates per file.")
+        if pf.caps and getattr(pf.caps, "net", False):
+            return t("Network destination: the free-space estimate may be "
+                     "unreliable.")
+        return ""
+
     def __init__(self, parent, pf):
         super().__init__(parent)
         self.setWindowTitle(t("Copy to…"))
@@ -646,6 +673,11 @@ class PreflightDialog(QDialog):
         if enlace:
             linha += " · " + enlace
         v.addWidget(QLabel(linha))
+        nota = self.strategy_note(pf)
+        if nota:
+            lab_nota = QLabel(nota)
+            lab_nota.setWordWrap(True)
+            v.addWidget(lab_nota)
 
         self.details = QPlainTextEdit()
         self.details.setReadOnly(True)
@@ -655,6 +687,8 @@ class PreflightDialog(QDialog):
                           "Copying there would fill the system disk instead."))
         if pf.caps.readonly:
             warn.append(t("BLOCKED: the destination is mounted read-only."))
+        if pf.strategy == fileops.STRAT_BLOCKED:
+            warn.append(self.probe_text(pf.write_probe.kind if pf.write_probe else ""))
         if not pf.fits:
             warn.append(t("Not enough free space: needs {need}, has {free}.",
                           need=human_size(pf.total_bytes), free=human_size(pf.free_bytes)))

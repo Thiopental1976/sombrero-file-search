@@ -169,6 +169,28 @@ _PT = {
         "Copiar para lá encheria o disco de sistema.",
     "BLOCKED: the destination is mounted read-only.":
         "BLOQUEADO: o destino está montado como somente leitura.",
+    "BLOCKED: this destination does not accept direct file "
+    "writing through its current mount. Connect the device "
+    "through the file manager (MTP) to copy here.":
+        "BLOQUEADO: este destino não aceita escrita direta de arquivo "
+        "pela montagem atual. Conecte o aparelho pelo gerenciador de "
+        "arquivos (MTP) para copiar aqui.",
+    "BLOCKED: no permission to write to this destination.":
+        "BLOQUEADO: sem permissão para escrever neste destino.",
+    "BLOCKED: the destination reports no room for a test write.":
+        "BLOQUEADO: o destino não tem espaço nem para uma escrita de teste.",
+    "BLOCKED: a test write to the destination failed.":
+        "BLOQUEADO: uma escrita de teste no destino falhou.",
+    "MTP device: files are copied through the system transfer "
+    "service (gio), like the file manager does — progress "
+    "updates per file.":
+        "Aparelho MTP: os arquivos são copiados pelo serviço de "
+        "transferência do sistema (gio), como o gerenciador de arquivos "
+        "faz — o progresso avança por arquivo.",
+    "Network destination: the free-space estimate may be "
+    "unreliable.":
+        "Destino de rede: a estimativa de espaço livre pode ser "
+        "não-confiável.",
     "Not enough free space: needs {need}, has {free}.":
         "Espaço livre insuficiente: precisa de {need}, tem {free}.",
     "{n} file(s) exceed the {fs} size limit and will be SKIPPED:":

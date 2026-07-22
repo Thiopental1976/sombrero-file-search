@@ -1826,6 +1826,47 @@ def test_write_strategies_atomic_and_guarded():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_preflight_a2r_surfacing():
+    """A borda A2R na GUI (app.py, PreflightDialog): probe_text explica o bloqueio
+    da sonda de escrita e strategy_note informa a rota (GIO/rede). Testado SEM Qt,
+    extraindo os dois staticmethods puros por AST e rodando com t()/fileops stub."""
+    import ast
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lfs")
+    with open(os.path.join(base, "app.py"), encoding="utf-8") as f:
+        src = f.read()
+    tree = ast.parse(src)
+    funcs = {}
+    for cls in tree.body:
+        if isinstance(cls, ast.ClassDef) and cls.name == "PreflightDialog":
+            for fn in cls.body:
+                if isinstance(fn, ast.FunctionDef) and fn.name in ("probe_text", "strategy_note"):
+                    seg = ast.get_source_segment(src, fn)
+                    funcs[fn.name] = "\n".join(l for l in seg.splitlines()
+                                               if l.strip() != "@staticmethod")
+    assert set(funcs) == {"probe_text", "strategy_note"}, list(funcs)
+    # namespace puro: t() devolve a fonte (com format), fileops só com as constantes
+    class _FO:
+        STRAT_GIO = "GIO"; STRAT_BLOCKED = "BLOCKED"
+    ns = {"t": (lambda s, **k: s.format(**k) if k else s), "fileops": _FO}
+    for code in funcs.values():
+        exec(code, ns)
+    probe_text, strategy_note = ns["probe_text"], ns["strategy_note"]
+    # probe_text: cada kind dá frase 'BLOCKED', notsup fala de MTP, kinds diferem, fallback existe
+    assert "MTP" in probe_text("notsup")
+    assert probe_text("perm") != probe_text("notsup")
+    for k in ("notsup", "perm", "readonly", "nospace", "kind-inexistente"):
+        assert probe_text(k).startswith("BLOCKED"), (k, probe_text(k))
+    # strategy_note: GIO -> nota gio; rede -> nota rede; caso comum -> vazio (não intromete)
+    class _Caps:
+        def __init__(self, net): self.net = net
+    class _PF:
+        def __init__(self, strat, net=False): self.strategy = strat; self.caps = _Caps(net)
+    assert "gio" in strategy_note(_PF("GIO")).lower()
+    assert strategy_note(_PF("ATOMIC")) == ""
+    assert strategy_note(_PF("ATOMIC", net=True)) != ""
+    print("ok  A2R  GUI: probe_text explica bloqueio + strategy_note informa rota (GIO/rede)")
+
+
 def main():
     fns = [test_parse_size, test_reap_kills_process, test_no_orphan_on_cancel,
            test_glob_case_insensitive, test_boolean_name_regex,
@@ -1852,7 +1893,7 @@ def main():
            test_mount_entry_sees_mtp_gvfs,
            test_write_probe_classifies_errno, test_decide_strategy_machine,
            test_part_path_respects_name_limits, test_gio_strategy_uri_and_runner,
-           test_write_strategies_atomic_and_guarded,
+           test_write_strategies_atomic_and_guarded, test_preflight_a2r_surfacing,
            test_dest_caps_statvfs_lies_on_vfat,
            test_dest_caps_rejects_non_utf8_names,
            test_cli_emits_bytes_for_hostile_names,
