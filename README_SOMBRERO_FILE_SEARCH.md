@@ -126,10 +126,20 @@ lfs ~/notas -b '(nota OR laudo) AND paciente'    # booleano
 lfs /dados -c erro -l --print0 | xargs -0 ...    # pipeline
 lfs /repo -n '*.log' --json                      # NDJSON p/ automação (cron, scripts)
 lfs /repo -c erro --nice-io                      # cede CPU/IO ao serviço do servidor
+lfs ~/acervo -n relatorio --index               # busca por NOME acelerada por plocate
 ```
 
 `-c` conteúdo · `-n` nome · `-b/--bool` booleano · `-D/--docs` documentos · `-l` só caminhos ·
-`--print0` separador nulo · `--json` NDJSON · `--nice-io` baixa prioridade. Rode `lfs --help` para tudo.
+`--print0` separador nulo · `--json` NDJSON · `--nice-io` baixa prioridade · `--index` índice. Rode `lfs --help` para tudo.
+
+**Aceleração por índice (`--index`, só NOME):** opt-in explícito — o modo padrão é
+sempre "o que está no disco AGORA". Com `--index`, a busca por nome consulta o
+`plocate` (rápido), mas com **honestidade garantida**: (1) se qualquer parte do
+caminho estiver **podada** do índice (`PRUNEFS`/`PRUNEPATHS` do `updatedb.conf` —
+tipicamente rede, `/mnt`, `/media`, `/tmp`), o SFS **recusa com erro claro** em vez
+de devolver um subtree faltando em silêncio; (2) cada resultado é **verificado vivo**
+(`lstat`) — o que sumiu do disco desde o `updatedb` não sai; (3) a **data do índice**
+aparece sempre. Conteúdo não é indexável → `--index` é recusado (use a busca viva).
 
 **Para automação (`--json`):** um objeto JSON por match, um por linha (NDJSON) — campos
 `path`, `size`, `mtime`, `is_dir`, `nmatch`, `lines[]` (o mesmo `Match.lines` lógico, sem
@@ -246,8 +256,10 @@ que o protege nesse ambiente:
 Recoll. A identidade dele é **ferramenta viva e sem estado** — o que ele mostra é o que
 está no disco **agora**, não um retrato de um banco de dados que pode estar velho.
 Quando existe um índice do próprio sistema (`plocate`), o SFS pode se apoiar nele para
-acelerar; **daemon de indexação próprio, não.** E não vira serviço web: quem quer busca
-remota usa **SSH + `--json`**. (Mesma razão de não haver Flatpak — ver *Instalação*.)
+acelerar — **mas só sob `--index`, explícito, e nunca em silêncio** (recusa se a
+cobertura estiver furada; ver acima). **Daemon de indexação próprio, não.** E não vira
+serviço web: quem quer busca remota usa **SSH + `--json`**. (Mesma razão de não haver
+Flatpak — ver *Instalação*.)
 
 ## Licença
 

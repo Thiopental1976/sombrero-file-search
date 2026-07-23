@@ -1478,6 +1478,76 @@ def test_cli_json_and_exit_codes():
         shutil.rmtree(src, ignore_errors=True)
 
 
+def test_indexed_search_coverage_and_staleness():
+    """F9b §3.2 + decisão A do Fable: aceleração por plocate, OPT-IN, com as três
+    válvulas de honestidade — (1) recusa cobertura furada (poda), nunca degrada em
+    silêncio; (2) verificação viva de staleness (arquivo sumiu do disco desde o
+    updatedb => não sai); (3) conteúdo não é indexável => recusa. Determinístico
+    com um índice REAL de brinquedo (`updatedb -o`, fixture §5.5 do Fable)."""
+    import indexed
+    if not (shutil.which("updatedb") and shutil.which("plocate")):
+        print("~skip F9b  indexed: updatedb/plocate ausentes (feature opt-in)")
+        return
+    d = tempfile.mkdtemp(prefix="lfs_idx_")
+    db = os.path.join(d, "toy.db")
+    root = os.path.join(d, "acervo")
+    os.makedirs(os.path.join(root, "sub"))
+    open(os.path.join(root, "laudo_alfa.txt"), "w").close()
+    open(os.path.join(root, "sub", "relatorio.txt"), "w").close()
+    sumico = os.path.join(root, "some_engine.py")
+    open(sumico, "w").close()
+    try:
+        rc = subprocess.run(["updatedb", "-o", db, "-U", root, "-l", "0"],
+                            capture_output=True)
+        assert rc.returncode == 0, f"updatedb falhou: {rc.stderr.decode('utf-8','replace')}"
+        run = lambda args: subprocess.run(["plocate", "-d", db, *args],
+                                          stdout=subprocess.PIPE).stdout or b""
+        conf_vazia = {"prunepaths": [], "prunefs": set(), "prunenames": [], "prune_bind": True}
+
+        def busca(nome, **qkw):
+            q = engine.Query(paths=[root], name_patterns=[engine.as_name_glob(nome)], **qkw)
+            return sorted(os.path.basename(m.path)
+                          for m in indexed.search_indexed(q, conf=conf_vazia, _run=run))
+
+        # (a) nome "engine" acha só o some_engine.py (contains, igual à busca viva)
+        assert busca("engine") == ["some_engine.py"], busca("engine")
+        # recursivo pega a submontagem lógica (sub/relatorio) por nome
+        assert busca("relatorio") == ["relatorio.txt"], busca("relatorio")
+
+        # (b) STALENESS: apaga o arquivo do DISCO (fica no índice) => não sai
+        os.remove(sumico)
+        assert busca("engine") == [], "arquivo sumido do disco não pode sair (staleness)"
+
+        # (c) COBERTURA FURADA: conf com PRUNEFS que casa o fs do root, ou um
+        # PRUNEPATH sob o root => recusa clara, nunca resultado parcial mudo
+        conf_poda = {"prunepaths": [os.path.join(root, "sub")], "prunefs": set(),
+                     "prunenames": [], "prune_bind": True}
+        try:
+            list(indexed.search_indexed(engine.Query(paths=[root],
+                 name_patterns=["*"]), conf=conf_poda, _run=run))
+            assert False, "root com poda dentro deveria RECUSAR"
+        except indexed.IndexError_ as e:
+            assert "sub" in str(e) and "busca viva" in str(e), str(e)
+
+        # (d) CONTEÚDO não é indexável => recusa
+        try:
+            list(indexed.search_indexed(engine.Query(paths=[root], content="x"),
+                                        conf=conf_vazia, _run=run))
+            assert False, "conteúdo deveria RECUSAR no índice"
+        except indexed.IndexError_ as e:
+            assert "CONTEÚDO" in str(e) or "conteúdo" in str(e).lower(), str(e)
+
+        # (e) o parse do updatedb.conf real: aspas agrupam, então dividimos DENTRO
+        conf = indexed.parse_updatedb_conf('PRUNEFS="nfs CIFS fuse.sshfs"\nPRUNEPATHS="/mnt /tmp"')
+        assert "cifs" in conf["prunefs"] and "fuse.sshfs" in conf["prunefs"], conf["prunefs"]
+        assert "/mnt" in conf["prunepaths"] and "/tmp" in conf["prunepaths"], conf["prunepaths"]
+        # e a cobertura recusa um root podado por caminho e por fstype
+        assert indexed.index_coverage("/mnt/x", conf, mounts=[("srv:/e", "/mnt/x", "nfs4")])
+        print("ok  F9b  indexed: opt-in, recusa poda, staleness viva, conteúdo barrado")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_preflight_flags_fat_problems():
     """Com destino FAT32, a pré-varredura tem que listar o que vai falhar
     (tamanho e nome) e a cópia pular esses itens com motivo — nunca abortar no
@@ -2373,6 +2443,7 @@ def main():
            test_dest_caps_rejects_non_utf8_names,
            test_cli_emits_bytes_for_hostile_names,
            test_cli_json_and_exit_codes,
+           test_indexed_search_coverage_and_staleness,
            test_preflight_flags_fat_problems,
            test_copy_paces_writes_on_removable,
            test_copy_into_itself, test_qt_drag_and_clipboard_payload,

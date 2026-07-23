@@ -64,6 +64,10 @@ def main():
     ap.add_argument("--nice-io", action="store_true",
                     help="lower CPU + I/O priority (nice 19 + ionice idle) so cron/background "
                          "searches don't fight the server's foreground work")
+    ap.add_argument("--index", action="store_true",
+                    help="NAME search only: use the plocate index (fast; results as of the "
+                         "index date). Refuses if any part of the path is pruned from the index "
+                         "(would hide a subtree silently) — then use the live search.")
     args = ap.parse_args()
 
     if args.nice_io:                          # F9b §3.5: busca de fundo cede a vez
@@ -128,6 +132,37 @@ def main():
                 emit(f"{m.path}:{ln}:{txt}{sep}")
     out = out_json if args.json else out_text
     err = None
+    if args.index:
+        # F9b §3.2: aceleração por índice, opt-in. Recusa se a cobertura estiver
+        # furada (poda) — nunca degrada em silêncio. Sempre anuncia a data.
+        import indexed
+        if args.boolexpr or args.content:
+            print("# error: --index acelera busca por NOME; para conteúdo/boolean use a busca viva",
+                  file=sys.stderr)
+            sys.exit(2)
+        idate = indexed.index_date()
+        if not indexed.index_available():
+            print("# error: --index pedido mas o plocate/índice não está disponível — use a busca viva",
+                  file=sys.stderr)
+            sys.exit(2)
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(idate)) if idate else "?"
+        print(f"# index: resultados conforme o índice de {when} (não é o disco AGORA)",
+              file=sys.stderr)
+        if args.json:
+            emit_json({"warn": "index_used", "index_date": idate})
+        t0 = time.time()
+        try:
+            for m in indexed.search_indexed(q):
+                out(m)
+        except indexed.IndexError_ as e:
+            if args.json:
+                emit_json({"error": "index_coverage", "detail": str(e)}); wb.flush()
+            print(f"# error: {e}", file=sys.stderr)
+            sys.exit(2)
+        tot, dt = n[0], time.time() - t0
+        wb.flush()
+        print(f"\n# {tot} files · {dt:.2f}s (índice de {when})", file=sys.stderr)
+        sys.exit(0 if tot > 0 else 1)
     if args.boolexpr:
         import boolean
         try:
