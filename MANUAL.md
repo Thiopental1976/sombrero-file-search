@@ -78,10 +78,20 @@ another search's form in front of you.
 
 | shortcut | action |
 |---|---|
+| `Enter` | run the search (from any search field) |
+| `Esc` | cancel a running search; with none running, clear the results filter |
+| `↑` / `↓` | *(in the name field)* walk back/forward through your search history |
+| `Ctrl+F` | jump to the **results filter** box |
+| `Ctrl+L` | jump to the **paths** field (and select it) |
+| `F3` / `Shift+F3` | next / previous match **inside the preview** |
+| `Ctrl+R` | repeat the tab's search |
 | `Ctrl+N` | new tab |
 | `Ctrl+W` | close tab (the last one doesn't quit — it just empties) |
 | `Ctrl+Enter` | search in a **new** tab (keeps the current one) |
-| `F3` | repeat the tab's search |
+| `Ctrl+S` / `Ctrl+E` | save current search / export results |
+| `Ctrl+T` | toggle light / dark theme |
+| `Ctrl+C` / `Ctrl+Shift+C` | copy selected file(s) / copy path(s) |
+| `Alt+Enter` | properties of the selected result |
 
 ### Saved searches + history *(F5)*
 In the **Searches ▾** menu (next to *Disks*):

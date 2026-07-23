@@ -44,7 +44,8 @@ MFT/USN do NTFS, que não existe aqui. Este projeto reimplementa a função de f
 - 🗂️ **Abas de busca** — várias buscas abertas ao mesmo tempo, cada uma com seu
   formulário e seus resultados (`Ctrl+N` nova, `Ctrl+↵` busca em nova aba, `Ctrl+W` fecha).
 - ⭐ **Buscas salvas + histórico** — salve uma busca inteira (não só o termo) e
-  reabra depois; as últimas buscas ficam no menu **Buscas ▾** (`Ctrl+S` salvar, `F3` repetir).
+  reabra depois; as últimas buscas ficam no menu **Buscas ▾** (`Ctrl+S` salvar,
+  `Ctrl+R` repetir) e `↑`/`↓` no campo de nome percorrem o histórico.
 - 📤 **Exportar** — os resultados em **CSV** (uma linha por trecho casado) ou **JSON**
   (um objeto por arquivo), na ordem em que estão na tela (`Ctrl+E`).
 - 📁 **Copiar arquivos** — arraste para outro app ou copie para uma pasta, com

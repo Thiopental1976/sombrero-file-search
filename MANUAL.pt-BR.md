@@ -77,10 +77,20 @@ uma busca com o formulário de outra na frente.
 
 | atalho | ação |
 |---|---|
+| `Enter` | dispara a busca (de qualquer campo de busca) |
+| `Esc` | cancela a busca em andamento; sem busca, limpa o filtro dos resultados |
+| `↑` / `↓` | *(no campo de nome)* percorre para trás/frente o histórico de buscas |
+| `Ctrl+F` | vai para a caixa de **filtro dos resultados** |
+| `Ctrl+L` | vai para o campo de **pastas** (e o seleciona) |
+| `F3` / `Shift+F3` | próximo / anterior match **dentro do preview** |
+| `Ctrl+R` | repete a busca da aba |
 | `Ctrl+N` | nova aba |
 | `Ctrl+W` | fecha a aba (a última não fecha o programa — ela se esvazia) |
 | `Ctrl+Enter` | busca numa **nova** aba (preserva a atual) |
-| `F3` | repete a busca da aba |
+| `Ctrl+S` / `Ctrl+E` | salva a busca atual / exporta os resultados |
+| `Ctrl+T` | alterna tema claro / escuro |
+| `Ctrl+C` / `Ctrl+Shift+C` | copia arquivo(s) selecionado(s) / copia caminho(s) |
+| `Alt+Enter` | propriedades do resultado selecionado |
 
 ### Buscas salvas + histórico *(F5)*
 No menu **Buscas ▾** (ao lado de *Discos*):

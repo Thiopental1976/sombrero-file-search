@@ -258,7 +258,8 @@ start_search → _build_query → SearchWorker(q, boolexpr).start()
    worker.progress → status "N encontrados · Xs"
    worker.error    → status "expressão inválida: …"
    worker.done     → status "✔ N resultados · Xs"
-Esc → cancel_search (flag) ; Ctrl+L foca conteúdo ; Ctrl+T alterna tema
+Esc → cancela busca / limpa filtro ; Ctrl+L foca pastas ; Ctrl+F foca filtro ;
+F3/Shift+F3 navegam matches no preview ; ↑/↓ histórico ; Ctrl+R repete ; Ctrl+T tema
 ```
 
 A UI thread nunca faz I/O de busca. O `_cancel` é lido pelo iterador entre itens; processos

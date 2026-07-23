@@ -20,7 +20,7 @@ from urllib.parse import quote
 
 from PySide6.QtCore import (Qt, QThread, Signal, QAbstractTableModel, QModelIndex,
                             QUrl, QTimer, QSortFilterProxyModel, QRect, QSize,
-                            QByteArray, QMimeData)
+                            QByteArray, QMimeData, QEvent)
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication,
                            QIcon, QImageReader, QPixmap, QKeySequence, QShortcut,
                            QTextCharFormat, QTextCursor, QTextDocument)
@@ -1077,13 +1077,21 @@ class MainWindow(QMainWindow):
         self.copier.all_done.connect(self.on_copy_all_done)
         self.copier.start()
         self.muted = bool(self.cfg.get("muted", True))   # B13: mídia começa muda
+        self._hist_pos = None            # F10a #3: posição na navegação ↑/↓ do histórico
+        self._hist_draft: dict = {}      # o que estava digitado antes de navegar
+        self._pv_matches: list = []      # F10a #3: posições dos matches no preview (F3)
         self.theme = self.cfg.get("theme", "dark")
         if self.theme not in THEMES:
             self.theme = "dark"
         self._build()
         self.apply_theme(self.theme)
-        QShortcut(QKeySequence(Qt.Key_Escape), self, self.cancel_search)
-        QShortcut(QKeySequence("Ctrl+L"), self, lambda: self.ed_name.setFocus())
+        # F10a #3 — teclado de ponta a ponta (QActions da JANELA: valem com
+        # qualquer foco). Esc é esperto: cancela a busca em andamento; sem busca,
+        # limpa o filtro. F3/Shift+F3 navegam os matches DENTRO do preview.
+        QShortcut(QKeySequence(Qt.Key_Escape), self, self._on_escape)
+        QShortcut(QKeySequence("Ctrl+L"), self, lambda: (self.ed_path.setFocus(),
+                                                         self.ed_path.selectAll()))
+        QShortcut(QKeySequence("Ctrl+F"), self, self._focus_filter)
         QShortcut(QKeySequence("Ctrl+T"), self, self.toggle_theme)
         # F7 — atalhos de resultado. Ficam na JANELA, não na tabela: com abas a
         # tabela troca debaixo do atalho, e um QShortcut preso à tabela da aba 1
@@ -1091,11 +1099,13 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence.Copy, self, self.copy_selection)
         QShortcut(QKeySequence("Ctrl+Shift+C"), self, self.copy_paths)
         QShortcut(QKeySequence("Alt+Return"), self, self.properties)
+        QShortcut(QKeySequence(Qt.Key_F3), self, lambda: self._preview_match(+1))
+        QShortcut(QKeySequence("Shift+F3"), self, lambda: self._preview_match(-1))
         # F5 — conforto: abas, repetir, exportar, salvar.
         QShortcut(QKeySequence("Ctrl+N"), self, lambda: self.new_tab(focus=True))
         QShortcut(QKeySequence("Ctrl+W"), self, self.close_current_tab)
         QShortcut(QKeySequence("Ctrl+Return"), self, lambda: self.start_search(True))
-        QShortcut(QKeySequence(Qt.Key_F3), self, self.repeat_last)
+        QShortcut(QKeySequence("Ctrl+R"), self, self.repeat_last)   # F3 foi p/ o preview
         QShortcut(QKeySequence("Ctrl+E"), self, self.export_results)
         QShortcut(QKeySequence("Ctrl+S"), self, self.save_current_search)
         self.setAcceptDrops(True)                 # soltar pasta = "procure aqui"
@@ -1142,6 +1152,11 @@ class MainWindow(QMainWindow):
             "“routine exams.txt” in any extension. Multiple terms separated\n"
             "by comma (OR). Hand-typed globs (* ? [) are honored as typed."))
         self.ed_name.returnPressed.connect(self.start_search)
+        # F10a #3: ↑/↓ no campo de busca percorrem o histórico do F5. Fica no
+        # eventFilter (não QShortcut) porque só vale COM foco no campo — senão
+        # roubaria as setas de quem navega a tabela de resultados.
+        self.ed_name.installEventFilter(self)
+        self.ed_name.textEdited.connect(lambda _=None: setattr(self, "_hist_pos", None))
         self.btn_search = QPushButton(t("  Search  ")); self.btn_search.setObjectName("primary")
         self.btn_search.setDefault(True); self.btn_search.clicked.connect(self.start_search)
         self.btn_cancel = QPushButton(t("Cancel")); self.btn_cancel.clicked.connect(self.cancel_search)
@@ -1638,8 +1653,8 @@ class MainWindow(QMainWindow):
         save_cfg(self.cfg)
 
     def repeat_last(self):
-        """F3: repetir. Se a aba já tem uma busca, repete ESSA (o gesto clássico
-        de F3 é "de novo"); aba virgem cai na última do histórico."""
+        """Ctrl+R: repetir (F3 passou a navegar o preview no F10a #3). Se a aba já
+        tem uma busca, repete ESSA; aba virgem cai na última do histórico."""
         f = self.tab.form or (self.cfg.get("history") or [None])[0]
         if not f:
             return
@@ -1717,6 +1732,7 @@ class MainWindow(QMainWindow):
         if not q:
             return
         tab.form = self.form_state()
+        self._hist_pos = None                     # F10a #3: nova busca reinicia o ↑/↓
         searches.add_history(self.cfg, tab.form)
         save_cfg(self.cfg)
         self.tabs.setTabText(self.tabs.indexOf(tab), searches.title_for(tab.form))
@@ -1871,6 +1887,64 @@ class MainWindow(QMainWindow):
         tab.worker = w
         w.start()
         self._tick.start()                        # B8: heartbeat de status
+
+    # ----------------------------------------------------- F10a #3: teclado
+    def _on_escape(self):
+        """Esc esperto: com busca viva (ou na fila do SMR), cancela; parada,
+        limpa o filtro-nos-resultados. Um único Esc faz a coisa óbvia do momento."""
+        tab = self.tab
+        if tab.searching or tab.pending:
+            self.cancel_search()
+        elif tab.ed_filter.text():
+            tab.ed_filter.clear()                 # dispara _on_filter_changed → mostra tudo
+
+    def _focus_filter(self):
+        ed = self.tab.ed_filter                   # o filtro é por-aba (segue a aba ativa)
+        ed.setFocus()
+        ed.selectAll()
+
+    def eventFilter(self, obj, ev):
+        # F10a #3: ↑/↓ no campo de nome caminham pelo histórico do F5.
+        if obj is self.ed_name and ev.type() == QEvent.KeyPress:
+            k = ev.key()
+            if k == Qt.Key_Up:
+                self._history_step(+1); return True
+            if k == Qt.Key_Down:
+                self._history_step(-1); return True
+        return super().eventFilter(obj, ev)
+
+    def _history_step(self, direction: int):
+        """+1 = mais antigo (↑), -1 = mais novo (↓). A posição -1 é o rascunho que
+        o usuário estava digitando — voltar até ele devolve o que era dele."""
+        hist = self.cfg.get("history", [])
+        if not hist:
+            return
+        if self._hist_pos is None:                # começou a navegar agora
+            self._hist_draft = self.form_state()
+            self._hist_pos = -1
+        new = max(-1, min(self._hist_pos + direction, len(hist) - 1))
+        self._hist_pos = new
+        self.apply_form(self._hist_draft if new == -1 else searches.normalize(hist[new]))
+
+    def _preview_match(self, direction: int):
+        """F3 / Shift+F3: pula para a próxima/anterior ocorrência destacada DENTRO
+        do preview (rola e seleciona). Opera sobre as posições que o realce já
+        calculou — nada de re-buscar. Sem matches (ou preview de mídia), não faz nada."""
+        if self.pv_stack.currentIndex() != 0 or not self._pv_matches:
+            return
+        # referência = início do match atual (não o fim da seleção), p/ Shift+F3
+        # sair de fato do match corrente em vez de re-selecioná-lo.
+        ref = self.preview.textCursor().selectionStart()
+        starts = self._pv_matches
+        if direction > 0:
+            nxt = next((s for s, _e in starts if s > ref), starts[0][0])    # wrap
+        else:
+            nxt = next((s for s, _e in reversed(starts) if s < ref), starts[-1][0])
+        end = next(e for s, e in starts if s == nxt)
+        cur = self.preview.textCursor()
+        cur.setPosition(nxt); cur.setPosition(end, QTextCursor.KeepAnchor)
+        self.preview.setTextCursor(cur)
+        self.preview.ensureCursorVisible()
 
     def cancel_search(self):
         tab = self.tab
@@ -2036,6 +2110,7 @@ class MainWindow(QMainWindow):
         terms = getattr(self, "_hl_terms", None)
         if not terms:
             self.preview.setExtraSelections([])
+            self._pv_matches = []                 # F10a #3: nada a navegar com F3
             return
         pal = THEMES[self.theme]
         fmt = QTextCharFormat()
@@ -2059,6 +2134,9 @@ class MainWindow(QMainWindow):
                 sel.format = fmt
                 sels.append(sel)
         self.preview.setExtraSelections(sels)
+        # F10a #3: ordena os matches por posição p/ o F3/Shift+F3 caminhar por eles.
+        self._pv_matches = sorted((s.cursor.selectionStart(), s.cursor.selectionEnd())
+                                  for s in sels)
 
     # ---- mídia
     def _show_media(self, path: str, kind: str):
