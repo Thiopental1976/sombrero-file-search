@@ -1210,6 +1210,72 @@ def test_mount_entry_sees_mtp_gvfs():
     print("ok  A1   MTP/gvfs visível no mounts (PMC7230): não mais 'ext4 interno'")
 
 
+def test_search_profile_classification():
+    """F9a §2.1 (desenho Fable): search_profile() classifica o caminho para a
+    política de BUSCA. Montagens de REDE (nfs/cifs/sshfs/9p/lustre…) não
+    serializam como SMR, mas ganham teto de workers por montagem e a marca
+    is_network (que liga o watchdog). gvfs/autofs saem do 'buscar em tudo' por
+    padrão. Puro, com montagens sintéticas — sem NAS real."""
+    mounts_lines = [
+        "/dev/mapper/vgmint-root / ext4 rw,relatime 0 0\n",
+        "nas:/export/video /mnt/nas nfs4 rw,relatime,vers=4.2 0 0\n",
+        "//nas/share /mnt/smb cifs rw,relatime 0 0\n",
+        "sshuser@host:/srv /mnt/ssh fuse.sshfs rw,nosuid,nodev 0 0\n",
+        "server:/gv /mnt/lustre lustre rw 0 0\n",
+        "gvfsd-fuse /run/user/1000/gvfs fuse.gvfsd-fuse rw,nosuid,nodev 0 0\n",
+        "auto /net autofs rw,relatime 0 0\n",
+    ]
+    M = disks._read_mounts(mounts_lines)
+    P = lambda p: disks.search_profile(p, mounts=M)
+
+    for path, fstype in (("/mnt/nas/a.mkv", "nfs4"), ("/mnt/smb/b", "cifs"),
+                         ("/mnt/ssh/c", "fuse.sshfs"), ("/mnt/lustre/d", "lustre")):
+        pr = P(path)
+        assert pr.klass == "network", f"{path}: esperava network, veio {pr.klass}"
+        assert pr.is_network and not pr.serialize, f"{path}: rede não serializa como SMR"
+        assert pr.max_workers == disks.NET_WORKERS_PER_MOUNT, f"{path}: sem teto de workers"
+        assert pr.enumerate_default, f"{path}: rede montada explícita entra na busca"
+
+    g = P("/run/user/1000/gvfs/mtp:host=x/Storage")
+    assert g.klass == "gvfs" and g.is_network, "gvfs deveria ser rede"
+    assert not g.enumerate_default, "gvfs FORA do 'buscar em tudo' por padrão (§2.1)"
+
+    a = P("/net/algum/ponto")
+    assert a.klass == "autofs" and not a.enumerate_default, \
+        "autofs: NÃO descer ao enumerar (senão acorda todo automount)"
+
+    # coerência com path_needs_serial no eixo LOCAL: o disco de sistema (ext4, não
+    # sob /mnt) não serializa e não é rede.
+    root = P("/home/rodrigo/x")
+    assert not root.is_network and not root.serialize, "raiz local: nem rede nem serial"
+    print("ok  F9a  search_profile: rede/gvfs/autofs classificados p/ política de busca")
+
+
+def test_mount_alive_watchdog():
+    """F9a §2.2: mount_alive() sonda a vida da montagem em thread daemon com
+    timeout. Uma montagem VIVA responde (True) — inclusive se o stat der erro de
+    I/O (respondeu = viva). Uma montagem TRAVADA (stat que nunca volta, o D-state
+    do NFS morto) estoura o timeout e devolve False SEM travar o chamador — a
+    thread presa fica órfã e inofensiva. Testado com _stat injetável: determinístico,
+    sem precisar de NFS/sshfs real (a fase de integração usa SIGSTOP no sshfs)."""
+    d = tempfile.mkdtemp(prefix="lfs_alive_")
+    try:
+        assert disks.mount_alive(d, timeout=2.0), "dir real: viva"
+        # stat que ERRA rápido = respondeu = viva
+        boom = lambda p: (_ for _ in ()).throw(OSError("stale"))
+        assert disks.mount_alive(d, timeout=2.0, _stat=boom), "erro de I/O = respondeu = viva"
+        # stat que TRAVA além do timeout = montagem morta; NÃO pode travar o teste
+        hang = lambda p: time.sleep(30)
+        t0 = time.time()
+        dead = disks.mount_alive(d, timeout=0.3, _stat=hang)
+        elapsed = time.time() - t0
+        assert dead is False, "montagem travada deveria dar False (morta)"
+        assert elapsed < 2.0, f"mount_alive NÃO respeitou o timeout (levou {elapsed:.1f}s)"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("ok  F9a  mount_alive: viva=True, travada=False sem congelar o chamador")
+
+
 def test_dest_caps_statvfs_lies_on_vfat():
     """Achado do teste presencial (FAT32 real montado em loop): o statvfs do vfat
     responde f_namemax=1530 — 255 x 6, o pior caso de UTF-8 por unidade UTF-16.
@@ -2156,6 +2222,8 @@ def main():
            test_dest_caps_restrictive_filesystems,
            test_mount_entry_sees_mtp_gvfs,
            test_write_probe_classifies_errno, test_decide_strategy_machine,
+           # F9a — perfil de I/O de rede + watchdog de montagem morta
+           test_search_profile_classification, test_mount_alive_watchdog,
            test_part_path_respects_name_limits, test_gio_strategy_uri_and_runner,
            test_write_strategies_atomic_and_guarded, test_preflight_a2r_surfacing,
            test_a4_1_copy_bytes_excludes_too_big,

@@ -22,7 +22,8 @@ Three jobs:
      fails at byte 4294967296, not at the start, so we check BEFORE writing.
 """
 from __future__ import annotations
-import os, re
+import os, re, threading
+from dataclasses import dataclass
 
 try:                        # pacote (GUI) e flat (cli.py/testes)
     from . import engine
@@ -105,6 +106,99 @@ def path_needs_serial(ap: str) -> bool:
     if not _under_mount(ap):
         return False
     return _rotational(_dev_for_path(ap)) != "0"       # None (desconhecido) => serializa
+
+
+# ------------------------------------------------------- perfil de I/O de LEITURA (F9a)
+# fstypes cuja política de BUSCA muda (não é só destino de cópia). REDE: a latência
+# domina a banda — paralelismo MODERADO por montagem ajuda, mas o pool inteiro numa
+# montagem só afoga a busca local, e uma montagem MORTA congelaria tudo (ver
+# mount_alive). GVFS/AUTOFS exigem cautela na ENUMERAÇÃO ("buscar em /" ou "/mnt").
+_NET_FSTYPES = frozenset({
+    "nfs", "nfs4", "cifs", "smb3", "smbfs", "smb",
+    "fuse.sshfs", "sshfs", "davfs", "fuse.davfs", "webdav",
+    "9p", "virtiofs", "ncpfs", "afs",
+    "glusterfs", "fuse.glusterfs", "lustre", "ceph", "fuse.cephfs", "beegfs",
+})
+_GVFS_FSTYPES = frozenset({"fuse.gvfsd-fuse", "gvfsd-fuse"})
+
+# Teto de workers concorrentes POR montagem de rede: latência gosta de alguns em
+# voo, mas nenhuma montagem pode sequestrar o pool inteiro (mesmo raciocínio do
+# pacing de escrita — recurso global protegido, aqui aplicado a threads).
+NET_WORKERS_PER_MOUNT = 4
+
+
+@dataclass(frozen=True)
+class IOProfile:
+    """Perfil de I/O de LEITURA de um caminho, para a política de busca (F9a).
+
+    `klass` ∈ {rotational, ssd, network, gvfs, autofs, unknown}. Função-fonte:
+    `search_profile`. NÃO sonda a rede (isso é `mount_alive`) — é classificação
+    pura por fstype + rotational, testável com montagens sintéticas.
+    """
+    klass: str
+    mountpoint: str
+    fstype: str
+    serialize: bool           # busca serializada (1 processo por vez) — SMR/rotacional
+    is_network: bool          # montagem de rede: exige watchdog + teto de workers
+    max_workers: "int | None" # teto de workers NESTA montagem (None = pool global)
+    enumerate_default: bool    # entra no "buscar em tudo" por padrão? (gvfs/autofs: não)
+
+
+def search_profile(path: str, mounts=None) -> IOProfile:
+    """Classifica `path` para a política de busca (F9a). PURA (`mounts` injetável
+    p/ teste): olha o fstype da montagem de prefixo mais longo e o rotational do
+    dev. Coerente com `path_needs_serial` no eixo local (SMR/rotacional serializa,
+    SSD/NVMe libera); acrescenta os eixos de REDE que aquela função não cobre."""
+    ap = os.path.abspath(path)
+    dev, mp, fstype = _mount_entry(ap, mounts)
+    fskey = fstype.lower()
+    if fskey in _GVFS_FSTYPES:
+        # gvfs = rede por FUSE; fora do "buscar em tudo" por padrão — só se o
+        # usuário deu o caminho explícito (senão varreria o celular montado).
+        return IOProfile("gvfs", mp, fstype, serialize=False, is_network=True,
+                         max_workers=NET_WORKERS_PER_MOUNT, enumerate_default=False)
+    if fskey == "autofs":
+        # placeholder de automount: NÃO descer ao enumerar (acordaria todo mount
+        # da casa); só se o caminho foi dado explicitamente.
+        return IOProfile("autofs", mp, fstype, serialize=False, is_network=True,
+                         max_workers=NET_WORKERS_PER_MOUNT, enumerate_default=False)
+    if fskey in _NET_FSTYPES:
+        return IOProfile("network", mp, fstype, serialize=False, is_network=True,
+                         max_workers=NET_WORKERS_PER_MOUNT, enumerate_default=True)
+    # local: reaproveita a lógica SMR/rotacional (None desconhecido => serializa)
+    rot = _rotational(dev)
+    if _under_mount(ap) and rot != "0":
+        return IOProfile("rotational", mp, fstype, serialize=True, is_network=False,
+                         max_workers=None, enumerate_default=True)
+    return IOProfile("ssd" if rot == "0" else "unknown", mp, fstype,
+                     serialize=False, is_network=False,
+                     max_workers=None, enumerate_default=True)
+
+
+def mount_alive(mp: str, timeout: float = 3.0, _stat=os.stat) -> bool:
+    """Sonda de vida de uma montagem (F9a). Dispara `os.stat(mp)` numa thread
+    DESCARTÁVEL (daemon) e espera `timeout`. Uma montagem de rede morta (NFS
+    hard-mount com o servidor fora do ar) trava o `stat()` em D-state
+    ININTERRUPTÍVEL — nem `kill` alcança, e cancel via Event não chega numa
+    syscall presa. A thread bloqueada fica órfã e inofensiva (daemon, sem lock
+    compartilhado): é o ÚNICO jeito seguro de "desistir" de uma syscall que o
+    kernel não deixa interromper.
+
+    Retorna True se a montagem RESPONDEU no prazo (sucesso OU erro de I/O — está
+    viva, só negou/sumiu); False se não respondeu (trate como morta: pule com
+    aviso VISÍVEL, nunca em silêncio). `_stat` é injetável p/ teste determinístico
+    do caminho de travamento (sem precisar de NAS/sshfs real)."""
+    done: list = []
+    def _probe():
+        try:
+            _stat(mp)
+        except OSError:
+            pass                      # respondeu com erro => VIVA
+        done.append(True)
+    t = threading.Thread(target=_probe, daemon=True)
+    t.start()
+    t.join(timeout)
+    return bool(done)                 # preencheu => respondeu; vazio => travou
 
 
 def mount_ok(path: str) -> bool:
