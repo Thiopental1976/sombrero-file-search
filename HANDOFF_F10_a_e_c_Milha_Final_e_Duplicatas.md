@@ -4,8 +4,10 @@
 **Base:** desenho `DESENHO_F10_Milha_Final_Humana_e_Duplicatas.md`
 **Repo:** sombrero-file-search · **Suite:** 103/103 verde · tudo commitado **e** empurrado.
 
-> **Novidade desde a v1 deste handoff:** o **F10b #4 e #5** também entraram (seção
-> própria abaixo). Agora o F10 está **completo — a, b, c** — e testado.
+> **Novidades desde a v1 deste handoff:** (1) o **F10b #4 e #5** entraram (seção própria
+> abaixo); (2) o caçador de duplicatas foi **promovido de janela para ABA embutida** — a
+> antiga decisão #1 está resolvida. Agora o F10 está **completo — a, b, c** — e testado
+> (103/103), com o F10c na forma final que teu desenho pediu.
 
 ---
 
@@ -83,10 +85,24 @@ motor do cedro `dedup_layer1.py` serve só de **oráculo** nos testes de paridad
 - Grupos ordenados por bytes desperdiçados. `export()` CSV/JSON com `surrogateescape`
   (nomes hostis do acervo não estouram).
 
-**GUI** (`9bb32b7`) — janela *Duplicatas…* na toolbar (não-modal):
-- Campos de raízes (semeados), incluir-vazios, tamanho-mínimo; Varrer/Cancelar.
-- Cabeçalho grande + barra de progresso; árvore [Arquivo / Tamanho / **Disco por label**].
-- Export CSV / Export JSON. Fechar cancela o worker.
+**GUI — ABA embutida** (`9bb32b7` como janela, promovida a aba em commit desta
+sessão): o app ganhou um **workspace de topo com duas páginas isoladas** —
+*🔍 Buscar* (a busca inteira: formulário, abas de resultado, preview, cópia) e
+*⧉ Duplicatas* (o caçador). É a "aba própria com os mesmos chips de caminho" que teu
+desenho pediu, **resolvendo a decisão #1 da versão anterior deste handoff** (eu tinha
+feito como janela não-modal e deixado para promover no presencial — o Rodrigo pediu
+para fazer já).
+- Campos de raízes (semeados a partir da busca), incluir-vazios, tamanho-mínimo;
+  Varrer/Cancelar. Cabeçalho grande + barra de progresso; árvore
+  [Arquivo / Tamanho / **Disco por label**]. Export CSV / Export JSON.
+- **Por que duas páginas e não a aba de duplicatas dentro de `self.tabs`:** há dezenas
+  de acessos a `self.tab.*` (tabela, modelo, formulário, worker) que só fazem sentido
+  numa aba de BUSCA; uma aba de duplicatas ali dentro os quebraria. Páginas separadas
+  dão isolamento total, cada modalidade com entradas e ciclo de vida próprios.
+- `DuplicatesWindow(QDialog)` → `DuplicatesPanel(QWidget)`: saiu título/tamanho-mínimo/
+  botão *Close*; entrou `seed()` (semeia só se vazio — não pisa no que o usuário digitou)
+  e `shutdown()` (a janela principal aborta o hash em voo no `closeEvent`). O botão
+  *Duplicatas…* da toolbar agora **pula para a aba** e semeia os caminhos da busca.
 
 **9 testes novos** (suite 90→99), incluindo:
 - `test_dupes_hardlink_is_not_duplicate`, `..._across_devices_groups` (monkeypatch st_dev),
@@ -98,10 +114,9 @@ motor do cedro `dedup_layer1.py` serve só de **oráculo** nos testes de paridad
 
 ## Decisões que quero teu olhar
 
-1. **Entrada da GUI do F10c:** o desenho sugeria uma **aba "Duplicatas" embutida**. Fiz
-   como **janela não-modal** (mais seguro no QTabWidget centrado em SearchTab). Fácil de
-   promover a aba na sessão presencial se o Rodrigo preferir — o worker e o render já são
-   independentes.
+1. ✅ **RESOLVIDA — Entrada da GUI do F10c:** era janela não-modal, virou **aba embutida**
+   nesta sessão (o Rodrigo pediu para fazer já, não no presencial). Detalhes na subseção
+   *GUI — ABA embutida* acima. A forma final é a que teu desenho pedia.
 
 2. **Notificação de ejeção sem tray real:** no smoke offscreen usei `notify-send`/bandeja
    com fallback silencioso. No teu ambiente headless (cron), nenhum dos dois existe e a
@@ -112,8 +127,6 @@ motor do cedro `dedup_layer1.py` serve só de **oráculo** nos testes de paridad
 
 ## O que falta (fora do F10, pra sábado presencial)
 
-- Promover *Duplicatas…* de janela não-modal para **aba embutida** (como teu desenho
-  sugeria) — se o Rodrigo preferir; o worker e o render já são independentes.
 - Borda/visual da GUI.
 - **SMB real** contra o Win 11 na LAN (F9 — busca em rede de verdade).
 - Checklist do Philips PMC 7230.
