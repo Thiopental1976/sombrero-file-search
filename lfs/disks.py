@@ -126,6 +126,32 @@ def volume_label(mp: str, mounts=None):
     return None
 
 
+def menu_labels(mounts, mounts_table=None):
+    """Rótulo de MENU para cada mountpoint em `mounts`, já DESAMBIGUADO (P1).
+
+    Dois discos com o mesmo volume label (ex.: dois pen drives 'SANDISK', ou dois
+    HDs formatados com o mesmo nome) virariam entradas idênticas no menu — o
+    usuário não saberia qual é qual. Aqui: o label crua vem de `volume_label`; se
+    duas montagens colidem no mesmo texto, todas as colididas ganham o mountpoint
+    no fim (`SANDISK  ·  /media/rodrigo/SANDISK1`). Quem não colide fica limpo.
+
+    Devolve {mountpoint: label}. PURA (`mounts_table` injetável p/ teste) — só
+    olha /dev e strings, nunca toca o conteúdo das montagens."""
+    base = {}
+    for mp in mounts:
+        base[mp] = volume_label(mp, mounts_table) or mp
+    seen = {}
+    for mp, lbl in base.items():
+        seen.setdefault(lbl, []).append(mp)
+    out = {}
+    for mp, lbl in base.items():
+        if len(seen[lbl]) > 1 and lbl != mp:
+            out[mp] = "%s  ·  %s" % (lbl, mp)
+        else:
+            out[mp] = lbl
+    return out
+
+
 def _rotational(dev: str):
     """'1'/'0' de /sys/block/<disco>/queue/rotational p/ o disco que sustenta o nó
     `dev` (sobe da partição p/ o disco inteiro). None se desconhecido."""

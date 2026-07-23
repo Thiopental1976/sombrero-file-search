@@ -2520,6 +2520,31 @@ def test_volume_label_prefers_label():
     print("ok  discos: volume_label prefere o rótulo (fallback /media + unescape udev)")
 
 
+def test_menu_labels_disambiguates_collisions():
+    """P1: dois discos com o MESMO volume label não podem virar entradas idênticas
+    no menu — o usuário não saberia qual é qual. menu_labels mantém o label limpo
+    quando é único e anexa o mountpoint SÓ nos que colidem. Quem não tem label
+    (None -> mountpoint) já é único e fica intocado."""
+    orig = disks.volume_label
+    fake = {
+        "/media/rodrigo/BACKUP":  "BACKUP",   # colidem entre si
+        "/media/rodrigo/BACKUP2": "BACKUP",
+        "/media/rodrigo/FOTOS":   "FOTOS",    # único
+        "/mnt/dados":             None,       # sem label -> vira o mountpoint
+    }
+    disks.volume_label = lambda mp, mounts_table=None: fake[mp]
+    try:
+        out = disks.menu_labels(list(fake))
+    finally:
+        disks.volume_label = orig
+    assert out["/media/rodrigo/FOTOS"] == "FOTOS"          # único: limpo
+    assert out["/mnt/dados"] == "/mnt/dados"               # sem label: mountpoint
+    assert out["/media/rodrigo/BACKUP"]  == "BACKUP  ·  /media/rodrigo/BACKUP"
+    assert out["/media/rodrigo/BACKUP2"] == "BACKUP  ·  /media/rodrigo/BACKUP2"
+    assert out["/media/rodrigo/BACKUP"] != out["/media/rodrigo/BACKUP2"]  # distinguíveis
+    print("ok  discos: menu_labels desambigua labels colididos com o mountpoint (P1)")
+
+
 def test_result_filter_predicate():
     """F10a #1: o filtro-nos-resultados é um predicado PURO sobre linhas já
     carregadas (nome, caminho, mtime) — substring casa nome OU caminho, '*.odt'
@@ -3346,6 +3371,7 @@ def main():
            # F10a — filtro-nos-resultados + narrativa por root + discos por label
            test_result_filter_predicate, test_root_events_stream,
            test_volume_label_prefers_label,
+           test_menu_labels_disambiguates_collisions,
            # F10b — a milha final humana (humane.py: nenhum errno vivo na tela)
            test_humane_maps_errno, test_humane_passthrough_and_context,
            test_gui_errors_go_through_humane,

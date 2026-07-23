@@ -1201,12 +1201,12 @@ class DuplicatesPanel(QWidget):
             aa.setCheckable(True); aa.setChecked(all_on)
             aa.toggled.connect(self._toggle_all_disks)
             self.mnu_disks.addSeparator()
+        labels = disks.menu_labels(mounts)
         for mp in [home] + mounts:
             if mp == home:
                 label, tip = t("Home folder (~)"), home
             else:
-                vol = disks.volume_label(mp)
-                label, tip = (vol or mp), mp
+                label, tip = labels[mp], mp
             a = self.mnu_disks.addAction(label)
             a.setToolTip(tip)
             a.setCheckable(True); a.setChecked(mp in cur)
@@ -1875,14 +1875,15 @@ class MainWindow(QMainWindow):
             aa.setCheckable(True); aa.setChecked(all_on)
             aa.toggled.connect(self._toggle_all_disks)
             self.mnu_disks.addSeparator()
+        # preferência: nome do volume (label) ao mountpoint cru — o mountpoint
+        # fica no tooltip, ainda descobrível. menu_labels desambigua labels que
+        # colidem (P1): dois discos de mesmo nome ganham o mountpoint no rótulo.
+        labels = disks.menu_labels(mounts)
         for mp in [home] + mounts:
             if mp == home:
                 label, tip = t("Home folder (~)"), home
             else:
-                # preferência: nome do volume (label) ao mountpoint cru — o
-                # mountpoint fica no tooltip, ainda descobrível.
-                vol = disks.volume_label(mp)
-                label, tip = (vol or mp), mp
+                label, tip = labels[mp], mp
             a = self.mnu_disks.addAction(label)
             a.setToolTip(tip)
             a.setCheckable(True); a.setChecked(mp in cur)
