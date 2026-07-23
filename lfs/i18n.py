@@ -339,6 +339,8 @@ _PT = {
     "Discard": "Descartar",
 
     # --- F10c: caçador de duplicatas ---
+    "🔍  Search": "🔍  Buscar",
+    "⧉  Duplicates": "⧉  Duplicatas",
     "Duplicates…": "Duplicatas…",
     "Find byte-identical files under the search paths.\n"
     "Shows and exports them — never deletes.":
@@ -352,7 +354,6 @@ _PT = {
     "Disk": "Disco",
     "Export CSV…": "Exportar CSV…",
     "Export JSON…": "Exportar JSON…",
-    "Close": "Fechar",
     "Choose folder": "Escolher pasta",
     "Choose at least one folder to scan.":
         "Escolha ao menos uma pasta para varrer.",

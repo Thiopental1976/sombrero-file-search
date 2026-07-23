@@ -1077,26 +1077,30 @@ class DupWorker(QThread):
         self.done.emit(groups, self.stats)
 
 
-class DuplicatesWindow(QDialog):
-    """Janela própria do caçador de duplicatas. Mesmos chips de caminho da busca;
-    acha, mostra e EXPORTA — jamais apaga (ação por item = 'abrir a pasta
+class DuplicatesPanel(QWidget):
+    """Aba embutida do caçador de duplicatas (F10c). Mesmos chips de caminho da
+    busca; acha, mostra e EXPORTA — jamais apaga (ação por item = 'abrir a pasta
     destacando', o usuário decide no gerenciador dele)."""
 
-    def __init__(self, parent: "MainWindow", seed_paths: str):
+    def __init__(self, parent: "MainWindow"):
         super().__init__(parent)
         self.main = parent
-        self.setWindowTitle(t("Duplicate hunter"))
-        self.setMinimumSize(760, 520)
         self.worker: DupWorker | None = None
         self.groups: list = []
-        self._build(seed_paths)
+        self._build()
 
-    def _build(self, seed_paths):
-        v = QVBoxLayout(self); v.setContentsMargins(14, 14, 14, 12); v.setSpacing(9)
+    def seed(self, paths: str):
+        """Semeia os caminhos quando a aba está vazia — ao pular da busca para cá,
+        as raízes já vêm preenchidas, mas sem pisar no que o usuário digitou."""
+        if paths and not self.ed_paths.text().strip():
+            self.ed_paths.setText(paths)
+
+    def _build(self):
+        v = QVBoxLayout(self); v.setContentsMargins(14, 12, 14, 12); v.setSpacing(9)
 
         row = QHBoxLayout(); row.setSpacing(8)
         lbl = QLabel(t("In")); lbl.setObjectName("section")
-        self.ed_paths = QLineEdit(seed_paths)
+        self.ed_paths = QLineEdit()
         self.ed_paths.setPlaceholderText(t("Folder(s)/mounts — separate with ';'"))
         self.btn_browse = QPushButton("📂"); self.btn_browse.setFixedWidth(40)
         self.btn_browse.clicked.connect(self._browse)
@@ -1137,8 +1141,6 @@ class DuplicatesWindow(QDialog):
             lambda: self._export("json"))
         self.btn_csv.setEnabled(False); self.btn_json.setEnabled(False)
         foot.addWidget(self.btn_csv); foot.addWidget(self.btn_json); foot.addStretch(1)
-        btn_close = QPushButton(t("Close")); btn_close.clicked.connect(self.close)
-        foot.addWidget(btn_close)
         v.addLayout(foot)
 
     # ---- ações
@@ -1268,11 +1270,12 @@ class DuplicatesWindow(QDialog):
             return
         self.lbl_head.setText(self.lbl_head.text() + t("   —  exported ✔"))
 
-    def closeEvent(self, ev):
+    def shutdown(self):
+        """Chamado no fechamento da janela principal: aborta o worker em voo para
+        não deixar uma QThread órfã hasheando disco depois que a GUI já foi."""
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(3000)
-        super().closeEvent(ev)
 
 
 class MainWindow(QMainWindow):
@@ -1370,6 +1373,16 @@ class MainWindow(QMainWindow):
         hl.addWidget(self.btn_theme)
         root.addWidget(header)
 
+        # ---------- workspace: Buscar | Duplicatas (F10c: aba embutida) ----------
+        # Duas modalidades no MESMO app, isoladas: a busca inteira vive na página
+        # "Buscar" (formulário, abas de resultado, preview, cópia); o caçador de
+        # duplicatas é uma página irmã. Isolar assim mantém intactos os dezenas de
+        # acessos a self.tab.* (que só fazem sentido numa aba de BUSCA) — a aba de
+        # duplicatas tem entradas e ciclo de vida próprios.
+        self.workspace = QTabWidget(); self.workspace.setDocumentMode(True)
+        search_page = QWidget()
+        sp = QVBoxLayout(search_page); sp.setContentsMargins(0, 0, 0, 0); sp.setSpacing(10)
+
         # ---------- barra PRINCIPAL: nome do arquivo ----------
         # Achar arquivo é o caso primário (modelo Agent Ransack): o campo grande
         # ao lado do Buscar é o NOME. Texto puro = "contém" (rotina acha
@@ -1394,7 +1407,7 @@ class MainWindow(QMainWindow):
         self.btn_cancel = QPushButton(t("Cancel")); self.btn_cancel.clicked.connect(self.cancel_search)
         self.btn_cancel.setEnabled(False)
         r1.addWidget(self.ed_name, 1); r1.addWidget(self.btn_search); r1.addWidget(self.btn_cancel)
-        root.addLayout(r1)
+        sp.addLayout(r1)
 
         # ---------- linha secundária (opcional): conteúdo + pasta ----------
         r2 = QHBoxLayout(); r2.setSpacing(8)
@@ -1441,7 +1454,7 @@ class MainWindow(QMainWindow):
         self.btn_dupes.clicked.connect(self.open_duplicates)
         r2.addWidget(self.btn_disks); r2.addWidget(self.btn_saved)
         r2.addWidget(self.btn_dupes); r2.addWidget(btn_browse)
-        root.addLayout(r2)
+        sp.addLayout(r2)
 
         # ---------- chips de opção (FlowLayout: quebra linha em janela estreita) ----------
         bar = QFrame(); bar.setObjectName("toolbar")
@@ -1483,7 +1496,7 @@ class MainWindow(QMainWindow):
         self.sp_days.setSpecialValueText("—"); self.sp_days.setSuffix(" d")
         self.sp_days.setFixedWidth(70)
         r3.addWidget(_pair(t("Last"), self.sp_days))
-        root.addWidget(bar)
+        sp.addWidget(bar)
 
         # ---------- painel de narrativa da busca (F10a #2 — NO ALTO, legível) ----------
         # A busca longa conta sua história aqui em cima, em fonte legível — não em
@@ -1498,7 +1511,7 @@ class MainWindow(QMainWindow):
         self.narr_body.setTextInteractionFlags(Qt.TextSelectableByMouse)
         nv.addWidget(self.narr_head); nv.addWidget(self.narr_body)
         self.narr.setVisible(False)
-        root.addWidget(self.narr)
+        sp.addWidget(self.narr)
 
         # ---------- resultados / preview ----------
         split = QSplitter(Qt.Vertical)
@@ -1519,7 +1532,7 @@ class MainWindow(QMainWindow):
         split.addWidget(self._build_preview())
         split.setStretchFactor(0, 3); split.setStretchFactor(1, 2)
         split.setSizes([470, 240])
-        root.addWidget(split, 1)
+        sp.addWidget(split, 1)
 
         # ---------- fila de cópia (visível só quando há operação) ----------
         self.copy_bar = QFrame(); self.copy_bar.setObjectName("toolbar")
@@ -1541,7 +1554,13 @@ class MainWindow(QMainWindow):
         self.copy_bar.setVisible(False)
         self._safe_eject = None          # (mountpoint, dev) do último destino removível
         self._copy_t0 = None             # F10b #4: início da cópia (p/ notificar se >30s)
-        root.addWidget(self.copy_bar)
+        sp.addWidget(self.copy_bar)
+
+        # ---------- monta as duas páginas do workspace ----------
+        self.workspace.addTab(search_page, t("🔍  Search"))
+        self.dup_panel = DuplicatesPanel(self)             # F10c: aba de duplicatas
+        self.workspace.addTab(self.dup_panel, t("⧉  Duplicates"))
+        root.addWidget(self.workspace, 1)
 
         # ---------- status ----------
         self.status = QLabel(t("Ready."))
@@ -2212,6 +2231,8 @@ class MainWindow(QMainWindow):
         self._tick.stop()
         for tab in self._all_tabs():              # F5: uma busca viva por aba
             tab.stop()
+        if getattr(self, "dup_panel", None):      # F10c: aborta o hash em voo
+            self.dup_panel.shutdown()
         # F7: mesma disciplina para a cópia. Uma cópia em curso NUNCA é abortada
         # à força no meio de um arquivo sem antes pedir cancel — o fileops apaga
         # o parcial do destino ao ser cancelado, e terminate() puro pularia isso,
@@ -2599,11 +2620,11 @@ class MainWindow(QMainWindow):
             return ""
 
     def open_duplicates(self):
-        """F10c: abre o caçador de duplicatas semeado com os caminhos da busca."""
+        """F10c: pula para a aba de duplicatas, semeando-a com os caminhos da busca
+        (só se ainda estiver vazia — não pisa no que o usuário já digitou lá)."""
         seed = self.ed_path.text().strip() or os.path.expanduser("~")
-        dlg = DuplicatesWindow(self, seed)
-        dlg.show()                                # não-modal: a busca continua viva
-        self._dupwin = dlg                        # segura a referência (senão some)
+        self.dup_panel.seed(seed)
+        self.workspace.setCurrentWidget(self.dup_panel)
 
     def _show_items(self, paths) -> bool:
         if getattr(self, "_fm1_ok", None) is False:
