@@ -1336,6 +1336,33 @@ def test_descent_gate_skips_dead_network_mount():
     print("ok  F9a  gate de descida: NAS morto pulado c/ aviso, vivo passa")
 
 
+def test_list_search_targets_boundary_visibility():
+    """F9a §2.3 (desenho Fable): visibilidade de fronteira. Um 'buscar em /mnt'
+    tem que listar ANTES quais montagens serão tocadas e de que classe — o NAS
+    que mora SOB o caminho pedido aparece com seu status de vida. Servidor com
+    muitas montagens agradece. PURO (mounts + _alive injetáveis)."""
+    M = disks._read_mounts([
+        "/dev/root / ext4 rw 0 0\n",
+        "server:/vol /mnt/nas nfs4 rw 0 0\n",
+        "//win/share /mnt/win cifs rw 0 0\n",
+        "/dev/sdb1 /mnt/local xfs rw 0 0\n",
+    ])
+    # mounts_under: só o que está ESTRITAMENTE dentro de /mnt
+    assert disks.mounts_under("/mnt", M) == ["/mnt/local", "/mnt/nas", "/mnt/win"]
+    assert disks.mounts_under("/mnt/nas", M) == []           # nada sob ele
+    alive = {"/mnt/nas": False, "/mnt/win": True}            # nas morto, win vivo
+    tg = disks.list_search_targets(["/mnt"], mounts=M,
+                                   _alive=lambda mp, timeout=3.0, **k: alive.get(mp, True))
+    by_mp = {t["mountpoint"]: t for t in tg}
+    assert by_mp["/mnt/nas"]["is_network"] and by_mp["/mnt/nas"]["klass"] == "network"
+    assert by_mp["/mnt/nas"]["alive"] is False, "NAS morto tem que aparecer como morto"
+    assert by_mp["/mnt/win"]["is_network"] and by_mp["/mnt/win"]["alive"] is True
+    assert by_mp["/mnt/local"]["is_network"] is False and by_mp["/mnt/local"]["alive"] is None
+    # o próprio /mnt (resolvido p/ a raiz ext4) entra, local, sem sonda de vida
+    assert any(not t["is_network"] and t["alive"] is None for t in tg)
+    print("ok  F9a  visibilidade de fronteira: /mnt lista montagens-filhas + vida do NAS")
+
+
 def test_dest_caps_statvfs_lies_on_vfat():
     """Achado do teste presencial (FAT32 real montado em loop): o statvfs do vfat
     responde f_namemax=1530 — 255 x 6, o pior caso de UTF-8 por unidade UTF-16.
@@ -2322,6 +2349,7 @@ def main():
            # F9a — perfil de I/O de rede + watchdog de montagem morta + gate de descida
            test_search_profile_classification, test_mount_alive_watchdog,
            test_descent_gate_skips_dead_network_mount,
+           test_list_search_targets_boundary_visibility,
            test_part_path_respects_name_limits, test_gio_strategy_uri_and_runner,
            test_write_strategies_atomic_and_guarded, test_preflight_a2r_surfacing,
            test_a4_1_copy_bytes_excludes_too_big,

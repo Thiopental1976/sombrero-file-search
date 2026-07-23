@@ -201,6 +201,57 @@ def mount_alive(mp: str, timeout: float = 3.0, _stat=os.stat) -> bool:
     return bool(done)                 # preencheu => respondeu; vazio => travou
 
 
+def mounts_under(root: str, mounts=None):
+    """Pontos de montagem ESTRITAMENTE dentro de `root` (não o próprio root).
+    `mounts` injetável. Serve ao §2.3: um 'buscar em /' ou '/mnt' precisa listar
+    ANTES quais montagens serão tocadas — servidor com 40 montagens agradece."""
+    ap = os.path.abspath(root).rstrip("/") or "/"
+    pre = ap + "/" if ap != "/" else "/"
+    try:
+        entradas = mounts if mounts is not None else _read_mounts()
+    except OSError:
+        return []
+    out = []
+    for _dev, mp, _fs in entradas:
+        if mp != ap and mp.startswith(pre):
+            out.append(mp)
+    return sorted(set(out))
+
+
+def list_search_targets(paths, probe_timeout=3.0, mounts=None,
+                        _profile=None, _alive=None):
+    """§2.3 — VISIBILIDADE DE FRONTEIRA. Dado os roots de uma busca, diz quais
+    montagens serão tocadas e de que classe (disco/ssd/rotational/network/gvfs/
+    autofs), e p/ rede, se está VIVA. Alimenta os badges de chip e o preview
+    'buscar em / vai tocar N montagens' SEM tocar na thread da GUI (é chamável de
+    um worker). PURA e injetável (`_profile`/`_alive`/`mounts` p/ teste).
+
+    Cada root vira uma entrada; se um root contém montagens (ex.: '/', '/mnt'),
+    elas entram TAMBÉM (o usuário vê o NAS que mora sob o caminho pedido). Dedup
+    por ponto de montagem. `alive` só é sondado p/ rede (custo do watchdog); em
+    montagem local fica None (não faz sentido)."""
+    prof = _profile or search_profile
+    alive = _alive or mount_alive
+    out, seen = [], set()
+    def add(path):
+        ap = os.path.abspath(os.path.expanduser(path))
+        p = prof(ap, mounts) if mounts is not None else prof(ap)
+        key = p.mountpoint or ap
+        if key in seen:
+            return
+        seen.add(key)
+        live = alive(p.mountpoint or ap, timeout=probe_timeout) if p.is_network else None
+        out.append({"path": ap, "mountpoint": p.mountpoint, "klass": p.klass,
+                    "fstype": p.fstype, "is_network": p.is_network,
+                    "serialize": p.serialize, "enumerate_default": p.enumerate_default,
+                    "alive": live})
+    for root in paths:
+        add(root)
+        for mp in mounts_under(root, mounts):
+            add(mp)
+    return out
+
+
 def mount_ok(path: str) -> bool:
     """O destino de uma cópia está numa montagem REAL? Sob /mnt|/media|/run/media,
     um ponto de montagem desmontado continua existindo como diretório vazio no
