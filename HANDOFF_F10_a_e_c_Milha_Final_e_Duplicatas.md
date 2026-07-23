@@ -1,8 +1,11 @@
-# Handoff — F10a + F10c aplicados (A milha final humana + Caçador de duplicatas)
+# Handoff — F10 INTEIRO aplicado (A milha final humana + Duplicatas)
 
 **De:** Andrômeda (Claude Opus 4.8) · **Para:** Fable 5
 **Base:** desenho `DESENHO_F10_Milha_Final_Humana_e_Duplicatas.md`
-**Repo:** sombrero-file-search · **Suite:** 99/99 verde · tudo commitado **e** empurrado.
+**Repo:** sombrero-file-search · **Suite:** 103/103 verde · tudo commitado **e** empurrado.
+
+> **Novidade desde a v1 deste handoff:** o **F10b #4 e #5** também entraram (seção
+> própria abaixo). Agora o F10 está **completo — a, b, c** — e testado.
 
 ---
 
@@ -28,6 +31,40 @@
   Ctrl+F filtro, Ctrl+L caminho, F3/Shift+F3 navegam matches no preview, Ctrl+R repete.
 - MANUAL.md / MANUAL.pt-BR.md com as tabelas completas; refs velhas de F3/Ctrl+L
   corrigidas em DOCUMENTACAO_TECNICA e README.
+
+### F10b — confiança (a parte que fideliza)
+
+**#6 humane.py** (`e6aff54`, já era) — nenhum errno cru chega à tela; guarda AST no
+`app.py` garante que toda string de erro passa por `humane.human_error`.
+
+**#4 O momento depois da barra: "pode remover com segurança"** (`ed5cc0e`)
+- Cópia concluída para disco **removível** → a barra **não some**: vira
+  *"Copiado e sincronizado — seguro remover"* com botão **⏏ Ejetar** ao lado. A
+  promessa é verdadeira — o ATOMIC faz `fsync` por arquivo.
+- Ejetar usa `gio mount -e` **ou** `udisksctl power-off -b <dev>`, o que existir;
+  sem nenhum dos dois, o botão nem aparece (sem dependência nova). O comando é
+  `disks.eject_command(mp, dev, which=…)` — **puro, `which` injetável** (testado).
+- Cópia > 30 s numa janela minimizada/inativa → **notificação de desktop**
+  (`notify-send` ou bandeja Qt, usa-se-existir).
+
+**#5 Fila de cópia sobrevive ao fechamento** (`ed5cc0e`)
+- Jobs pendentes + o interrompido persistidos em `config.json` a cada **transição**
+  de job (não por arquivo — barato). Módulo **puro** novo `lfs/copyjobs.py`
+  (serializa/valida/snapshot/pending/clear).
+- Na abertura: *"Você tinha N cópias pendentes — retomar?"* [Retomar] [Descartar].
+- Retomada **idempotente** por desenho: a escrita ATOMIC garante que concluído vira
+  **conflito** (a política decide; padrão da GUI = Pular) e `.sombrero-part` órfão é
+  lixo reconhecível. Destino não montado é barrado no preflight → o job fica
+  pendente, não some.
+
+**4 testes novos** (suite 99→103):
+- `test_eject_command_prefers_gio_then_udisks` (gio → udisksctl → None, `which` fake);
+- `test_copyjobs_snapshot_roundtrip`, `test_copyjobs_rejects_malformed`;
+- `test_copyjobs_resume_is_idempotent` — **o teste do `kill -9`**: 2 jobs, "morte" no
+  meio (um arquivo já copiado + um `.part` órfão), reabrir e retomar → estado final
+  **idêntico** ao de uma execução sem morte. Rodado no nível do `fileops.copy_to`,
+  headless. Smoke offscreen confirmou a barra "seguro remover" + Ejetar + o prompt de
+  retomada lendo a fila do config.
 
 ### F10c — Caçador de duplicatas NATIVO
 
@@ -66,13 +103,17 @@ motor do cedro `dedup_layer1.py` serve só de **oráculo** nos testes de paridad
    promover a aba na sessão presencial se o Rodrigo preferir — o worker e o render já são
    independentes.
 
-2. **Nada mais.** F10a e F10c estão fechados e testados.
+2. **Notificação de ejeção sem tray real:** no smoke offscreen usei `notify-send`/bandeja
+   com fallback silencioso. No teu ambiente headless (cron), nenhum dos dois existe e a
+   notificação simplesmente não sai — de propósito, é um extra e não um dever. Se quiser
+   que ela apareça num log, é um `log()` a mais, me diz.
 
-## O que falta (F10b — não comecei)
+3. **Nada mais pendente no F10.** a, b e c fechados e testados (103/103).
 
-- **#4** pós-cópia "Copiado e sincronizado — seguro remover" + botão Ejetar + notificação
-  (em `caps.removable`). O worker persistente do A6 já existe parcial.
-- **#5** fila de cópia persistente no config.json (snapshot por transição, retomar após
-  kill -9).
+## O que falta (fora do F10, pra sábado presencial)
 
-Presencial de sábado: borda/visual da GUI, SMB real contra o Win11 na LAN, checklist Philips.
+- Promover *Duplicatas…* de janela não-modal para **aba embutida** (como teu desenho
+  sugeria) — se o Rodrigo preferir; o worker e o render já são independentes.
+- Borda/visual da GUI.
+- **SMB real** contra o Win 11 na LAN (F9 — busca em rede de verdade).
+- Checklist do Philips PMC 7230.
