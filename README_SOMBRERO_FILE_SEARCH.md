@@ -124,10 +124,19 @@ lfs ~/projetos -n '*.py' -c "def main"          # nome + conteúdo
 lfs ~/docs -c "laudo" --docs                     # dentro de PDF/docx/epub
 lfs ~/notas -b '(nota OR laudo) AND paciente'    # booleano
 lfs /dados -c erro -l --print0 | xargs -0 ...    # pipeline
+lfs /repo -n '*.log' --json                      # NDJSON p/ automação (cron, scripts)
+lfs /repo -c erro --nice-io                      # cede CPU/IO ao serviço do servidor
 ```
 
 `-c` conteúdo · `-n` nome · `-b/--bool` booleano · `-D/--docs` documentos · `-l` só caminhos ·
-`--print0` separador nulo. Rode `lfs --help` para tudo.
+`--print0` separador nulo · `--json` NDJSON · `--nice-io` baixa prioridade. Rode `lfs --help` para tudo.
+
+**Para automação (`--json`):** um objeto JSON por match, um por linha (NDJSON) — campos
+`path`, `size`, `mtime`, `is_dir`, `nmatch`, `lines[]` (o mesmo `Match.lines` lógico, sem
+terminadores). Avisos vão **no mesmo stream** (`{"warn":"mount_dead",…}`, `{"warn":"denied",…}`)
+e erro de expressão booleana vira `{"error":"boolean_expression",…}`. O **exit code** segue o
+`grep`: **0** achou, **1** nada, **2** erro. Nome com `\n` é escapado pelo JSON e nunca racha o
+framing de linha.
 
 ## Paridade `rg` ↔ fallback Python (divergências conhecidas)
 
@@ -208,6 +217,37 @@ esses discos:
   (checado via `/sys/block/<dev>/queue/rotational`) **não** é penalizado. O grau de
   paralelismo é afinável pela variável de ambiente **`LFS_WORKERS`** (padrão `3`;
   `LFS_WORKERS=1` serializa tudo). Detalhes na §14 da documentação técnica.
+
+## Servidores, NAS e montagens de rede
+
+O SFS roda tanto **num desktop buscando um NAS** (montagens NFS/SMB/SSHFS) quanto
+**no próprio servidor** (headless, via SSH, sobre repositórios de dezenas de TB). O
+que o protege nesse ambiente:
+
+- **Watchdog de montagem morta.** Um NFS *hard-mount* com o servidor fora do ar trava
+  o `stat()` em **D-state ininterruptível** — nem `kill` resolve, e um programa comum
+  congela ali sem remédio. Antes de descer numa montagem de **rede**, o SFS sonda a
+  vida dela numa *thread descartável* com timeout; se não responde, a montagem é
+  **pulada com aviso visível** (nunca em silêncio, nunca travando). Se um NAS morre
+  **no meio** da busca, o resultado carrega o aviso — **honestidade > completude**.
+- **Classe de I/O por montagem.** Rede não serializa como SMR, mas tampouco pode
+  sequestrar o pool: cada montagem de rede tem um teto de *workers* próprio, para que
+  um link lento não afogue a busca nos discos locais. `gvfs` (celular/câmera) e
+  `autofs` ficam **fora do "buscar em tudo"** por padrão — só entram se você der o
+  caminho explícito (senão um "buscar em `/mnt`" acordaria todo *automount* da casa).
+- **Nome de arquivo pelo protocolo.** Ao **copiar** para um destino de rede, o SFS já
+  sabe o que cada um aceita: `nfs` é POSIX pleno; `cifs`/`smb` proíbe `: ? * < > |` e
+  não tem *symlink*; `sshfs` tem *rename* atômico. E escreve **em ritmo** (como no
+  pendrive), porque um CIFS/NFS lento acumula *writeback* global igual.
+- **Fronteira visível.** Um "buscar em `/`" pode listar **antes** quais montagens serão
+  tocadas e de que classe (disco/rede/SMR) — servidor com 40 montagens agradece.
+
+**O que o SFS deliberadamente NÃO é:** um **indexador residente** estilo Everything/
+Recoll. A identidade dele é **ferramenta viva e sem estado** — o que ele mostra é o que
+está no disco **agora**, não um retrato de um banco de dados que pode estar velho.
+Quando existe um índice do próprio sistema (`plocate`), o SFS pode se apoiar nele para
+acelerar; **daemon de indexação próprio, não.** E não vira serviço web: quem quer busca
+remota usa **SSH + `--json`**. (Mesma razão de não haver Flatpak — ver *Instalação*.)
 
 ## Licença
 
