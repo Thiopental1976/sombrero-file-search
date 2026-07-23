@@ -2503,6 +2503,48 @@ def test_a3_same_op_sanitize_collision():
         shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
 
 
+def test_result_filter_predicate():
+    """F10a #1: o filtro-nos-resultados é um predicado PURO sobre linhas já
+    carregadas (nome, caminho, mtime) — substring casa nome OU caminho, '*.odt'
+    filtra extensão, '>2019-01'/'<2020-01' filtram mtime, espaço = E. Nunca toca
+    disco (recebe valores, não caminhos). 1k linhas sintéticas, contagens exatas."""
+    import datetime as _dt
+    import resultfilter as rf
+
+    def epoch(y, m):
+        return _dt.datetime(y, m, 1).timestamp()
+
+    # 1000 linhas: nomes alternando extensão, ano no caminho, mtime por ano
+    rows = []
+    for i in range(1000):
+        ext = ".odt" if i % 5 == 0 else ".txt"
+        year = 2018 + (i % 4)                     # 2018..2021
+        name = "laudo_%04d%s" % (i, ext)
+        path = "/acervo/%d/%s" % (year, name)
+        rows.append((name, path, epoch(year, 6)))
+
+    def count(expr):
+        pred = rf.compile_filter(expr)
+        return sum(1 for n, p, mt in rows if pred(n, p, mt))
+
+    assert count("") == 1000                       # vazio = tudo
+    assert count("*.odt") == 200                   # i%5==0
+    assert count(".odt") == 200                    # forma sem estrela
+    assert count("laudo") == 1000                  # substring no nome
+    assert count("/2018/") == 250                  # substring no caminho
+    # mtime: '>2019' = depois de 2019 inteiro => 2020 e 2021
+    assert count(">2019") == 500
+    assert count("<2020") == 500                   # antes de 2020 => 2018,2019
+    # E lógico: odt E de 2020 => i%5==0 e i%4==2
+    esperado = sum(1 for i in range(1000) if i % 5 == 0 and (2018 + i % 4) == 2020)
+    assert count("*.odt >2019 <2021") == esperado and esperado > 0
+    # data inválida cai para substring (não estoura): '>2019-13' vira literal
+    assert count(">2019-13") == 0                  # nenhum caminho contém isso
+    # substring case-insensitive
+    assert count("LAUDO_0001") == 1
+    print("ok  F10a filtro-nos-resultados: substring/ext/mtime/E exatos em 1k linhas, sem I/O")
+
+
 def test_root_events_stream():
     """F10a §2: o engine emite a narrativa AO VIVO por root — 'root_scanning'
     (com classe) ao passar o gate, 'root_skipped' (com motivo) quando pula uma
@@ -2714,8 +2756,8 @@ def main():
            test_deb_version_is_dpkg_comparable,
            test_deb_package_builds_and_is_well_formed,
            test_appimage_recipe_is_coherent,
-           # F10a — narrativa por root (engine emite eventos ao vivo)
-           test_root_events_stream,
+           # F10a — filtro-nos-resultados + narrativa por root
+           test_result_filter_predicate, test_root_events_stream,
            # F10b — a milha final humana (humane.py: nenhum errno vivo na tela)
            test_humane_maps_errno, test_humane_passthrough_and_context,
            test_gui_errors_go_through_humane,
