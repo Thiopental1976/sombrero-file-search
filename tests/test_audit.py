@@ -2503,6 +2503,60 @@ def test_a3_same_op_sanitize_collision():
         shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
 
 
+def test_root_events_stream():
+    """F10a §2: o engine emite a narrativa AO VIVO por root — 'root_scanning'
+    (com classe) ao passar o gate, 'root_skipped' (com motivo) quando pula uma
+    montagem morta, e 'root_done' com os achados ATRIBUÍDOS a cada root. É o que
+    alimenta o painel no alto da GUI; headless e determinístico."""
+    # (a) árvore real, dois roots — atribuição de achado por prefixo
+    a = tempfile.mkdtemp(prefix="lfs_ev_a_")
+    b = tempfile.mkdtemp(prefix="lfs_ev_b_")
+    try:
+        for f in ("um.txt", "dois.txt"):
+            open(os.path.join(a, f), "w").close()
+        for f in ("tres.txt", "quatro.txt", "cinco.txt"):
+            open(os.path.join(b, f), "w").close()
+        evs = []
+        q = Query(paths=[a, b], name_patterns=[engine.as_name_glob("*.txt")])
+        n, _ = engine.search(q, lambda m: None, lambda: False,
+                             on_event=lambda ev, info: evs.append((ev, info)))
+        scanning = {e[1]["path"]: e[1] for e in evs if e[0] == "root_scanning"}
+        done = {e[1]["path"]: e[1] for e in evs if e[0] == "root_done"}
+        assert set(scanning) == {a, b}, scanning
+        assert all(scanning[p]["klass"] for p in (a, b)), "classe vazia no badge"
+        assert set(done) == {a, b}, done
+        assert done[a]["found"] == 2 and done[b]["found"] == 3, done
+        assert done[a]["found"] + done[b]["found"] == n, (done, n)
+    finally:
+        shutil.rmtree(a, ignore_errors=True); shutil.rmtree(b, ignore_errors=True)
+
+    # (b) montagem de rede morta -> 'root_skipped' AO VIVO (não popup no fim)
+    IOP = disks.IOProfile
+    prof_local = IOP("rotational", "/mnt/repo", "xfs", serialize=True,
+                     is_network=False, max_workers=None, enumerate_default=True)
+    prof_dead = IOP("network", "/mnt/nas", "nfs4", serialize=False,
+                    is_network=True, max_workers=4, enumerate_default=True)
+    by_path = {"/mnt/repo": prof_local, "/mnt/nas/x": prof_dead}
+    orig_prof, orig_status = disks.search_profile, disks.mount_status
+    try:
+        disks.search_profile = lambda p, mounts=None: by_path[p]
+        disks.mount_status = lambda mp, timeout=3.0, **k: (
+            "no_response" if mp == "/mnt/nas" else "alive")
+        evs = []
+        roots = engine._live_roots(["/mnt/repo", "/mnt/nas/x"], {},
+                                   on_event=lambda ev, info: evs.append((ev, info)))
+        assert roots == ["/mnt/repo"], roots
+        skipped = [e[1] for e in evs if e[0] == "root_skipped"]
+        assert len(skipped) == 1, evs
+        assert skipped[0]["reason"] == "no_response"
+        assert skipped[0]["klass"] == "network" and skipped[0]["fstype"] == "nfs4"
+        scanned = [e[1]["path"] for e in evs if e[0] == "root_scanning"]
+        assert scanned == ["/mnt/repo"], scanned
+    finally:
+        disks.search_profile, disks.mount_status = orig_prof, orig_status
+    print("ok  F10a narrativa: root_scanning/root_skipped/root_done ao vivo, com achados por root")
+
+
 def test_humane_maps_errno():
     """F10b #6: human_error transforma errno em frase humana; nunca vaza
     'Errno', strerror do sistema, dígito de código ou repr técnico."""
@@ -2660,6 +2714,8 @@ def main():
            test_deb_version_is_dpkg_comparable,
            test_deb_package_builds_and_is_well_formed,
            test_appimage_recipe_is_coherent,
+           # F10a — narrativa por root (engine emite eventos ao vivo)
+           test_root_events_stream,
            # F10b — a milha final humana (humane.py: nenhum errno vivo na tela)
            test_humane_maps_errno, test_humane_passthrough_and_context,
            test_gui_errors_go_through_humane,

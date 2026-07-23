@@ -583,7 +583,8 @@ def _iter_content_python(q: Query, cancel, stats=None):
 
 
 # ---------------------------------------------------------------- API pública
-def _live_roots(paths, stats, probe_timeout: float = 3.0):
+def _live_roots(paths, stats, probe_timeout: float = 3.0,
+                on_event=lambda ev, info: None):
     """F9a §2.2 — GATE DE DESCIDA. Antes de o walker entrar num root, se ele for
     uma montagem de rede (NFS/CIFS/SSHFS/…), sonda `mount_status` numa PROCESSO
     descartável (F1). Montagem que não responde (D-state, `stat` travado) ou que
@@ -607,6 +608,8 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0):
             prof = disks.search_profile(root)
         except Exception:
             live.append(root)          # não sei classificar → não bloqueio
+            on_event("root_scanning",   # F10a §2: badge de classe p/ o painel
+                     {"path": root, "klass": "unknown", "mountpoint": None})
             continue
         if prof.is_network:
             mp = prof.mountpoint or root
@@ -616,26 +619,50 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0):
                     stats.setdefault("skipped_mounts", []).append(
                         {"path": root, "mount": mp, "fstype": prof.fstype,
                          "reason": status})   # 'no_response' | 'broken_mount'
+                # linha VERMELHA ao vivo (não popup no fim) — F10a §2
+                on_event("root_skipped",
+                         {"path": root, "mount": mp, "fstype": prof.fstype,
+                          "klass": prof.klass, "reason": status})
                 continue
         live.append(root)
+        on_event("root_scanning",
+                 {"path": root, "klass": prof.klass, "mountpoint": prof.mountpoint})
     return live
 
 
 def search(q: Query, on_result: Callable[[Match], None],
            cancel: Callable[[], bool] = lambda: False,
            on_progress: Callable[[int], None] = lambda n: None,
-           stats: Optional[dict] = None):
+           stats: Optional[dict] = None,
+           on_event: Callable[[str, dict], None] = lambda ev, info: None):
     """Executa a busca chamando on_result(Match) em streaming.
     Retorna (total_encontrado, segundos). Se `stats` (dict) for passado, recebe
     contadores como stats['denied'] (arquivos inacessíveis vistos no stderr) e
-    stats['skipped_mounts'] (montagens de rede mortas puladas — F9a §2.2)."""
+    stats['skipped_mounts'] (montagens de rede mortas puladas — F9a §2.2).
+
+    `on_event(ev, info)` (F10a §2 — painel de narrativa, no ALTO da GUI) recebe,
+    AO VIVO: 'root_scanning' {path, klass, mountpoint} quando um root passa o
+    gate; 'root_skipped' {path, mount, fstype, klass, reason} quando uma montagem
+    de rede morta é pulada (a GUI pinta linha vermelha na hora, sem popup); e
+    'root_done' {path, found} por root ao fim, com os achados atribuídos a ele.
+    Padrão no-op: chamadores e testes antigos seguem intactos."""
     t0 = time.time()
     n = 0
-    roots = _live_roots(q.paths, stats)
+    roots = _live_roots(q.paths, stats, on_event=on_event)
     if not roots:
         return 0, time.time() - t0
     if roots != list(q.paths):
         q = replace(q, paths=roots)
+    # atribuição de achado -> root (prefixo mais longo) p/ o 'found' do root_done
+    counts = {r: 0 for r in roots}
+    ordered = sorted(roots, key=len, reverse=True)
+    def _attribute(path):
+        for r in ordered:
+            base = r.rstrip("/")
+            if path == base or path == r or path.startswith(base + os.sep):
+                counts[r] += 1
+                return
+        counts[roots[0]] += 1          # sem prefixo casável (ex.: '.') → 1º root
     if q.content:
         if RG or (q.documents and RGA):
             it = _iter_content_rg(q, cancel, stats)
@@ -648,10 +675,13 @@ def search(q: Query, on_result: Callable[[Match], None],
             break
         on_result(m)
         n += 1
+        _attribute(m.path)
         if n % 25 == 0:
             on_progress(n)
         if n >= q.max_results:
             break
+    for r in roots:
+        on_event("root_done", {"path": r, "found": counts[r]})
     return n, time.time() - t0
 
 
