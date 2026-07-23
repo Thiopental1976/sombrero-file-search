@@ -300,6 +300,48 @@ _PT = {
         "Nada a exportar — a lista de resultados está vazia.",
     "⚠  Could not write {path}: {err}": "⚠  Não consegui escrever {path}: {err}",
     "✔  Exported {n} row(s) to {path}": "✔  Exportei {n} linha(s) para {path}",
+
+    # --- humane.py (F10b #6): frases de erro humanas ---
+    "The network location stopped responding.":
+        "O local de rede parou de responder.",
+    "No permission to read this.":
+        "Sem permissão para ler isto.",
+    "This item no longer exists.":
+        "Este item não existe mais.",
+    "The destination ran out of space.":
+        "O destino ficou sem espaço.",
+    "The destination is read-only.":
+        "O destino é somente-leitura.",
+    "The name is too long for the destination.":
+        "O nome é longo demais para o destino.",
+    "Read/write error — the disk may be failing.":
+        "Erro de leitura/escrita — o disco pode estar falhando.",
+    "The file is in use by another program.":
+        "O arquivo está em uso por outro programa.",
+    "Too many files are open at once — try again in a moment.":
+        "Arquivos demais abertos ao mesmo tempo — tente de novo em instantes.",
+    "A file with this name already exists.":
+        "Já existe um arquivo com este nome.",
+    "This is a folder, not a file.":
+        "Isto é uma pasta, não um arquivo.",
+    "Part of this path is not a folder.":
+        "Parte deste caminho não é uma pasta.",
+    "There are too many symbolic links in this path.":
+        "Há links simbólicos demais neste caminho.",
+    "The operation could not be completed.":
+        "Não foi possível concluir a operação.",
+    "The search continued in the other locations.":
+        "A busca continuou nos demais locais.",
+    "This item was skipped.":
+        "Este item foi pulado.",
+    "This file was not copied.":
+        "Este arquivo não foi copiado.",
+    "The copy stopped.":
+        "A cópia parou.",
+    "This file was skipped.":
+        "Este arquivo foi pulado.",
+    "This location was skipped.":
+        "Este local foi pulado.",
 }
 
 # Source is English; only non-English languages need a table.

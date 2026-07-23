@@ -11,7 +11,7 @@ import os, sys, time, subprocess, tempfile, shutil, errno
 
 RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(RAIZ, "lfs"))
-import engine, boolean, i18n
+import engine, boolean, i18n, humane
 from engine import Query
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_parity_rg_python import test_parity_directed_and_property
@@ -691,6 +691,7 @@ def test_i18n_no_stale_keys():
         lits.add(joined)
     dynamic = set(engine.__dict__.get("_HEADERS_SOURCE", ())) | \
         {"File", "Folder", "Size", "Modified"}          # via t(self.HEADERS[s])
+    dynamic |= humane.SOURCE_STRINGS       # humane.py é orientado a dados: t(variável)
     stale = [k for k in i18n._PT if k not in lits and k not in dynamic]
     assert not stale, "chaves PT sem uso no código (drift):\n" + "\n".join(map(repr, stale))
     print(f"ok  i18n  sem chaves órfãs ({len(i18n._PT)} chaves cobertas)")
@@ -2502,6 +2503,104 @@ def test_a3_same_op_sanitize_collision():
         shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
 
 
+def test_humane_maps_errno():
+    """F10b #6: human_error transforma errno em frase humana; nunca vaza
+    'Errno', strerror do sistema, dígito de código ou repr técnico."""
+    old = i18n.current_lang()
+    try:
+        i18n.set_lang("en")
+        cases = {
+            errno.ENOTCONN:     "network location",
+            errno.EACCES:       "No permission",
+            errno.ENOENT:       "no longer exists",
+            errno.ENOSPC:       "ran out of space",
+            errno.EROFS:        "read-only",
+            errno.ENAMETOOLONG: "too long",
+            errno.EIO:          "disk may be failing",
+            errno.EEXIST:       "already exists",
+        }
+        for code, needle in cases.items():
+            # tanto por OSError quanto por errno cru
+            for err in (OSError(code, os.strerror(code)), code):
+                msg = humane.human_error(err)
+                assert needle in msg, (code, msg)
+                low = msg.lower()
+                assert "errno" not in low, msg
+                assert not any(ch.isdigit() for ch in msg), ("vazou dígito", msg)
+                assert os.strerror(code).lower() not in low or needle in msg, msg
+        # errno desconhecido -> frase genérica, não crua
+        msg = humane.human_error(OSError(errno.ENOTBLK, "x"))
+        assert "could not be completed" in msg.lower(), msg
+        # pt também traduz (não sobra fonte inglesa)
+        i18n.set_lang("pt")
+        msg = humane.human_error(OSError(errno.ENOTCONN, "x"))
+        assert "rede parou de responder" in msg, msg
+        assert "network" not in msg.lower(), msg
+        print("ok  F10b human_error mapeia errno -> frase humana (sem vazar técnico)")
+    finally:
+        i18n.set_lang(old)
+
+
+def test_humane_passthrough_and_context():
+    """F10b #6: alvo vira prefixo; contexto anexa cláusula; exceção de domínio
+    (não-OSError) passa com seu próprio texto; None/genérico não estoura."""
+    old = i18n.current_lang()
+    try:
+        i18n.set_lang("en")
+        # alvo como prefixo
+        m = humane.human_error(OSError(errno.EACCES, "x"), target="laudo.txt")
+        assert m.startswith("laudo.txt: "), m
+        # contexto de busca em erro de rede -> cláusula "continuou nos demais"
+        m = humane.human_error(errno.ENOTCONN, context="search")
+        assert "continued in the other" in m, m
+        # contexto de cópia -> "not copied"
+        m = humane.human_error(errno.ENOTCONN, context="copy")
+        assert "not copied" in m, m
+        # exceção de domínio do SFS passa direto (texto humano próprio)
+        m = humane.human_error(boolean.BooleanError("aspas não fechadas"))
+        assert "aspas não fechadas" in m, m
+        # None e string vazia caem no genérico, sem exceção
+        assert "could not be completed" in humane.human_error(None).lower()
+        assert "could not be completed" in humane.human_error(OSError()).lower()
+        # bool nunca é tratado como errno (True==1 não vira EPERM)
+        m = humane.human_error(True)
+        assert "permission" not in m.lower(), m
+        print("ok  F10b human_error: prefixo de alvo + cláusula de contexto + passthrough")
+    finally:
+        i18n.set_lang(old)
+
+
+def test_gui_errors_go_through_humane():
+    """F10b #6 (teste-guarda AST): nenhuma exceção capturada no app.py chega à
+    tela como str(e) crua ou e.errno — tudo passa por humane.human_error.
+    app.py é GUI pura, então a proibição é do arquivo inteiro."""
+    import ast
+    app_py = os.path.join(RAIZ, "lfs", "app.py")
+    with open(app_py, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), filename=app_py)
+    exc_names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler) and node.name:
+            exc_names.add(node.name)
+    assert exc_names, "esperava ao menos um 'except ... as e' no app.py"
+    offenders = []
+    for node in ast.walk(tree):
+        # str(<exc>)  cru
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "str" and len(node.args) == 1
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id in exc_names):
+            offenders.append((getattr(node, "lineno", "?"), "str(exc)"))
+        # <exc>.errno  cru
+        if (isinstance(node, ast.Attribute) and node.attr == "errno"
+                and isinstance(node.value, ast.Name)
+                and node.value.id in exc_names):
+            offenders.append((getattr(node, "lineno", "?"), "exc.errno"))
+    assert not offenders, (
+        "erro cru chegando à GUI (use humane.human_error): %r" % offenders)
+    print("ok  F10b guarda-AST: app.py roteia todo erro por humane.human_error")
+
+
 def main():
     fns = [test_parse_size, test_reap_kills_process, test_no_orphan_on_cancel,
            test_glob_case_insensitive, test_boolean_name_regex,
@@ -2561,6 +2660,9 @@ def main():
            test_deb_version_is_dpkg_comparable,
            test_deb_package_builds_and_is_well_formed,
            test_appimage_recipe_is_coherent,
+           # F10b — a milha final humana (humane.py: nenhum errno vivo na tela)
+           test_humane_maps_errno, test_humane_passthrough_and_context,
+           test_gui_errors_go_through_humane,
            # Campanha 2 / Bloco 1 — paridade rg ↔ fallback Python
            test_parity_directed_and_property]
     fail = 0

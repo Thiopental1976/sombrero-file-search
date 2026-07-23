@@ -40,7 +40,7 @@ except ImportError:                     # QtMultimedia opcional (portabilidade)
     HAS_MEDIA = False
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import engine, boolean, disks, fileops, xdg, version, searches
+import engine, boolean, disks, fileops, xdg, version, searches, humane
 from engine import Query, Match
 from i18n import t
 
@@ -227,7 +227,7 @@ class SearchWorker(QThread):
                                         stats=self.stats)
         except boolean.BooleanError as e:
             self._flush(force=True)
-            self.error.emit(str(e))
+            self.error.emit(humane.human_error(e))
             return
         self._flush(force=True)
         self.done.emit(tot, dt)
@@ -830,7 +830,7 @@ class PropertiesDialog(QDialog):
             else:
                 self.lbl_size.setText(human_size(st.st_size))
         except OSError as e:
-            form.addRow(t("Error:"), self._sel(str(e)))
+            form.addRow(t("Error:"), self._sel(humane.human_error(e)))
         fs = disks.dest_caps(m.path)
         texto_fs = "%s (%s)" % (fs.label, fs.fstype or "?")
         if disks.link_label(fs.link_mbits):
@@ -873,7 +873,7 @@ class PropertiesDialog(QDialog):
                     h.update(b)
             self.lbl_sum.setText("BLAKE2b " + h.hexdigest()[:32] + "…")
         except OSError as e:
-            self.lbl_sum.setText(str(e))
+            self.lbl_sum.setText(humane.human_error(e))
 
     def closeEvent(self, ev):
         if self._sizer is not None and self._sizer.isRunning():
@@ -1556,7 +1556,8 @@ class MainWindow(QMainWindow):
         try:
             n = searches.export(linhas, alvo)
         except OSError as e:
-            self.status.setText(t("⚠  Could not write {path}: {err}", path=alvo, err=e))
+            self.status.setText(t("⚠  Could not write {path}: {err}", path=alvo,
+                                  err=humane.human_error(e)))
             return
         self.status.setText(t("✔  Exported {n} row(s) to {path}", n=n, path=alvo))
 
@@ -2016,7 +2017,7 @@ class MainWindow(QMainWindow):
                         break
                 return "\n".join(lines) if lines else t("(empty)")
         except OSError as e:
-            return t("(no preview: {e})", e=e)
+            return t("(no preview: {e})", e=humane.human_error(e))
 
     # ---- contexto
     def _sel_matches(self):
@@ -2194,7 +2195,8 @@ class MainWindow(QMainWindow):
                                   size=human_size(res.bytes_copied)))
         if res.failed:
             QMessageBox.warning(self, t("Copy finished with errors"),
-                                "\n".join("%s: %s" % (os.path.basename(p), e)
+                                "\n".join(humane.human_error(e, context="copy",
+                                                             target=os.path.basename(p))
                                           for p, e in res.failed[:15]))
 
     def on_copy_all_done(self):
