@@ -1056,9 +1056,10 @@ class DupWorker(QThread):
     phase = Signal(str)              # scan / head / full
     done = Signal(object, object)    # (list[DupGroup], stats)
 
-    def __init__(self, roots, min_size=0, include_zero=False):
+    def __init__(self, roots=None, min_size=0, include_zero=False, files=None):
         super().__init__()
         self.roots = roots
+        self.files = files          # se preenchido: analisa esta lista (resultados da busca)
         self.min_size = min_size
         self.include_zero = include_zero
         self._cancel = False
@@ -1068,12 +1069,15 @@ class DupWorker(QThread):
         self._cancel = True
 
     def run(self):
-        groups = dupes.find_duplicates(
-            self.roots, min_size=self.min_size, include_zero=self.include_zero,
-            cancel=lambda: self._cancel,
-            on_progress=lambda d, tot: self.progress.emit(d, tot),
-            on_phase=lambda name: self.phase.emit(name),
-            stats=self.stats)
+        common = dict(min_size=self.min_size, include_zero=self.include_zero,
+                      cancel=lambda: self._cancel,
+                      on_progress=lambda d, tot: self.progress.emit(d, tot),
+                      on_phase=lambda name: self.phase.emit(name),
+                      stats=self.stats)
+        if self.files is not None:
+            groups = dupes.find_duplicates_in_files(self.files, **common)
+        else:
+            groups = dupes.find_duplicates(self.roots, **common)
         self.done.emit(groups, self.stats)
 
 
@@ -1087,6 +1091,8 @@ class DuplicatesPanel(QWidget):
         self.main = parent
         self.worker: DupWorker | None = None
         self.groups: list = []
+        self._mode = "roots"        # "roots" (varredura ampla) | "files" (resultados)
+        self._files: list = []      # caminhos analisados no modo "files"
         self._build()
 
     def seed(self, paths: str):
@@ -1098,13 +1104,38 @@ class DuplicatesPanel(QWidget):
     def _build(self):
         v = QVBoxLayout(self); v.setContentsMargins(14, 12, 14, 12); v.setSpacing(9)
 
+        # Botão-manchete: puxa os RESULTADOS da busca ("essas coisas que apareceram
+        # são cópias ou versões diferentes?"). É o caso de uso primário do F10c.
+        top = QHBoxLayout(); top.setSpacing(8)
+        self.btn_from_results = QPushButton(t("⇊ Analyze search results"))
+        self.btn_from_results.setObjectName("primary")
+        self.btn_from_results.setToolTip(t(
+            "Take the files your last search found and tell, per name,\n"
+            "which are identical copies and which are different versions."))
+        self.btn_from_results.clicked.connect(lambda: self.main._dup_from_results())
+        top.addWidget(self.btn_from_results); top.addStretch(1)
+        v.addLayout(top)
+
+        sep = QLabel(t("— or scan folders/disks directly —"))
+        sep.setObjectName("section"); sep.setAlignment(Qt.AlignCenter)
+        v.addWidget(sep)
+
         row = QHBoxLayout(); row.setSpacing(8)
         lbl = QLabel(t("In")); lbl.setObjectName("section")
         self.ed_paths = QLineEdit()
         self.ed_paths.setPlaceholderText(t("Folder(s)/mounts — separate with ';'"))
         self.btn_browse = QPushButton("📂"); self.btn_browse.setFixedWidth(40)
         self.btn_browse.clicked.connect(self._browse)
-        row.addWidget(lbl); row.addWidget(self.ed_paths, 1); row.addWidget(self.btn_browse)
+        # mesmo menu de discos da busca: "todos os discos" + discos por LABEL
+        self.btn_disks = QToolButton(); self.btn_disks.setText(t("Disks ▾"))
+        self.btn_disks.setToolTip(t("Add/remove mounted disks (all disks at once too)\n"
+                                    "from the folder list — same as the search tab."))
+        self.btn_disks.setPopupMode(QToolButton.InstantPopup)
+        self.mnu_disks = QMenu(self); self.mnu_disks.setToolTipsVisible(True)
+        self.mnu_disks.aboutToShow.connect(self._fill_disks_menu)
+        self.btn_disks.setMenu(self.mnu_disks)
+        row.addWidget(lbl); row.addWidget(self.ed_paths, 1)
+        row.addWidget(self.btn_disks); row.addWidget(self.btn_browse)
         v.addLayout(row)
 
         opt = QHBoxLayout(); opt.setSpacing(10)
@@ -1155,6 +1186,76 @@ class DuplicatesPanel(QWidget):
         return [os.path.expanduser(p.strip())
                 for p in self.ed_paths.text().split(";") if p.strip()]
 
+    # ---- menu de discos (espelho do da busca, operando em self.ed_paths)
+    def _paths_list(self):
+        return [p.strip() for p in self.ed_paths.text().split(";") if p.strip()]
+
+    def _fill_disks_menu(self):
+        self.mnu_disks.clear()
+        cur = set(self._paths_list())
+        home = os.path.expanduser("~")
+        mounts = engine.user_mounts()
+        if mounts:
+            all_on = all(mp in cur for mp in mounts)
+            aa = self.mnu_disks.addAction(t("All disks"))
+            aa.setCheckable(True); aa.setChecked(all_on)
+            aa.toggled.connect(self._toggle_all_disks)
+            self.mnu_disks.addSeparator()
+        for mp in [home] + mounts:
+            if mp == home:
+                label, tip = t("Home folder (~)"), home
+            else:
+                vol = disks.volume_label(mp)
+                label, tip = (vol or mp), mp
+            a = self.mnu_disks.addAction(label)
+            a.setToolTip(tip)
+            a.setCheckable(True); a.setChecked(mp in cur)
+            a.toggled.connect(lambda on, mp=mp: self._toggle_path(mp, on))
+        if not mounts:
+            a = self.mnu_disks.addAction(t("(no external disk mounted)"))
+            a.setEnabled(False)
+
+    def _toggle_path(self, mp, on):
+        cur = self._paths_list()
+        if on and mp not in cur:
+            cur.append(mp)
+        elif not on and mp in cur:
+            cur.remove(mp)
+        self.ed_paths.setText(";".join(cur))
+
+    def _toggle_all_disks(self, on):
+        mounts = engine.user_mounts(); mset = set(mounts)
+        cur = [p for p in self._paths_list() if p not in mset]
+        if on:
+            cur += mounts
+        self.ed_paths.setText(";".join(cur))
+
+    # ---- análise dos RESULTADOS da busca (modo "files")
+    def analyze_files(self, paths):
+        """Recebe os caminhos que a busca achou e responde, por nome, quem é cópia
+        idêntica e quem é versão diferente. Roda mesmo com um scan em voo? Não —
+        cancela o anterior primeiro (um worker por painel)."""
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel(); self.worker.wait(3000)
+        self._mode = "files"; self._files = list(paths)
+        try:
+            minsz = parse_size(self.ed_minsz.text()) or 0
+        except Exception:
+            minsz = 0
+        self.tree.clear(); self.groups = []
+        self.btn_csv.setEnabled(False); self.btn_json.setEnabled(False)
+        self.btn_scan.setEnabled(False); self.btn_from_results.setEnabled(False)
+        self.btn_cancel.setEnabled(True)
+        self.bar.setVisible(True); self.bar.setRange(0, 0)
+        self.lbl_head.setText(t("Analyzing {n} search result(s)…", n=len(self._files)))
+        w = DupWorker(files=self._files, min_size=minsz,
+                      include_zero=self.ck_zero.isChecked())
+        w.phase.connect(self._on_phase)
+        w.progress.connect(self._on_progress)
+        w.done.connect(self._on_done)
+        self.worker = w
+        w.start()
+
     def _scan(self):
         roots = self._roots()
         if not roots:
@@ -1164,12 +1265,14 @@ class DuplicatesPanel(QWidget):
             minsz = parse_size(self.ed_minsz.text()) or 0
         except Exception:
             minsz = 0
+        self._mode = "roots"; self._files = []
         self.tree.clear(); self.groups = []
         self.btn_csv.setEnabled(False); self.btn_json.setEnabled(False)
-        self.btn_scan.setEnabled(False); self.btn_cancel.setEnabled(True)
+        self.btn_scan.setEnabled(False); self.btn_from_results.setEnabled(False)
+        self.btn_cancel.setEnabled(True)
         self.bar.setVisible(True); self.bar.setRange(0, 0)      # indeterminado até o full
         self.lbl_head.setText(t("Scanning…"))
-        w = DupWorker(roots, min_size=minsz, include_zero=self.ck_zero.isChecked())
+        w = DupWorker(roots=roots, min_size=minsz, include_zero=self.ck_zero.isChecked())
         w.phase.connect(self._on_phase)
         w.progress.connect(self._on_progress)
         w.done.connect(self._on_done)
@@ -1196,15 +1299,72 @@ class DuplicatesPanel(QWidget):
         self.worker = None
         self.groups = groups
         self.bar.setVisible(False)
-        self.btn_scan.setEnabled(True); self.btn_cancel.setEnabled(False)
-        n, wasted = dupes.summary(groups)
+        self.btn_scan.setEnabled(True); self.btn_from_results.setEnabled(True)
+        self.btn_cancel.setEnabled(False)
         denied = stats.get("denied", 0)
         extra = t("  ·  {d} unreadable", d=denied) if denied else ""
+        if self._mode == "files":
+            names = dupes.name_verdicts(self._files, groups)
+            self._fill_names(names)
+            copies = sum(1 for ng in names if ng.verdict == dupes.IDENTICAL)
+            versions = sum(1 for ng in names if ng.verdict == dupes.DIVERGENT)
+            mixed = sum(1 for ng in names if ng.verdict == dupes.MIXED)
+            _, wasted = dupes.summary(groups)
+            self.lbl_head.setText(t(
+                "{c} identical · {v} different versions · {m} mixed  ·  "
+                "{size} recoverable{extra}",
+                c=copies, v=versions, m=mixed,
+                size=human_size(wasted), extra=extra))
+            self.btn_csv.setEnabled(bool(groups)); self.btn_json.setEnabled(bool(groups))
+            return
+        n, wasted = dupes.summary(groups)
         self.lbl_head.setText(t("{n} group(s) · {size} recoverable{extra}",
                                 n=n, size=human_size(wasted), extra=extra))
         self._fill_tree(groups)
         has = bool(groups)
         self.btn_csv.setEnabled(has); self.btn_json.setEnabled(has)
+
+    def _fill_names(self, names):
+        """Árvore ancorada no NOME: cada nó de topo é um basename com veredito
+        (cópia idêntica / versão diferente / mistura); os filhos mostram em que
+        disco cada arquivo mora, com o tamanho ao lado (versões costumam diferir
+        já no tamanho)."""
+        pal = THEMES[self.main.theme]
+        mono = QFont("monospace"); mono.setStyleHint(QFont.Monospace)
+        if not names:
+            self.tree.clear()
+            top = QTreeWidgetItem([t("No repeated names among the results."), "", ""])
+            top.setFirstColumnSpanned(True)
+            self.tree.addTopLevelItem(top)
+            return
+        badge = {
+            dupes.IDENTICAL: ("🟢", t("identical copies")),
+            dupes.DIVERGENT: ("🟠", t("different versions — same name")),
+            dupes.MIXED:     ("🟡", t("mixed — some copies, some versions")),
+        }
+        for ng in names:
+            icon, label = badge[ng.verdict]
+            if ng.wasted:
+                head = t("{icon} {name} · {k} files · {label} · {waste} recoverable",
+                         icon=icon, name=ng.name, k=len(ng.members),
+                         label=label, waste=human_size(ng.wasted))
+            else:
+                head = t("{icon} {name} · {k} files · {label}",
+                         icon=icon, name=ng.name, k=len(ng.members), label=label)
+            top = QTreeWidgetItem([head, "", ""])
+            top.setFirstColumnSpanned(True)
+            for p in ng.members:
+                try:
+                    sz = human_size(os.path.getsize(p))
+                except OSError:
+                    sz = "—"
+                disk = self.main._disk_badge(p)
+                child = QTreeWidgetItem([p, sz, disk])
+                child.setData(0, Qt.UserRole, p)
+                child.setFont(2, mono)
+                top.addChild(child)
+            self.tree.addTopLevelItem(top)
+            top.setExpanded(True)
 
     def _fill_tree(self, groups):
         pal = THEMES[self.main.theme]
@@ -1449,8 +1609,9 @@ class MainWindow(QMainWindow):
         self.btn_saved.setMenu(self.mnu_saved)
         # F10c: entrada do caçador de duplicatas (janela própria, chips de caminho).
         self.btn_dupes = QToolButton(); self.btn_dupes.setText(t("Duplicates…"))
-        self.btn_dupes.setToolTip(t("Find byte-identical files under the search "
-                                    "paths.\nShows and exports them — never deletes."))
+        self.btn_dupes.setToolTip(t("Check the search results for duplicates: which "
+                                    "same-named files\nare identical copies and which "
+                                    "are different versions.\nShows and exports — never deletes."))
         self.btn_dupes.clicked.connect(self.open_duplicates)
         r2.addWidget(self.btn_disks); r2.addWidget(self.btn_saved)
         r2.addWidget(self.btn_dupes); r2.addWidget(btn_browse)
@@ -2619,12 +2780,35 @@ class MainWindow(QMainWindow):
         except Exception:
             return ""
 
+    def _current_result_paths(self):
+        """Os caminhos que a busca ATIVA achou — a entrada natural do dedup
+        ('essas coisas que apareceram são cópias ou versões?'). O conjunto inteiro
+        da aba, não só o filtrado: 'os arquivos oriundos da busca'."""
+        try:
+            return [m.path for m in self.tab.model.rows]
+        except Exception:
+            return []
+
     def open_duplicates(self):
-        """F10c: pula para a aba de duplicatas, semeando-a com os caminhos da busca
-        (só se ainda estiver vazia — não pisa no que o usuário já digitou lá)."""
-        seed = self.ed_path.text().strip() or os.path.expanduser("~")
-        self.dup_panel.seed(seed)
+        """F10c: pula para a aba de duplicatas. Se a busca tem resultados, já os
+        analisa (o caso de uso primário); senão, semeia as raízes p/ varredura ampla."""
         self.workspace.setCurrentWidget(self.dup_panel)
+        paths = self._current_result_paths()
+        if paths:
+            self.dup_panel.analyze_files(paths)
+        else:
+            self.dup_panel.seed(self.ed_path.text().strip() or os.path.expanduser("~"))
+
+    def _dup_from_results(self):
+        """Botão 'Analisar resultados' dentro da aba de duplicatas."""
+        paths = self._current_result_paths()
+        if not paths:
+            QMessageBox.information(self, t("Duplicate hunter"),
+                                    t("Run a search first — then I compare its "
+                                      "results for identical copies vs versions."))
+            return
+        self.workspace.setCurrentWidget(self.dup_panel)
+        self.dup_panel.analyze_files(paths)
 
     def _show_items(self, paths) -> bool:
         if getattr(self, "_fm1_ok", None) is False:

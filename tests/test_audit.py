@@ -2905,6 +2905,69 @@ def test_dupes_export_csv_json_hostile_names():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_dupes_in_files_matches_walk():
+    """F10c/resultados — `find_duplicates_in_files` sobre a lista de TODOS os
+    arquivos da árvore acha exatamente os mesmos grupos que a varredura das raízes.
+    A porta de entrada muda (lista vs walk), o funil de dedup é o mesmo."""
+    A = b"alpha" * 5000; B = b"bravo" * 5000; C = b"charlie" * 5000
+    d = _dup_tree({"a1.dat": A, "sub/a2.dat": A, "b1.dat": B, "b2.dat": B,
+                   "c1.dat": C})
+    try:
+        by_walk = {frozenset(g.paths) for g in dupes.find_duplicates([d])}
+        files = [os.path.join(dp, fn) for dp, _dn, fns in os.walk(d) for fn in fns]
+        by_list = {frozenset(g.paths) for g in dupes.find_duplicates_in_files(files)}
+        assert by_walk == by_list, (by_walk, by_list)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("ok  F10c resultados: find_duplicates_in_files ≡ varredura por raízes")
+
+
+def test_dupes_name_verdicts_copy_version_mixed():
+    """F10c/resultados — o veredito por NOME (a pergunta do usuário olhando a busca):
+    mesmo nome + mesmo conteúdo = cópia idêntica; mesmo nome + conteúdo diferente =
+    versão diferente; a mistura dos dois no mesmo nome = 'mixed'. Nome único não sai."""
+    ident = b"I" * 200000          # ferias.mp4 nos dois discos: idênticos
+    v1 = b"V" * 200000; v2 = b"W" * 200000     # doc.pdf: mesmo tamanho, difere -> versões
+    m = b"M" * 300000; mx = b"X" * 300000      # mix.bin: 2 iguais + 1 diferente
+    d = _dup_tree({
+        "DiscoL/ferias.mp4": ident, "Expansion1/ferias.mp4": ident,
+        "DiscoL/doc.pdf": v1,        "Expansion1/doc.pdf": v2,
+        "DiscoL/mix.bin": m,         "Expansion1/mix.bin": m, "Expansion1/sub/mix.bin": mx,
+        "DiscoL/unico.txt": b"solo" * 40000,
+    })
+    try:
+        files = [os.path.join(dp, fn) for dp, _dn, fns in os.walk(d) for fn in fns]
+        groups = dupes.find_duplicates_in_files(files)
+        verds = {ng.name: ng for ng in dupes.name_verdicts(files, groups)}
+        assert set(verds) == {"ferias.mp4", "doc.pdf", "mix.bin"}, set(verds)
+        assert verds["ferias.mp4"].verdict == dupes.IDENTICAL
+        assert verds["ferias.mp4"].wasted == 200000
+        assert verds["doc.pdf"].verdict == dupes.DIVERGENT
+        assert verds["doc.pdf"].wasted == 0          # versões: nada a recuperar
+        assert verds["mix.bin"].verdict == dupes.MIXED
+        assert verds["mix.bin"].wasted == 300000     # o par idêntico rende 1 cópia
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("ok  F10c resultados: name_verdicts distingue cópia/versão/mistura")
+
+
+def test_dupes_name_verdicts_diff_size_is_divergent_without_hash():
+    """F10c/resultados — dois arquivos de mesmo nome mas TAMANHOS diferentes jamais
+    são hasheados juntos; ainda assim o veredito por nome os separa como 'versões
+    diferentes' (a chave-própria-por-caminho cuida disso, sem I/O extra)."""
+    d = _dup_tree({"A/rel.log": b"z" * 100000, "B/rel.log": b"z" * 90000})
+    try:
+        files = [os.path.join(dp, fn) for dp, _dn, fns in os.walk(d) for fn in fns]
+        groups = dupes.find_duplicates_in_files(files)
+        assert groups == []          # tamanhos diferentes: nenhum grupo de conteúdo
+        ngs = dupes.name_verdicts(files, groups)
+        assert len(ngs) == 1 and ngs[0].name == "rel.log"
+        assert ngs[0].verdict == dupes.DIVERGENT and ngs[0].wasted == 0
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("ok  F10c resultados: mesmo nome + tamanho diferente = versão (sem hash)")
+
+
 def test_dupes_parity_with_oracle():
     """F10c — PARIDADE: no mesmo fixture (sem hardlinks), os grupos do dupes.py
     nativo == os grupos do motor do cedro (dedup_layer1), que é o ORÁCULO. Ambos
@@ -3142,6 +3205,9 @@ def main():
            test_dupes_cancel_leaves_no_state, test_dupes_denied_counted,
            test_dupes_symlinks_and_zero_excluded, test_dupes_no_delete_api,
            test_dupes_export_csv_json_hostile_names,
+           test_dupes_in_files_matches_walk,
+           test_dupes_name_verdicts_copy_version_mixed,
+           test_dupes_name_verdicts_diff_size_is_divergent_without_hash,
            test_dupes_parity_with_oracle,
            # Campanha 2 / Bloco 1 — paridade rg ↔ fallback Python
            test_parity_directed_and_property]

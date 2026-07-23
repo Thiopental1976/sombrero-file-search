@@ -141,6 +141,51 @@ def _walk(roots, min_size, include_zero, follow_symlinks, cancel, stats):
     return order
 
 
+def _collect(files, min_size, include_zero, follow_symlinks, cancel, stats):
+    """Estágio 0 para uma LISTA EXPLÍCITA de arquivos (os resultados de uma busca),
+    não uma varredura de pastas. Mesma disciplina do `_walk`: colapsa inode, tira
+    symlink/tamanho-0, mas nunca desce em diretório — analisa exatamente o que veio."""
+    seen: Dict[Tuple[int, int], Candidate] = {}
+    order: List[Candidate] = []
+    for p in files:
+        if cancel():
+            break
+        try:
+            st = os.lstat(p)
+        except OSError:
+            stats["denied"] += 1
+            continue
+        mode = st.st_mode
+        if _stat.S_ISLNK(mode):
+            if follow_symlinks:
+                try:
+                    st = os.stat(p)
+                    mode = st.st_mode
+                except OSError:
+                    stats["denied"] += 1
+                    continue
+            else:
+                stats["symlinks"] += 1
+                continue
+        if not _stat.S_ISREG(mode):
+            continue
+        sz = st.st_size
+        if sz == 0 and not include_zero:
+            continue
+        if sz < min_size:
+            continue
+        key = (st.st_dev, st.st_ino)
+        cand = seen.get(key)
+        if cand is None:
+            cand = Candidate(st.st_dev, st.st_ino, sz)
+            seen[key] = cand
+            order.append(cand)
+        cand.paths.append(p)
+        stats["files"] += 1
+    stats["candidates"] = len(order)
+    return order
+
+
 # ------------------------------------------------------------------ hashing
 def _fadvise_dontneed(fd: int):
     """Não expulsar o cache de quem usa a máquina: solta o que acabamos de ler."""
@@ -203,11 +248,36 @@ def find_duplicates(roots, *, min_size: int = 0, include_zero: bool = False,
     if isinstance(roots, str):
         roots = [roots]
 
-    # Estágio 0 + 1 -----------------------------------------------------------
+    # Estágio 0 --------------------------------------------------------------
     on_phase("scan")
     cands = _walk(roots, min_size, include_zero, follow_symlinks, cancel, stats)
+    return _dedup(cands, cancel, on_progress, on_phase, stats)
+
+
+def find_duplicates_in_files(files, *, min_size: int = 0, include_zero: bool = False,
+                             follow_symlinks: bool = False,
+                             cancel: CancelFn = lambda: False,
+                             on_progress: ProgressFn = lambda done, total: None,
+                             on_phase: PhaseFn = lambda name: None,
+                             stats: Optional[dict] = None) -> List[DupGroup]:
+    """Como `find_duplicates`, mas a entrada é uma LISTA DE ARQUIVOS — tipicamente
+    os resultados de uma busca do usuário (\"essas coisas que apareceram são cópias
+    ou versões diferentes?\"). Não desce em pastas: analisa exatamente esses caminhos.
+    Combine com `name_verdicts()` para a leitura por nome (cópia vs versão)."""
+    if stats is None:
+        stats = new_stats()
+    on_phase("scan")
+    cands = _collect(files, min_size, include_zero, follow_symlinks, cancel, stats)
+    return _dedup(cands, cancel, on_progress, on_phase, stats)
+
+
+def _dedup(cands, cancel, on_progress, on_phase, stats) -> List[DupGroup]:
+    """Estágios 1–3 sobre uma lista de candidatos já coletados (de `_walk` ou de
+    `_collect`). O mesmo funil para as duas portas de entrada — a varredura ampla e
+    a análise dos resultados da busca hasheiam com idêntica disciplina de I/O."""
     if cancel():
         return []
+    # Estágio 1 — tamanho ----------------------------------------------------
     size_groups = [g for g in _by(lambda c: c.size, cands).values() if len(g) > 1]
 
     # Estágio 2 — cabeça ------------------------------------------------------
@@ -265,6 +335,70 @@ def find_duplicates(roots, *, min_size: int = 0, include_zero: bool = False,
 def summary(groups: List[DupGroup]) -> Tuple[int, int]:
     """(nº de grupos, bytes recuperáveis) — para o cabeçalho "N grupos · X GB"."""
     return len(groups), sum(g.wasted for g in groups)
+
+
+# ------------------------------------------------------------------ por nome
+# Veredito ancorado no NOME, para a pergunta que o usuário faz olhando a busca:
+# "esses arquivos de mesmo nome, espalhados pelos discos, são cópias ou versões
+# diferentes?". Não faz I/O — deriva tudo dos grupos de conteúdo já hasheados.
+IDENTICAL = "identical"   # todos byte-idênticos → cópias (o resto é desperdício)
+DIVERGENT = "divergent"   # mesmo nome, conteúdos TODOS distintos → versões diferentes
+MIXED = "mixed"           # algumas cópias + alguma versão distinta no mesmo nome
+
+
+class NameGroup:
+    """Arquivos que compartilham o basename. `verdict` responde cópia vs versão."""
+    __slots__ = ("name", "members", "verdict", "wasted")
+
+    def __init__(self, name: str, members: List[str], verdict: str, wasted: int):
+        self.name = name
+        self.members = members      # caminhos completos, ordenados
+        self.verdict = verdict
+        self.wasted = wasted        # bytes recuperáveis dentro deste nome (0 se só versões)
+
+
+def name_verdicts(files, groups: List[DupGroup]) -> List[NameGroup]:
+    """Classifica os `files` por basename usando os grupos de conteúdo de `_dedup`.
+
+    Chave de conteúdo por caminho: o digest do grupo em que caiu; quem não caiu em
+    grupo nenhum é único (usa o próprio caminho como chave) — dois arquivos de mesmo
+    nome mas tamanhos/conteúdos distintos nunca são hasheados juntos, então cada um
+    fica com chave própria e o nome sai como 'versões diferentes'. Sem I/O."""
+    from collections import Counter
+    key_of: Dict[str, str] = {}
+    size_of: Dict[str, int] = {}
+    for g in groups:
+        for c in g.members:
+            for p in c.paths:
+                key_of[p] = g.digest
+                size_of[p] = g.size
+
+    by_name: Dict[str, List[str]] = {}
+    for p in files:
+        by_name.setdefault(os.path.basename(p), []).append(p)
+
+    out: List[NameGroup] = []
+    for name, paths in by_name.items():
+        if len(paths) < 2:
+            continue
+        counts = Counter(key_of.get(p, p) for p in paths)
+        distinct = len(counts)
+        if distinct == 1:
+            verdict = IDENTICAL
+        elif max(counts.values()) == 1:
+            verdict = DIVERGENT
+        else:
+            verdict = MIXED
+        wasted = 0
+        for key, cnt in counts.items():
+            if cnt > 1:               # chave repetida => grupo de conteúdo real
+                sz = next(size_of[p] for p in paths if key_of.get(p, p) == key)
+                wasted += sz * (cnt - 1)
+        out.append(NameGroup(name, sorted(paths, key=lambda p: (len(p), p)),
+                             verdict, wasted))
+    # o que rende mais espaço e mais membros primeiro; nome como desempate estável
+    out.sort(key=lambda ng: (ng.wasted, len(ng.members), ng.name), reverse=True)
+    return out
 
 
 def export(groups: List[DupGroup], path: str, fmt: str = "csv"):

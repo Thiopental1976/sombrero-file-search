@@ -342,11 +342,38 @@ _PT = {
     "🔍  Search": "🔍  Buscar",
     "⧉  Duplicates": "⧉  Duplicatas",
     "Duplicates…": "Duplicatas…",
-    "Find byte-identical files under the search paths.\n"
-    "Shows and exports them — never deletes.":
-        "Acha arquivos byte-idênticos sob os caminhos da busca.\n"
+    "Check the search results for duplicates: which same-named files\n"
+    "are identical copies and which are different versions.\n"
+    "Shows and exports — never deletes.":
+        "Confere duplicatas nos resultados da busca: quais arquivos de mesmo nome\n"
+        "são cópias idênticas e quais são versões diferentes.\n"
         "Mostra e exporta — nunca apaga.",
     "Duplicate hunter": "Caçador de duplicatas",
+    "⇊ Analyze search results": "⇊ Analisar resultados da busca",
+    "Take the files your last search found and tell, per name,\n"
+    "which are identical copies and which are different versions.":
+        "Pega os arquivos que a última busca achou e diz, por nome,\n"
+        "quais são cópias idênticas e quais são versões diferentes.",
+    "— or scan folders/disks directly —":
+        "— ou varra pastas/discos diretamente —",
+    "Add/remove mounted disks (all disks at once too)\n"
+    "from the folder list — same as the search tab.":
+        "Adiciona/remove discos montados (todos de uma vez também)\n"
+        "à lista de pastas — igual à aba de busca.",
+    "Analyzing {n} search result(s)…": "Analisando {n} resultado(s) da busca…",
+    "Run a search first — then I compare its results for identical copies vs versions.":
+        "Faça uma busca primeiro — aí eu comparo os resultados: cópias idênticas vs versões.",
+    "{c} identical · {v} different versions · {m} mixed  ·  {size} recoverable{extra}":
+        "{c} idênticos · {v} versões diferentes · {m} mistos  ·  {size} recuperáveis{extra}",
+    "No repeated names among the results.":
+        "Nenhum nome repetido entre os resultados.",
+    "identical copies": "cópias idênticas",
+    "different versions — same name": "versões diferentes — mesmo nome",
+    "mixed — some copies, some versions": "misto — algumas cópias, algumas versões",
+    "{icon} {name} · {k} files · {label} · {waste} recoverable":
+        "{icon} {name} · {k} arquivos · {label} · {waste} recuperáveis",
+    "{icon} {name} · {k} files · {label}":
+        "{icon} {name} · {k} arquivos · {label}",
     "include empty files": "incluir arquivos vazios",
     "Ignore files smaller than this (e.g. 1M, 500K).":
         "Ignora arquivos menores que isto (ex.: 1M, 500K).",
