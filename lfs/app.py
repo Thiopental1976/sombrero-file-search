@@ -89,6 +89,17 @@ def _grp(n: int) -> str:
     return f"{int(n):,}".replace(",", sep)
 
 
+def _fmt_elapsed(sec: float) -> str:
+    """Tempo decorrido curto para o cabeçalho da narrativa: '12s' / '1m32s'."""
+    s = int(sec)
+    return f"{s//60}m{s % 60:02d}s" if s >= 60 else f"{s}s"
+
+
+def _esc(s: str) -> str:
+    """Escapa para o rich-text (QLabel HTML) do painel de narrativa."""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 parse_size = engine.parse_size          # §5: fonte única (era duplicado aqui e no cli)
 
 
@@ -195,6 +206,7 @@ class SearchWorker(QThread):
     phase = Signal(int, int, str)    # opt#4: passo done/total + rótulo (modo booleano)
     done = Signal(int, float)        # total, segundos
     error = Signal(str)              # mensagem de erro (ex: sintaxe booleana)
+    root_event = Signal(str, object) # F10a #2: narrativa por root (scanning/skipped/done)
 
     def __init__(self, q: Query, boolexpr: str = ""):
         super().__init__()
@@ -231,7 +243,8 @@ class SearchWorker(QThread):
                                                  stats=self.stats)      # N2: conta inacessíveis
             else:
                 tot, dt = engine.search(self.q, on_result, lambda: self._cancel, on_prog,
-                                        stats=self.stats)
+                                        stats=self.stats,
+                                        on_event=lambda ev, info: self.root_event.emit(ev, info))
         except boolean.BooleanError as e:
             self._flush(force=True)
             self.error.emit(humane.human_error(e))
@@ -485,6 +498,9 @@ QSlider::sub-page:horizontal {{ background: {accent}; border-radius: 3px; }}
 QSlider::handle:horizontal {{ background: {txt}; width: 13px; height: 13px;
     margin: -5px 0; border-radius: 7px; }}
 QSlider::handle:horizontal:hover {{ background: {accent_hi}; }}
+QFrame#narrative {{ background: {bg1}; border: 1px solid {border}; border-radius: 10px; }}
+QLabel#narrhead {{ color: {txt}; font-size: 14px; font-weight: 700; }}
+QLabel#narrbody {{ color: {muted}; font-size: 13px; }}
 """
 
 def build_style(pal: dict) -> str:
@@ -937,6 +953,8 @@ class SearchTab(QWidget):
         self.hl_cs = False
         self.status_text = t("Ready.")
         self.form: dict = {}
+        self.roots: dict = {}          # F10a #2: path -> {name, klass, state, found, reason}
+        self.root_order: list = []     # ordem de chegada dos roots p/ o painel
         self.model = ResultModel()
         self.proxy = ResultFilterProxy()              # B14 ordenação + F10a #1 filtro
         self.proxy.setSourceModel(self.model)
@@ -1213,6 +1231,21 @@ class MainWindow(QMainWindow):
         self.sp_days.setFixedWidth(70)
         r3.addWidget(_pair(t("Last"), self.sp_days))
         root.addWidget(bar)
+
+        # ---------- painel de narrativa da busca (F10a #2 — NO ALTO, legível) ----------
+        # A busca longa conta sua história aqui em cima, em fonte legível — não em
+        # letra miúda no rodapé. Cabeçalho com o placar; uma linha por local, com
+        # badge da classe (HD/SSD/rede), estado e achados. Montagem morta = linha
+        # vermelha AQUI, não popup. Só aparece quando há uma busca com locais.
+        self.narr = QFrame(); self.narr.setObjectName("narrative")
+        nv = QVBoxLayout(self.narr); nv.setContentsMargins(14, 10, 14, 10); nv.setSpacing(5)
+        self.narr_head = QLabel(""); self.narr_head.setObjectName("narrhead")
+        self.narr_body = QLabel(""); self.narr_body.setObjectName("narrbody")
+        self.narr_body.setTextFormat(Qt.RichText); self.narr_body.setWordWrap(True)
+        self.narr_body.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        nv.addWidget(self.narr_head); nv.addWidget(self.narr_body)
+        self.narr.setVisible(False)
+        root.addWidget(self.narr)
 
         # ---------- resultados / preview ----------
         split = QSplitter(Qt.Vertical)
@@ -1503,6 +1536,7 @@ class MainWindow(QMainWindow):
         self.btn_search.setEnabled(not tab.searching)
         self.btn_cancel.setEnabled(tab.searching or bool(tab.pending))
         self._hl_terms, self._hl_cs = tab.hl_terms, tab.hl_cs
+        self._render_narrative(tab)               # F10a #2: painel segue a aba ativa
         self.on_select(tab.table.currentIndex(), QModelIndex())
 
     def _set_status(self, tab, txt):
@@ -1734,10 +1768,96 @@ class MainWindow(QMainWindow):
         return any(o is not tab and o.searching and (eu or o.serial)
                    for o in self._all_tabs())
 
+    # ---------------------------------------------------------- F10a #2: narrativa
+    # Um painel só, no alto da janela, que conta a história da busca da ABA ATIVA.
+    # O estado (quais locais, estado de cada um, achados) mora na aba; o painel só
+    # desenha o da aba visível — igual ao formulário e ao preview, que também são
+    # únicos e seguem a aba. Montagem de rede morta vira LINHA VERMELHA aqui, não
+    # popup: o usuário vê "pulei o NAS porque caiu" sem perder a busca dos discos.
+    _KLASS_TAG = {"rotational": "HD", "ssd": "SSD", "gvfs": "MTP", "autofs": "auto"}
+
+    def _reset_narrative(self, tab):
+        tab.roots = {}
+        tab.root_order = []
+        if tab is self.tab:
+            self.narr.setVisible(False)
+
+    def _on_root_event(self, tab, ev, info):
+        """Recebe root_scanning / root_skipped / root_done do motor e atualiza o
+        estado da aba. O nome amigável (label do volume) é resolvido UMA vez aqui,
+        no momento do evento, e guardado — render não toca disco."""
+        path = info.get("path") or info.get("mount") or ""
+        if not path:
+            return
+        rec = tab.roots.get(path)
+        if rec is None:
+            name = disks.volume_label(path) or os.path.basename(path.rstrip("/")) or path
+            rec = {"name": name, "klass": info.get("klass", "unknown"),
+                   "state": "scanning", "found": 0, "reason": ""}
+            tab.roots[path] = rec
+            tab.root_order.append(path)
+        if ev == "root_scanning":
+            rec["state"] = "scanning"
+            rec["klass"] = info.get("klass", rec["klass"])
+        elif ev == "root_skipped":
+            rec["state"] = "skipped"
+            rec["klass"] = info.get("klass", rec["klass"])
+            rec["reason"] = info.get("reason", "") or t("unreachable")
+        elif ev == "root_done":
+            if rec["state"] != "skipped":
+                rec["state"] = "done"
+            rec["found"] = info.get("found", rec["found"])
+        if tab is self.tab:
+            self._render_narrative(tab)
+
+    def _render_narrative(self, tab):
+        """Desenha o painel a partir do estado da aba. Sem I/O — só formata."""
+        if not tab.root_order:
+            self.narr.setVisible(False)
+            return
+        pal = THEMES[self.theme]
+        recs = [tab.roots[p] for p in tab.root_order]
+        total = len(recs)
+        done = sum(1 for r in recs if r["state"] in ("done", "skipped"))
+        found = sum(r["found"] for r in recs)
+        alive = tab.searching
+        sec = _fmt_elapsed(time.time() - tab.t0) if tab.t0 else ""
+        verb = t("Scanning") if alive else t("Scanned")
+        head = t("{verb} {done}/{total} locations · {found} found · {sec}",
+                 verb=verb, done=done, total=total, found=_grp(found), sec=sec)
+        self.narr_head.setText(head)
+
+        lines = []
+        for r in recs:
+            tag = self._KLASS_TAG.get(r["klass"])
+            if tag is None:
+                tag = t("network") if r["klass"] == "network" else ""
+            name = _esc(r["name"])
+            badge = (f'<span style="color:{pal["muted"]}">[{_esc(tag)}]</span> '
+                     if tag else "")
+            if r["state"] == "skipped":
+                dot = f'<span style="color:{pal["red"]}">●</span>'
+                why = _esc(r["reason"])
+                line = (f'{dot} {badge}<span style="color:{pal["red"]}">{name}</span>'
+                        f' — <span style="color:{pal["red"]}">{why}</span>')
+            elif r["state"] == "done":
+                dot = f'<span style="color:{pal["green"]}">●</span>'
+                cnt = t("{n} found", n=_grp(r["found"]))
+                line = (f'{dot} {badge}<span style="color:{pal["txt"]}">{name}</span>'
+                        f' <span style="color:{pal["muted"]}">— {cnt}</span>')
+            else:                              # scanning
+                dot = f'<span style="color:{pal["accent"]}">●</span>'
+                line = (f'{dot} {badge}<span style="color:{pal["txt"]}">{name}</span>'
+                        f' <span style="color:{pal["muted"]}">— {_esc(t("scanning…"))}</span>')
+            lines.append(line)
+        self.narr_body.setText("<br>".join(lines))
+        self.narr.setVisible(True)
+
     def _launch(self, tab, q, boolexpr):
         tab.pending = None
         tab.serial = self._serial_paths(q)
         tab.t0 = time.time()
+        self._reset_narrative(tab)                # F10a #2: nova história começa limpa
         self._set_status(tab, t("Searching…") + tab.mode_tag)
         w = SearchWorker(q, boolexpr)
         # Cada sinal carrega a ABA a que pertence: uma busca que termina no fundo
@@ -1745,6 +1865,7 @@ class MainWindow(QMainWindow):
         w.batch.connect(tab.model.append)
         w.progress.connect(lambda _n, tb=tab: self._heartbeat_tab(tb))
         w.phase.connect(lambda d, tt, l, tb=tab: self.on_phase(tb, d, tt, l))
+        w.root_event.connect(lambda ev, info, tb=tab: self._on_root_event(tb, ev, info))
         w.done.connect(lambda tot, dt, tb=tab: self.on_done(tb, tot, dt))
         w.error.connect(lambda m, tb=tab: self.on_error(tb, m))
         tab.worker = w
@@ -1804,6 +1925,8 @@ class MainWindow(QMainWindow):
         if tab.searching:
             self._set_status(tab, self._searching_text(tab))
             self._tab_badge(tab)
+            if tab is self.tab and tab.root_order:   # F10a #2: relógio vivo no painel
+                self._render_narrative(tab)
 
     def _tab_badge(self, tab):
         """O rótulo da aba carrega o contador: busca rodando em segundo plano
@@ -1873,6 +1996,8 @@ class MainWindow(QMainWindow):
                                 icon=icon, tot=tot, sec=f"{dt:.2f}", extra=extra,
                                 cancel=cancel) + tip)
         self._tab_badge(tab)
+        if tab is self.tab:                       # F10a #2: congela o painel no estado final
+            self._render_narrative(tab)
         self._start_pending()
 
     # ---- mapeamento proxy (visual) -> source (dados)

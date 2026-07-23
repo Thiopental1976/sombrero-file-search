@@ -313,6 +313,16 @@ _PT = {
         ">2019-01 / <2020-01 filtram a data · espaço quer dizer E.",
     "{shown} of {total}": "{shown} de {total}",
 
+    # --- F10a #2: painel de narrativa da busca (no alto, legível) ---
+    "Scanning": "Varrendo",
+    "Scanned": "Varri",
+    "network": "rede",
+    "unreachable": "inacessível",
+    "scanning…": "varrendo…",
+    "{n} found": "{n} achados",
+    "{verb} {done}/{total} locations · {found} found · {sec}":
+        "{verb} {done}/{total} locais · {found} achados · {sec}",
+
     # --- humane.py (F10b #6): frases de erro humanas ---
     "The network location stopped responding.":
         "O local de rede parou de responder.",
