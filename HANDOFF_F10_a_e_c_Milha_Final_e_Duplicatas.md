@@ -2,12 +2,16 @@
 
 **De:** Andrômeda (Claude Opus 4.8) · **Para:** Fable 5
 **Base:** desenho `DESENHO_F10_Milha_Final_Humana_e_Duplicatas.md`
-**Repo:** sombrero-file-search · **Suite:** 103/103 verde · tudo commitado **e** empurrado.
+**Repo:** sombrero-file-search · **Suite:** 106/106 verde · tudo commitado **e** empurrado.
 
 > **Novidades desde a v1 deste handoff:** (1) o **F10b #4 e #5** entraram (seção própria
 > abaixo); (2) o caçador de duplicatas foi **promovido de janela para ABA embutida** — a
-> antiga decisão #1 está resolvida. Agora o F10 está **completo — a, b, c** — e testado
-> (103/103), com o F10c na forma final que teu desenho pediu.
+> antiga decisão #1 está resolvida; (3) **o F10c ganhou a entrada por RESULTADOS da
+> busca** (`77777f5`) — pedido do Rodrigo: *"as duplicatas a serem analisadas são as
+> dos arquivos oriundos das buscas feitas pelo usuário"*. O caso de uso agora é o que
+> ele descreveu: **o usuário busca, vê arquivos de mesmo nome espalhados pelos discos,
+> e o dedup diz se são cópias idênticas ou versões diferentes.** Detalhes na subseção
+> *F10c — entrada por resultados* abaixo. Suite 103→106.
 
 ---
 
@@ -102,13 +106,56 @@ para fazer já).
 - `DuplicatesWindow(QDialog)` → `DuplicatesPanel(QWidget)`: saiu título/tamanho-mínimo/
   botão *Close*; entrou `seed()` (semeia só se vazio — não pisa no que o usuário digitou)
   e `shutdown()` (a janela principal aborta o hash em voo no `closeEvent`). O botão
-  *Duplicatas…* da toolbar agora **pula para a aba** e semeia os caminhos da busca.
+  *Duplicatas…* da toolbar **pula para a aba** (e passou a analisar os resultados da
+  busca — ver a subseção *entrada por RESULTADOS* logo abaixo).
 
 **9 testes novos** (suite 90→99), incluindo:
 - `test_dupes_hardlink_is_not_duplicate`, `..._across_devices_groups` (monkeypatch st_dev),
   `..._cancel_leaves_no_state`, `..._no_delete_api` (guarda AST: nada de remove/unlink/
   rmtree/rename no módulo), `..._export_csv_json_hostile_names`,
   `..._parity_with_oracle` (carrega dedup_layer1.py e confirma grupos idênticos).
+
+### F10c — entrada por RESULTADOS da busca (cópia vs versão) — `77777f5`
+
+O pedido do Rodrigo reposicionou o F10c: a entrada natural do dedup são **os arquivos
+que a busca achou**, não pastas soltas. O cenário-alvo, nas palavras dele: *"o usuário
+faz uma busca e vê que ela contém arquivos que parecem iguais, distribuídos entre
+discos; o dedup diz a ele se são cópias ou versões diferentes do arquivo de mesmo
+nome"*. E — *"ter a aba de busca ampla por duplicados tem seu valor sim"* — a varredura
+standalone **fica**, agora com o mesmo seletor de discos da busca.
+
+**Motor** (`dupes.py`, segue sendo código próprio, não dependência):
+- `find_duplicates_in_files(files, …)` — mesma disciplina de I/O do funil (inode →
+  tamanho → cabeça → hash completo, sequencial por dispositivo/SMR, `fadvise DONTNEED`,
+  cancel por bloco, progresso em bytes), mas a **porta de entrada é uma lista de
+  arquivos**, não `os.walk`. Refatorei o funil comum em `_dedup(cands, …)`; as duas
+  portas (`_walk` da varredura e `_collect` da lista) partilham-no — zero divergência
+  de comportamento entre elas (travado por `test_dupes_in_files_matches_walk`).
+- `name_verdicts(files, groups) -> [NameGroup]` — o **veredito ancorado no NOME**, que é
+  a pergunta do usuário. **Sem I/O**: deriva dos grupos de conteúdo já hasheados.
+  Chave-de-conteúdo por caminho = digest do grupo; quem não caiu em grupo é único (usa o
+  próprio caminho). Por basename repetido: `IDENTICAL` (todos byte-idênticos → cópias),
+  `DIVERGENT` (mesmo nome, conteúdos todos distintos → versões), `MIXED`. Dois de mesmo
+  nome com **tamanhos diferentes** saem como versão **sem precisar hashear** (nunca
+  entram no mesmo grupo de tamanho).
+
+**GUI** — o `DuplicatesPanel` mantém as **duas modalidades**:
+1. **⇊ Analisar resultados da busca** (botão-manchete no topo do painel; o botão
+   *Duplicatas…* da toolbar também dispara isto quando há resultados). Roda
+   `find_duplicates_in_files` sobre `self.tab.model.rows` e mostra a **árvore ancorada
+   no nome**: selo 🟢 *cópias idênticas* / 🟠 *versões diferentes — mesmo nome* / 🟡
+   *mistura*, com **disco por label** e o **tamanho** ao lado (versões costumam diferir
+   já no tamanho). Cabeçalho: "N idênticos · M versões diferentes · … · X recuperável".
+2. **Varredura ampla** standalone (raízes + `📂`), agora com o **mesmo menu `Discos ▾`
+   da busca** — *Todos os discos* de uma vez + discos por **label**. Vista ancorada em
+   conteúdo (bytes desperdiçados), como antes.
+
+`DupWorker` ganhou o parâmetro `files=` (modo lista) ao lado de `roots=`. A linha
+vermelha do F10c segue intacta: **acha, mostra, exporta — jamais apaga.**
+
+**3 testes novos** (suite 103→106): `test_dupes_in_files_matches_walk` (lista ≡
+varredura), `test_dupes_name_verdicts_copy_version_mixed` (distingue cópia/versão/
+mistura + desperdício), `test_dupes_name_verdicts_diff_size_is_divergent_without_hash`.
 
 ---
 
