@@ -142,9 +142,17 @@ estão **documentadas de propósito** — nenhuma é surpresa:
 - **UTF-16/UTF-32 com BOM** — o `rg` detecta o BOM e decodifica; o fallback abre em texto
   (UTF-8/locale) e **não acha** o termo. Afeta só o modo **sem ripgrep**, em arquivos de origem
   Windows. Instalar o `ripgrep` (é *Recommends*) resolve.
-- **CRLF (`\r\n`)** — o `rg` entrega o texto da linha **com** o `\r` final; o fallback (leitura
-  universal-newline) entrega **sem**. Só o texto do *preview* difere — arquivo, número da linha
-  e match são iguais.
+- **CRLF (`\r\n`) — RESOLVIDO.** Antes o `rg` entregava a linha **com** o `\r` final e o fallback
+  (leitura universal-newline) **sem**. Agora os **dois** motores normalizam um `\r` final via
+  `engine._logical_line`: `m.lines` carrega o texto **lógico** da linha, sem artefato de
+  terminador (é o que o usuário lê, copia e o export CSV/JSON consome). A suíte de paridade trava
+  o invariante com uma **sentinela** (`assert not txt.endswith("\r")` nos dois lados).
+- **CR fora de CRLF (lone CR do Mac clássico, `\r\r\n`)** — divergência **estrutural** de
+  *segmentação* de linha, não de texto: o `rg` separa registros só por `\n` (um arquivo lone-CR
+  vira **1 linha gigante**), o Python em modo texto trata o CR como quebra (**N linhas**). Nenhum
+  `rstrip` conserta numeração; é caso patológico/pré-OSX e **não é perseguido** — fica documentado
+  e há um teste dirigido que **pina** a divergência (`rg=1`, `Python=N`) para virar regressão se
+  alguém "consertar" um lado sem querer.
 - **Codificações legadas sem BOM (Shift-JIS, GBK, EUC-KR…)** — aqui `rg` e fallback **concordam**:
   nenhum acha, porque o termo de busca é UTF-8 e o arquivo não. Não é divergência, é limitação
   compartilhada (qualquer ferramenta Unix). **CJK em UTF-8** — nomes de arquivo e conteúdo —

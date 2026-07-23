@@ -160,8 +160,27 @@ class Match:
     size: int
     mtime: float
     is_dir: bool = False
-    lines: list[tuple[int, str]] = field(default_factory=list)  # (lineno, texto)
+    # (lineno, texto lógico). CONTRATO (Fable, decisão CRLF 23/07): cada `texto`
+    # é o texto LÓGICO da linha, SEM artefatos de terminador (`\n`, `\r\n`). NÃO
+    # é fidelidade byte-a-byte do arquivo — é o que o usuário lê, copia e exporta
+    # (export CSV/JSON consome isto; um `\r` perdido numa célula de CSV suja o
+    # consumidor downstream). Os DOIS motores (rg e fallback Python) normalizam
+    # via `_logical_line`; a suíte de paridade trava o invariante com sentinela.
+    lines: list[tuple[int, str]] = field(default_factory=list)
     nmatch: int = 0
+
+
+def _logical_line(text: str) -> str:
+    r"""Texto lógico da linha p/ `Match.lines`: sem terminador de fim-de-linha.
+
+    Tira o `\n` final e UM `\r` final (o par CRLF). Strip ÚNICO, não guloso: um
+    CR fora do padrão CRLF (lone CR pré-OSX, ou `\r\r\n`) é divergência
+    ESTRUTURAL de segmentação/numeração entre os motores — não de texto — e
+    nenhum rstrip conserta numeração (ver DIVERGENCIAS_CONHECIDAS na suíte de
+    paridade). Idempotente para linha já sem terminador.
+    """
+    text = text.rstrip("\n")
+    return text[:-1] if text.endswith("\r") else text
 
 
 # ---------------------------------------------------------------- filtros comuns
@@ -510,7 +529,7 @@ def _iter_content_rg(q: Query, cancel, stats=None):
                 txt = ev["data"]["lines"].get("text", "")
                 cur.nmatch += len(ev["data"].get("submatches", []))
                 if len(cur.lines) < 200:
-                    cur.lines.append((ln or 0, txt.rstrip("\n")))
+                    cur.lines.append((ln or 0, _logical_line(txt)))
             elif t == "end" and cur is not None:
                 yield cur
                 cur = None
@@ -552,7 +571,7 @@ def _iter_content_python(q: Query, cancel, stats=None):
                             hit = m
                         m.nmatch += 1
                         if len(m.lines) < 200:
-                            m.lines.append((i, line.rstrip("\n")))
+                            m.lines.append((i, _logical_line(line)))
                 if hit is not None:
                     yield m
         except PermissionError:

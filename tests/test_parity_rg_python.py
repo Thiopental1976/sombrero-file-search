@@ -42,14 +42,22 @@ DIVERGENCIAS_CONHECIDAS = {
         "afeta o modo SEM ripgrep, em arquivos UTF-16/32 com BOM (raros no Linux, "
         "origem Windows). Decisão: documentado; sem rg, texto UTF-16 fica invisível "
         "na busca de conteúdo. Instalar ripgrep (Recommends) resolve.",
-    "crlf_trailing_cr_no_texto_da_linha":
-        "Em arquivos CRLF (\\r\\n, origem Windows), o rg entrega o texto da linha COM "
-        "o \\r final; o fallback Python lê em modo texto (universal newlines) e o \\r "
-        "some. Só o TEXTO do preview difere — o conjunto de arquivos, o número da "
-        "linha e o match são idênticos. Decisão pendente com o Fable (semântica de "
-        "paridade): recomendo normalizar 1 \\r final nos DOIS motores para o preview "
-        "não mostrar CR solto na GUI. Até lá, harness normaliza para não mascarar "
-        "divergências reais de texto.",
+    # CRLF puro (\r\n) foi RESOLVIDO (Fable, decisão CRLF 23/07): os dois motores
+    # normalizam 1 \r final via engine._logical_line; não há mais divergência de
+    # texto. A sentinela em _norm() trava o invariante. O que sobra, e é FAMÍLIA
+    # ESTRUTURAL documentada, é CR fora do padrão CRLF:
+    "cr_fora_de_crlf_segmentacao_de_linha":
+        "Arquivos com CR FORA do padrão CRLF — lone CR (Mac clássico pré-OSX) ou "
+        "\\r\\r\\n — divergem em SEGMENTAÇÃO e NUMERAÇÃO de linhas entre os motores, "
+        "não em texto: o rg separa registros só por \\n (lone CR => 1 linha gigante; "
+        "\\r\\r\\n => texto '...\\r' numa linha), enquanto o Python em modo texto "
+        "trata o CR solto como quebra (universal newlines => N linhas). Nenhum "
+        "rstrip, guloso ou não, conserta numeração — o strip guloso só maquiaria o "
+        "texto (paridade de fachada, pior que divergência documentada). Decisão "
+        "(Fable): strip ÚNICO nos dois motores resolve o CRLF puro; CR fora de CRLF "
+        "é patológico/pré-OSX e NÃO é perseguido — documentado, com teste dirigido "
+        "que PINA a divergência estrutural (rg=1 linha, Python=N) p/ virar regressão "
+        "se alguém 'consertar' um lado sem perceber.",
 }
 
 PASS, FAIL, KNOWN = [], [], []
@@ -84,13 +92,18 @@ def _run_bool(q, expr, use_rg):
 def _norm(matches):
     d = {}
     for m in matches:
-        # Divergência conhecida crlf_trailing_cr_no_texto_da_linha: o rg preserva o
-        # \r final de arquivos CRLF; o Python (universal newlines) não. Normalizamos
-        # 1 \r final dos DOIS lados para não mascarar divergências REAIS de texto.
+        for _ln, txt in m.lines:
+            # SENTINELA (Fable, decisão CRLF 23/07): antes o harness normalizava 1
+            # \r final dos dois lados (band-aid). Agora os DOIS motores normalizam
+            # via engine._logical_line, então NENHUM texto de linha pode terminar
+            # em \r. Se um caminho futuro reintroduzir CR (parser novo, modo novo
+            # do rg), a suíte acusa AQUI na hora, em vez de a normalização
+            # silenciosa engolir a regressão.
+            assert not txt.endswith("\r"), \
+                f"CR final vazou em {m.path!r}: {txt!r} — _logical_line falhou?"
         d[os.path.abspath(m.path)] = {
             "nmatch": m.nmatch,
-            "lines": sorted((ln, txt[:-1] if txt.endswith("\r") else txt)
-                            for ln, txt in m.lines),
+            "lines": sorted((ln, txt) for ln, txt in m.lines),
         }
     return d
 
@@ -212,6 +225,42 @@ def _w(d, rel, data, mode="w", enc=None):
         with open(p, "w") as f: f.write(data)
 
 
+# ============================================ 1.2-CR DIVERGÊNCIA ESTRUTURAL (pinada)
+def caso_cr_estrutural():
+    """PINA a divergência conhecida cr_fora_de_crlf_segmentacao_de_linha (Fable,
+    decisão CRLF 23/07). Um arquivo com CR FORA de CRLF (lone CR do Mac clássico)
+    NÃO tem \\n: o rg separa registros só por \\n → vê o arquivo como UMA linha
+    gigante; o Python em modo texto (universal newlines) trata o CR como quebra →
+    vê N linhas. É divergência de SEGMENTAÇÃO, não de texto, e nenhum rstrip
+    conserta numeração. Este teste trava esse conhecimento: se alguém 'consertar'
+    um dos lados daqui a um ano, a divergência estrutural muda e a suíte ACUSA,
+    em vez de nascer uma divergência nova em silêncio. Requer rg (senão os dois
+    lados seriam Python e não haveria os 2 mundos)."""
+    name = "1.2-CR lone-CR segmentação (pinado)"
+    if not HAVE_RG:
+        print(f"~skip {name} (sem rg)"); return
+    d = tempfile.mkdtemp(prefix="par_cr_")
+    try:
+        # lone CR, SEM nenhum \n: 3 segmentos, cada um com o termo.
+        with open(os.path.join(d, "maccr.txt"), "wb") as f:
+            f.write("linha um\rlinha dois\rlinha tres\r".encode())
+        q = Query(paths=[d], content="linha")
+        p = os.path.abspath(os.path.join(d, "maccr.txt"))
+        rg_n = len(_norm(_run(q, use_rg=True)).get(p, {}).get("lines", []))
+        py_n = len(_norm(_run(q, use_rg=False)).get(p, {}).get("lines", []))
+        if rg_n == 1 and py_n == 3:
+            _known(name, "cr_fora_de_crlf_segmentacao_de_linha")
+        elif rg_n == py_n:
+            _bug(name, f"divergência ESTRUTURAL documentada SUMIU: rg e py agora "
+                       f"dão {rg_n} linhas. Alguém 'consertou' um lado? Revise a "
+                       f"decisão CRLF e DIVERGENCIAS_CONHECIDAS antes de seguir.")
+        else:
+            _bug(name, f"segmentação inesperada em lone-CR: rg={rg_n}, py={py_n} "
+                       f"(documentado: rg=1, py=3)")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # =============================================================== 1.3 PROPRIEDADE (booleano)
 VOCAB = ["laudo", "nota", "exame", "paciente", "rascunho", "urgente"]
 
@@ -238,8 +287,18 @@ def caso_propriedade(n_expr=500, n_files=2000, seed=20260722):
             words = [w for w in VOCAB if rng.random() < 0.4]
             sub = os.path.join(d, f"s{i % 20:02d}")
             os.makedirs(sub, exist_ok=True)
-            with open(os.path.join(sub, f"f{i:05d}.txt"), "w") as f:
-                f.write("\n".join(words) + "\n" if words else "vazio\n")
+            body = "\n".join(words) + "\n" if words else "vazio\n"
+            fp = os.path.join(sub, f"f{i:05d}.txt")
+            # ~1/4 dos arquivos em CRLF (Fable, decisão CRLF 23/07): trava a
+            # paridade nova sob busca booleana. O rg preserva o \r e o Python
+            # (universal newlines) não; após engine._logical_line o conjunto de
+            # arquivos que casa QUALQUER termo deve ser idêntico independe do EOL.
+            if i % 4 == 0:
+                with open(fp, "wb") as f:
+                    f.write(body.replace("\n", "\r\n").encode())
+            else:
+                with open(fp, "w") as f:
+                    f.write(body)
         divergentes = 0
         exemplos = []
         for k in range(n_expr):
@@ -270,6 +329,7 @@ def test_parity_directed_and_property():
     if not (HAVE_RG and HAVE_FD):
         print("ok  Bloco1 paridade: PULADO (sem rg/fd — não há 2 mundos)"); return
     caso_dirigidos()
+    caso_cr_estrutural()                                # pina divergência lone-CR
     caso_propriedade(n_expr=120, n_files=400, seed=1)   # amostra rápida
     assert not FAIL, f"divergências SILENCIOSAS: {FAIL}"
     print(f"ok  Bloco1 paridade: {len(PASS)} casos OK, {len(KNOWN)} divergências conhecidas")
@@ -280,6 +340,7 @@ def main():
     if not (HAVE_RG and HAVE_FD):
         print("Sem rg/fd reais — nada a comparar. Instale ripgrep+fd."); return 0
     caso_dirigidos()
+    caso_cr_estrutural()        # pina divergência estrutural lone-CR
     caso_propriedade()          # 500 × 2000, o completo
     print("\n" + "=" * 64)
     print(f"PARIDADE: {len(PASS)} OK · {len(KNOWN)} conhecidas · {len(FAIL)} BUGS")

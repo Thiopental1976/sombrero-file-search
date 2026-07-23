@@ -631,7 +631,7 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
                     lst = res.setdefault(path, [])
                     if len(lst) < 200:
                         ln = ev["data"].get("line_number") or 0
-                        txt = ev["data"]["lines"].get("text", "").rstrip("\n")
+                        txt = engine._logical_line(ev["data"]["lines"].get("text", ""))
                         lst.append((ln, txt))
         finally:
             _reap_stats(proc, errf, stats)        # B1 + N2: mata órfão e conta inacessíveis
@@ -656,7 +656,7 @@ def _display_lines_py(pos_terms, files, q: engine.Query, cancel) -> dict:
                     if "\x00" in line:            # binário: descarta o arquivo inteiro
                         lst = []; break
                     if any(rx.search(line) for rx in rxs) and len(lst) < 200:
-                        lst.append((i, line.rstrip("\n")))
+                        lst.append((i, engine._logical_line(line)))
                 if lst:
                     res[os.path.abspath(fp)] = lst
         except OSError:
