@@ -1155,6 +1155,33 @@ def test_dest_caps_restrictive_filesystems():
     print("ok  F7   capacidades do destino: FAT/exFAT/NTFS pegos antes de copiar")
 
 
+def test_kernel_network_caps():
+    """F9c §4.1 (desenho Fable): destinos de REDE do KERNEL (não-gvfs; o SO já
+    montou). Sem eles, um CIFS caía em _DEFAULT_CAPS (POSIX otimista) e a
+    pré-checagem LIBERAVA ':' '?' '*' num nome que o SMB recusa. Agora o charset
+    segue o PROTOCOLO. Todos net=True → disparam o ritmo de escrita de rede (§4.2)."""
+    # _caps_for é PURA: fstype de kernel entra direto na tabela (path/mp irrelevantes)
+    for fs in ("nfs", "nfs4", "9p", "virtiofs"):
+        caps, via = disks._caps_for(fs, "/mnt/nas/x", "/mnt/nas")
+        assert caps["net"] and caps["symlinks"] and caps["perms"], f"{fs} devia ser POSIX+net"
+        assert not via
+    for fs in ("cifs", "smb3", "smbfs"):
+        caps, _ = disks._caps_for(fs, "/mnt/win/x", "/mnt/win")
+        assert caps["net"] and caps["label"] == "SMB" and not caps["symlinks"], f"{fs} devia ser SMB"
+        assert caps["charset"], "SMB precisa proibir o charset do protocolo"
+    for fs in ("fuse.sshfs", "sshfs"):
+        caps, _ = disks._caps_for(fs, "/mnt/ssh/x", "/mnt/ssh")
+        assert caps["net"] and caps["symlinks"] and caps["label"] == "SFTP", f"{fs} devia ser SFTP"
+    # comportamento na borda: DestCaps CIFS recusa nome com ':' e marca net; NFS aceita
+    smb = disks.DestCaps(fstype="cifs", **disks._NET_SMB)
+    assert smb.net and smb.name_problem("cena: 12?.mp4") == "charset"
+    nfs = disks.DestCaps(fstype="nfs4", **disks._NET_NFS)
+    assert nfs.net and nfs.name_problem("cena: 12?.mp4") is None, "NFS é POSIX: nome válido"
+    # pacing: destino de rede escreve em ritmo, igual removível (F9c §4.2)
+    assert (getattr(nfs, "net", False) or getattr(nfs, "removable", False)), "net devia pacear"
+    print("ok  F9c  caps de rede do kernel: nfs=POSIX, cifs=SMB (charset), sshfs=SFTP; net→pacing")
+
+
 def test_mount_entry_sees_mtp_gvfs():
     """A1 (parecer Fable, confirmado AO VIVO no Philips PMC7230): um telefone/media
     player via MTP aparece no /proc/mounts como 'gvfsd-fuse … fuse.gvfsd-fuse', SEM
@@ -2289,6 +2316,7 @@ def main():
            test_copy_conflicts, test_copy_cancel_removes_partial,
            test_copy_never_touches_source, test_preflight_space_and_mount,
            test_dest_caps_restrictive_filesystems,
+           test_kernel_network_caps,
            test_mount_entry_sees_mtp_gvfs,
            test_write_probe_classifies_errno, test_decide_strategy_machine,
            # F9a — perfil de I/O de rede + watchdog de montagem morta + gate de descida

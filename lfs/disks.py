@@ -262,6 +262,12 @@ _NET_LIMITED = dict(max_file=None, symlinks=False, perms=False, times=False,
 # degrada nomes sem evidência (charset livre) — a SONDA decide a gravabilidade.
 _NET_CONSERVATIVE = dict(max_file=None, symlinks=False, perms=False, times=False,
                          charset="", reserved=False, label="rede", net=True)
+# Montagem NFS do KERNEL (não-gvfs): POSIX pleno (symlink/perms/times ok), mas
+# net=True — o gargalo é a rede e o f_bavail do statvfs sobre NFS é palpite. 9p e
+# virtiofs (VM) idem. Nota honesta: fsync sobre NFS é caro (close-to-open), mas
+# "copiado = está lá" vale mais no NAS que a economia — o pacing de rede cuida disso.
+_NET_NFS = dict(max_file=None, symlinks=True, perms=True, times=True,
+                charset="", reserved=False, label="NFS", net=True)
 
 _FS_CAPS = {
     "vfat": _FAT, "fat": _FAT, "msdos": _FAT, "umsdos": _FAT,
@@ -275,6 +281,13 @@ _FS_CAPS = {
     # ISO/UDF montados são somente-leitura; tratados como erro na pré-checagem
     "iso9660": dict(max_file=None, symlinks=True, perms=False, times=False,
                     charset="", reserved=False, label="ISO9660", readonly=True),
+    # F9c — montagens de REDE do KERNEL (não passam pelo gvfs; o SO já montou).
+    # Sem elas, um destino CIFS caía em _DEFAULT_CAPS (POSIX otimista) e a
+    # pré-checagem LIBERAVA ':' '?' '*' num nome que o SMB recusa. Agora o charset
+    # segue o PROTOCOLO. Todas net=True → dispara o ritmo de escrita de rede (§4.2).
+    "nfs": _NET_NFS, "nfs4": _NET_NFS, "9p": _NET_NFS, "virtiofs": _NET_NFS,
+    "cifs": _NET_SMB, "smb3": _NET_SMB, "smbfs": _NET_SMB, "smb": _NET_SMB,
+    "fuse.sshfs": _NET_POSIX, "sshfs": _NET_POSIX,   # rename atômico ok → ATOMIC
 }
 
 # esquema gvfs (antes do ':' no primeiro componente do caminho) -> perfil de caps.

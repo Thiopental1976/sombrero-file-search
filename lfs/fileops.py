@@ -566,10 +566,14 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
             res.failed.append((e.src, "destination not writable"))
         return res
 
-    # Removível: escreve em ritmo, para não sequestrar o cache do sistema (PACE).
-    # Em disco interno o kernel já administra bem e o fsync a cada 16 MiB só
-    # atrapalharia — a política existe para pendrive, não para NVMe.
-    pace = PACE if getattr(caps, "removable", False) else 0
+    # Ritmo de escrita: escreve por faixas com fdatasync+fadvise, para não
+    # sequestrar o cache do sistema (PACE). Vale para o REMOVÍVEL (pendrive) e —
+    # F9c §4.2 — para o destino de REDE: escrever num CIFS/NFS lento acumula
+    # writeback global igual ao do pendrive. Em disco interno o kernel administra
+    # bem e o fsync a cada 16 MiB só atrapalharia — a política é para link lento.
+    # Nota honesta: fsync sobre NFS é caro (close-to-open), mas "copiado = está lá"
+    # vale mais no NAS do que a economia.
+    pace = PACE if (getattr(caps, "removable", False) or getattr(caps, "net", False)) else 0
 
     prog = CopyProgress()
     prog.total_files, prog.total_bytes = pf.total_files, pf.copy_bytes
