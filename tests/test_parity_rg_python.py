@@ -322,6 +322,125 @@ def caso_propriedade(n_expr=500, n_files=2000, seed=20260722):
         shutil.rmtree(d, ignore_errors=True)
 
 
+# =============================================================== 2. BLOCO 2 — FUZZ DE NOMES
+# Fuzz da busca POR NOME (fd ↔ Python). O valor central: estressar o caminho de
+# FUSÃO de globs (opt#3: >3 globs viram UMA regex via _merge_globs/_glob_to_regex)
+# — é onde uma tradução glob→regex errada vazaria em silêncio. Nomes ASCII de
+# propósito: o case-fold ASCII do Python (.lower) e o --ignore-case do fd são
+# idênticos, então qualquer divergência aqui é bug de LÓGICA, não de Unicode.
+_GLOB_ATOMS = ["*", "?", "a", "b", "e", "g", "l", "o", "t", "x", "0", "1",
+               "[ab]", "[a-z]", "[0-9]", "[!x]", "[!0-9]", "_", "-", "."]
+_NAME_EXTS = ["txt", "log", "md", "py", "dat"]
+
+def _rand_glob(rng):
+    """Glob de basename no subconjunto SEGURO (sem '{}' de chave, sem '/'): os
+    mesmos operadores em que fnmatch e o globset do fd concordam byte-a-byte."""
+    body = "".join(rng.choice(_GLOB_ATOMS) for _ in range(rng.randint(1, 4)))
+    if rng.random() < 0.5:
+        body += "*." + rng.choice(_NAME_EXTS)
+    return body or "*"
+
+def _rand_name_regex(rng):
+    """Regex de basename no subconjunto comum a Rust-regex e `re` (sem backref/lookaround)."""
+    return rng.choice([
+        r"^" + rng.choice("abeglotx"),
+        r"\." + rng.choice(_NAME_EXTS) + r"$",
+        r"[0-9]+",
+        rng.choice("abeg") + r".*" + rng.choice("lotx"),
+        r"(" + rng.choice(_NAME_EXTS) + r"|" + rng.choice(_NAME_EXTS) + r")$",
+        r"^[a-z]{1,3}",
+        r"[._-]",
+    ])
+
+def caso_fuzz_nomes(n_queries=300, n_files=600, seed=20260723):
+    """Campanha 2 / BLOCO 2 (Fable): fuzz de busca POR NOME comparando o mundo fd
+    contra o fallback Python (os.walk + fnmatch/re). Varia padrões (glob 1..6 —
+    às vezes ≥4, disparando a fusão — e regex), caixa, ocultos, profundidade e
+    recursão; exige conjuntos de caminhos IDÊNTICOS. Divergência = bug (falha)."""
+    if not (HAVE_RG and HAVE_FD):
+        print("~skip Bloco2 fuzz de nomes (sem fd)"); return
+    rng = random.Random(seed)
+    d = tempfile.mkdtemp(prefix="par_nome_")
+    try:
+        alpha = "abeglotx0123_-. +"
+        for i in range(n_files):
+            sub = d
+            for _ in range(rng.randint(0, 3)):
+                sub = os.path.join(sub, f"d{rng.randint(0, 4)}")
+            os.makedirs(sub, exist_ok=True)
+            stem = ("".join(rng.choice(alpha) for _ in range(rng.randint(1, 8)))).strip() or "f"
+            ext = rng.choice(_NAME_EXTS + [e.upper() for e in _NAME_EXTS])
+            hidden = "." if rng.random() < 0.15 else ""
+            try:
+                with open(os.path.join(sub, f"{hidden}{stem}.{ext}"), "w") as f:
+                    f.write("x")
+            except OSError:
+                pass
+        divergentes, exemplos = 0, []
+        for k in range(n_queries):
+            common = dict(paths=[d],
+                          case_sensitive=rng.random() < 0.5,
+                          include_hidden=rng.random() < 0.5,
+                          max_depth=rng.choice([None, 1, 2, 3]),
+                          recursive=rng.random() < 0.9)
+            if rng.random() < 0.25:
+                q = Query(name_patterns=[_rand_name_regex(rng)], name_is_regex=True, **common)
+            else:
+                q = Query(name_patterns=[_rand_glob(rng) for _ in range(rng.randint(1, 6))],
+                          **common)
+            try:
+                a = {os.path.abspath(m.path) for m in _run(q, True)}    # fd
+                b = {os.path.abspath(m.path) for m in _run(q, False)}   # python
+            except Exception as e:
+                _bug(f"2.fuzz#{k} exceção", f"{q.name_patterns!r} -> {e}")
+                divergentes += 1; continue
+            if a != b:
+                divergentes += 1
+                if len(exemplos) < 6:
+                    exemplos.append((q.name_patterns, q.name_is_regex,
+                                     sorted(os.path.relpath(p, d) for p in (a - b))[:3],
+                                     sorted(os.path.relpath(p, d) for p in (b - a))[:3]))
+        if divergentes == 0:
+            _ok(f"2.fuzz nomes: {n_queries} queries × {n_files} arq — fd≡Python")
+        else:
+            _bug("2.fuzz nomes", f"{divergentes}/{n_queries} divergem. Ex: {exemplos}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def caso_multitermo_dirigido():
+    """Dirigido mínimo do multi-termo (Fable §0): dois termos POSITIVOS numa busca
+    booleana. (a) mesma LINHA → a linha aparece UMA vez (dedup, não uma por termo);
+    (b) linhas DISTINTAS → as duas aparecem, ORDENADAS por nº de linha. max_results
+    apertado. Vale nos dois mundos (rg e Python)."""
+    if not (HAVE_RG and HAVE_FD):
+        print("~skip 2.multitermo (sem rg/fd)"); return
+    d = tempfile.mkdtemp(prefix="par_mt_")
+    try:
+        with open(os.path.join(d, "same.txt"), "w") as f:       # termos na MESMA linha
+            f.write("alfa e beta juntos\nlinha neutra\n")
+        with open(os.path.join(d, "diff.txt"), "w") as f:       # linhas DISTINTAS (beta antes)
+            f.write("comeco beta\nmeio nada\nfim alfa\n")
+        q = Query(paths=[d], max_results=50)
+        ok = True
+        for use in (True, False):
+            by = {os.path.basename(m.path): m for m in _run_bool(q, "alfa AND beta", use)}
+            if set(by) != {"same.txt", "diff.txt"}:
+                _bug("2.multitermo", f"arquivos {set(by)} (rg={use})"); ok = False; break
+            l1 = [t for (n, t) in by["same.txt"].lines if n == 1]
+            if len(l1) != 1:            # (a) dedup mesma-linha
+                _bug("2.multitermo", f"dedup mesma-linha falhou: {by['same.txt'].lines} (rg={use})")
+                ok = False; break
+            nums = [n for (n, _t) in by["diff.txt"].lines]
+            if nums != sorted(nums) or 1 not in nums or 3 not in nums:   # (b) ordenação
+                _bug("2.multitermo", f"ordenação/linhas erradas: {by['diff.txt'].lines} (rg={use})")
+                ok = False; break
+        if ok:
+            _ok("2.multitermo dirigido: dedup mesma-linha + ordenação linhas-distintas")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 # =============================================================== 1.1 harness p/ suíte
 def test_parity_directed_and_property():
     """Ponto de entrada p/ o test_audit: roda os casos dirigidos + uma amostra
@@ -330,6 +449,8 @@ def test_parity_directed_and_property():
         print("ok  Bloco1 paridade: PULADO (sem rg/fd — não há 2 mundos)"); return
     caso_dirigidos()
     caso_cr_estrutural()                                # pina divergência lone-CR
+    caso_multitermo_dirigido()                          # Bloco 2: dedup + ordenação
+    caso_fuzz_nomes(n_queries=120, n_files=300, seed=2) # Bloco 2: fuzz de nomes (amostra)
     caso_propriedade(n_expr=120, n_files=400, seed=1)   # amostra rápida
     assert not FAIL, f"divergências SILENCIOSAS: {FAIL}"
     print(f"ok  Bloco1 paridade: {len(PASS)} casos OK, {len(KNOWN)} divergências conhecidas")
@@ -341,6 +462,8 @@ def main():
         print("Sem rg/fd reais — nada a comparar. Instale ripgrep+fd."); return 0
     caso_dirigidos()
     caso_cr_estrutural()        # pina divergência estrutural lone-CR
+    caso_multitermo_dirigido()  # Bloco 2: dedup mesma-linha + ordenação
+    caso_fuzz_nomes()           # Bloco 2: fuzz de nomes 300 × 600, o completo
     caso_propriedade()          # 500 × 2000, o completo
     print("\n" + "=" * 64)
     print(f"PARIDADE: {len(PASS)} OK · {len(KNOWN)} conhecidas · {len(FAIL)} BUGS")
