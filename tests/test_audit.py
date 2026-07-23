@@ -2869,6 +2869,42 @@ def test_dupes_no_delete_api():
     print("ok  F10c linha-vermelha: dupes.py não tem API destrutiva (só acha/exporta)")
 
 
+def test_dupes_export_csv_json_hostile_names():
+    """F10c — exportação CSV/JSON com caminhos hostis (bytes não-UTF-8): grava sem
+    estourar (surrogateescape) e as colunas certas (group, hash, size, path)."""
+    payload = b"exportme" * 500
+    d = tempfile.mkdtemp(prefix="lfs_dupexp_")
+    try:
+        # nome com byte não-UTF-8 (0xff) — o acervo do Rodrigo tem desses
+        hostile = os.path.join(d.encode(), b"h\xffstile.bin")
+        os.mkdir(os.path.join(d, "sub"))
+        with open(hostile, "wb") as f:
+            f.write(payload)
+        with open(os.path.join(d, "sub", "copy.bin"), "wb") as f:
+            f.write(payload)
+        groups = dupes.find_duplicates([d])
+        assert len(groups) == 1, f"esperava 1 grupo, veio {len(groups)}"
+
+        csv_path = os.path.join(d, "out.csv")
+        dupes.export(groups, csv_path, "csv")
+        import csv as _csv
+        with open(csv_path, encoding="utf-8", errors="surrogateescape") as f:
+            rows = list(_csv.reader(f))
+        assert rows[0] == ["group", "hash", "size", "path"], rows[0]
+        assert len(rows) - 1 == 2, f"esperava 2 linhas de dado: {rows}"
+
+        json_path = os.path.join(d, "out.json")
+        dupes.export(groups, json_path, "json")
+        import json as _json
+        with open(json_path, encoding="utf-8", errors="surrogateescape") as f:
+            data = _json.load(f)
+        assert len(data) == 1 and data[0]["size"] == len(payload), data
+        assert set(data[0]) == {"hash", "size", "wasted", "paths"}, list(data[0])
+        print("ok  F10c exportação CSV/JSON (colunas certas, nomes hostis OK)")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_dupes_parity_with_oracle():
     """F10c — PARIDADE: no mesmo fixture (sem hardlinks), os grupos do dupes.py
     nativo == os grupos do motor do cedro (dedup_layer1), que é o ORÁCULO. Ambos
@@ -3001,6 +3037,7 @@ def main():
            test_dupes_same_head_different_tail_separates,
            test_dupes_cancel_leaves_no_state, test_dupes_denied_counted,
            test_dupes_symlinks_and_zero_excluded, test_dupes_no_delete_api,
+           test_dupes_export_csv_json_hostile_names,
            test_dupes_parity_with_oracle,
            # Campanha 2 / Bloco 1 — paridade rg ↔ fallback Python
            test_parity_directed_and_property]

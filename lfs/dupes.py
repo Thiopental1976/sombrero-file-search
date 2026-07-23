@@ -265,3 +265,23 @@ def find_duplicates(roots, *, min_size: int = 0, include_zero: bool = False,
 def summary(groups: List[DupGroup]) -> Tuple[int, int]:
     """(nº de grupos, bytes recuperáveis) — para o cabeçalho "N grupos · X GB"."""
     return len(groups), sum(g.wasted for g in groups)
+
+
+def export(groups: List[DupGroup], path: str, fmt: str = "csv"):
+    """Grava os grupos em CSV (colunas: group, hash, size, path — uma linha por
+    caminho) ou JSON. `surrogateescape` deixa caminhos com bytes não-UTF-8 (nomes
+    hostis do acervo) irem para o disco sem estourar — a mesma disciplina do F5."""
+    if fmt == "json":
+        import json
+        data = [{"hash": g.digest, "size": g.size, "wasted": g.wasted,
+                 "paths": g.paths} for g in groups]
+        with open(path, "w", encoding="utf-8", errors="surrogateescape") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    else:
+        import csv
+        with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["group", "hash", "size", "path"])
+            for i, g in enumerate(groups, 1):
+                for p in g.paths:
+                    w.writerow([i, g.digest, g.size, p])

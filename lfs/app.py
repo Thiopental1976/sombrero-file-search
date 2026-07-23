@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QSplitter, QHeaderView, QSpinBox, QMenu, QTextEdit,
     QAbstractItemView, QToolButton, QFrame, QStackedWidget, QSlider, QSizePolicy,
     QLayout, QDialog, QDialogButtonBox, QProgressBar, QFormLayout, QMessageBox,
-    QInputDialog, QTabWidget)
+    QInputDialog, QTabWidget, QTreeWidget, QTreeWidgetItem)
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -40,7 +40,7 @@ except ImportError:                     # QtMultimedia opcional (portabilidade)
     HAS_MEDIA = False
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import engine, boolean, disks, fileops, xdg, version, searches, humane, resultfilter
+import engine, boolean, disks, fileops, xdg, version, searches, humane, resultfilter, dupes
 from engine import Query, Match
 from i18n import t
 
@@ -1048,6 +1048,233 @@ class SearchTab(QWidget):
             self.worker = None
 
 
+# ================================================================= F10c: duplicatas (GUI)
+class DupWorker(QThread):
+    """Roda o caçador nativo (lfs/dupes) fora da thread da UI. Cancel por bloco,
+    progresso em bytes, fase por estágio — tudo o que o núcleo já expõe."""
+    progress = Signal(int, int)      # bytes hasheados, bytes totais
+    phase = Signal(str)              # scan / head / full
+    done = Signal(object, object)    # (list[DupGroup], stats)
+
+    def __init__(self, roots, min_size=0, include_zero=False):
+        super().__init__()
+        self.roots = roots
+        self.min_size = min_size
+        self.include_zero = include_zero
+        self._cancel = False
+        self.stats = dupes.new_stats()
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        groups = dupes.find_duplicates(
+            self.roots, min_size=self.min_size, include_zero=self.include_zero,
+            cancel=lambda: self._cancel,
+            on_progress=lambda d, tot: self.progress.emit(d, tot),
+            on_phase=lambda name: self.phase.emit(name),
+            stats=self.stats)
+        self.done.emit(groups, self.stats)
+
+
+class DuplicatesWindow(QDialog):
+    """Janela própria do caçador de duplicatas. Mesmos chips de caminho da busca;
+    acha, mostra e EXPORTA — jamais apaga (ação por item = 'abrir a pasta
+    destacando', o usuário decide no gerenciador dele)."""
+
+    def __init__(self, parent: "MainWindow", seed_paths: str):
+        super().__init__(parent)
+        self.main = parent
+        self.setWindowTitle(t("Duplicate hunter"))
+        self.setMinimumSize(760, 520)
+        self.worker: DupWorker | None = None
+        self.groups: list = []
+        self._build(seed_paths)
+
+    def _build(self, seed_paths):
+        v = QVBoxLayout(self); v.setContentsMargins(14, 14, 14, 12); v.setSpacing(9)
+
+        row = QHBoxLayout(); row.setSpacing(8)
+        lbl = QLabel(t("In")); lbl.setObjectName("section")
+        self.ed_paths = QLineEdit(seed_paths)
+        self.ed_paths.setPlaceholderText(t("Folder(s)/mounts — separate with ';'"))
+        self.btn_browse = QPushButton("📂"); self.btn_browse.setFixedWidth(40)
+        self.btn_browse.clicked.connect(self._browse)
+        row.addWidget(lbl); row.addWidget(self.ed_paths, 1); row.addWidget(self.btn_browse)
+        v.addLayout(row)
+
+        opt = QHBoxLayout(); opt.setSpacing(10)
+        self.ck_zero = QCheckBox(t("include empty files"))
+        opt.addWidget(QLabel(t("Size ≥"))); self.ed_minsz = QLineEdit()
+        self.ed_minsz.setFixedWidth(70); self.ed_minsz.setPlaceholderText("1M")
+        self.ed_minsz.setToolTip(t("Ignore files smaller than this (e.g. 1M, 500K)."))
+        opt.addWidget(self.ed_minsz); opt.addWidget(self.ck_zero); opt.addStretch(1)
+        self.btn_scan = QPushButton(t("  Scan  ")); self.btn_scan.setObjectName("primary")
+        self.btn_scan.clicked.connect(self._scan)
+        self.btn_cancel = QPushButton(t("Cancel")); self.btn_cancel.setEnabled(False)
+        self.btn_cancel.clicked.connect(self._cancel)
+        opt.addWidget(self.btn_scan); opt.addWidget(self.btn_cancel)
+        v.addLayout(opt)
+
+        self.lbl_head = QLabel(""); self.lbl_head.setObjectName("narrhead")
+        v.addWidget(self.lbl_head)
+        self.bar = QProgressBar(); self.bar.setTextVisible(True); self.bar.setVisible(False)
+        v.addWidget(self.bar)
+
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels([t("File"), t("Size"), t("Disk")])
+        self.tree.setColumnWidth(0, 440)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._menu)
+        self.tree.itemDoubleClicked.connect(lambda *_: self._reveal())
+        v.addWidget(self.tree, 1)
+
+        foot = QHBoxLayout()
+        self.btn_csv = QPushButton(t("Export CSV…")); self.btn_csv.clicked.connect(
+            lambda: self._export("csv"))
+        self.btn_json = QPushButton(t("Export JSON…")); self.btn_json.clicked.connect(
+            lambda: self._export("json"))
+        self.btn_csv.setEnabled(False); self.btn_json.setEnabled(False)
+        foot.addWidget(self.btn_csv); foot.addWidget(self.btn_json); foot.addStretch(1)
+        btn_close = QPushButton(t("Close")); btn_close.clicked.connect(self.close)
+        foot.addWidget(btn_close)
+        v.addLayout(foot)
+
+    # ---- ações
+    def _browse(self):
+        d = QFileDialog.getExistingDirectory(self, t("Choose folder"),
+                                             os.path.expanduser("~"))
+        if d:
+            cur = self.ed_paths.text().strip()
+            self.ed_paths.setText(f"{cur};{d}" if cur else d)
+
+    def _roots(self):
+        return [os.path.expanduser(p.strip())
+                for p in self.ed_paths.text().split(";") if p.strip()]
+
+    def _scan(self):
+        roots = self._roots()
+        if not roots:
+            QMessageBox.information(self, t("Duplicate hunter"),
+                                    t("Choose at least one folder to scan.")); return
+        try:
+            minsz = parse_size(self.ed_minsz.text()) or 0
+        except Exception:
+            minsz = 0
+        self.tree.clear(); self.groups = []
+        self.btn_csv.setEnabled(False); self.btn_json.setEnabled(False)
+        self.btn_scan.setEnabled(False); self.btn_cancel.setEnabled(True)
+        self.bar.setVisible(True); self.bar.setRange(0, 0)      # indeterminado até o full
+        self.lbl_head.setText(t("Scanning…"))
+        w = DupWorker(roots, min_size=minsz, include_zero=self.ck_zero.isChecked())
+        w.phase.connect(self._on_phase)
+        w.progress.connect(self._on_progress)
+        w.done.connect(self._on_done)
+        self.worker = w
+        w.start()
+
+    def _cancel(self):
+        if self.worker:
+            self.worker.cancel()
+            self.btn_cancel.setEnabled(False)
+            self.lbl_head.setText(t("Cancelling…"))
+
+    def _on_phase(self, name):
+        txt = {"scan": t("Listing files…"), "head": t("Comparing heads…"),
+               "full": t("Hashing full files…")}.get(name, t("Working…"))
+        self.lbl_head.setText(txt)
+
+    def _on_progress(self, done, total):
+        if total > 0:
+            self.bar.setRange(0, total); self.bar.setValue(done)
+            self.bar.setFormat(f"{human_size(done)} / {human_size(total)}")
+
+    def _on_done(self, groups, stats):
+        self.worker = None
+        self.groups = groups
+        self.bar.setVisible(False)
+        self.btn_scan.setEnabled(True); self.btn_cancel.setEnabled(False)
+        n, wasted = dupes.summary(groups)
+        denied = stats.get("denied", 0)
+        extra = t("  ·  {d} unreadable", d=denied) if denied else ""
+        self.lbl_head.setText(t("{n} group(s) · {size} recoverable{extra}",
+                                n=n, size=human_size(wasted), extra=extra))
+        self._fill_tree(groups)
+        has = bool(groups)
+        self.btn_csv.setEnabled(has); self.btn_json.setEnabled(has)
+
+    def _fill_tree(self, groups):
+        pal = THEMES[self.main.theme]
+        mono = QFont("monospace"); mono.setStyleHint(QFont.Monospace)
+        for g in groups:
+            top = QTreeWidgetItem([
+                t("{k} copies · {each} each · {waste} recoverable",
+                  k=len(g.members), each=human_size(g.size),
+                  waste=human_size(g.wasted)),
+                human_size(g.size), ""])
+            top.setFirstColumnSpanned(True)
+            for c in g.members:
+                disk = self.main._disk_badge(c.path)
+                names = " ⇄ ".join(os.path.basename(p) for p in c.names) \
+                    if len(c.names) > 1 else c.path
+                child = QTreeWidgetItem([c.path, human_size(c.size), disk])
+                child.setToolTip(0, "\n".join(c.names))
+                child.setData(0, Qt.UserRole, c.path)
+                child.setFont(2, mono)
+                top.addChild(child)
+            self.tree.addTopLevelItem(top)
+            top.setExpanded(True)
+
+    def _sel_paths(self):
+        out = []
+        for it in self.tree.selectedItems():
+            p = it.data(0, Qt.UserRole)
+            if p:
+                out.append(p)
+        return out
+
+    def _menu(self, pos):
+        if not self._sel_paths():
+            return
+        m = QMenu(self)
+        m.addAction(t("Open containing folder"), self._reveal)
+        m.addAction(t("Copy path(s)"), self._copy_paths)
+        m.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _reveal(self):
+        ps = self._sel_paths()[:10]
+        if ps:
+            self.main._reveal_paths(ps)
+
+    def _copy_paths(self):
+        ps = self._sel_paths()
+        if ps:
+            QGuiApplication.clipboard().setText("\n".join(ps))
+
+    def _export(self, fmt):
+        if not self.groups:
+            return
+        filt = "CSV (*.csv)" if fmt == "csv" else "JSON (*.json)"
+        path, _ = QFileDialog.getSaveFileName(self, t("Export duplicates"),
+                                              os.path.expanduser(f"~/duplicates.{fmt}"), filt)
+        if not path:
+            return
+        try:
+            dupes.export(self.groups, path, fmt)
+        except OSError as e:
+            QMessageBox.warning(self, t("Duplicate hunter"),
+                                humane.human_error(e, target=os.path.basename(path)))
+            return
+        self.lbl_head.setText(self.lbl_head.text() + t("   —  exported ✔"))
+
+    def closeEvent(self, ev):
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.worker.wait(3000)
+        super().closeEvent(ev)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1202,7 +1429,13 @@ class MainWindow(QMainWindow):
         self.mnu_saved = QMenu(self)
         self.mnu_saved.aboutToShow.connect(self._fill_saved_menu)
         self.btn_saved.setMenu(self.mnu_saved)
-        r2.addWidget(self.btn_disks); r2.addWidget(self.btn_saved); r2.addWidget(btn_browse)
+        # F10c: entrada do caçador de duplicatas (janela própria, chips de caminho).
+        self.btn_dupes = QToolButton(); self.btn_dupes.setText(t("Duplicates…"))
+        self.btn_dupes.setToolTip(t("Find byte-identical files under the search "
+                                    "paths.\nShows and exports them — never deletes."))
+        self.btn_dupes.clicked.connect(self.open_duplicates)
+        r2.addWidget(self.btn_disks); r2.addWidget(self.btn_saved)
+        r2.addWidget(self.btn_dupes); r2.addWidget(btn_browse)
         root.addLayout(r2)
 
         # ---------- chips de opção (FlowLayout: quebra linha em janela estreita) ----------
@@ -2315,22 +2548,49 @@ class MainWindow(QMainWindow):
         acervo com centenas de vídeos, abrir sem destacar obriga o usuário a
         reencontrar à mão o que o LFS acabou de achar."""
         ms = self._sel_matches()[:10]
-        if not ms:
+        if ms:
+            self._reveal_paths([m.path for m in ms])
+
+    def _reveal_paths(self, paths):
+        """Abre a(s) pasta(s) COM O ITEM destacado, via org.freedesktop.FileManager1
+        (padrão que Nemo/Nautilus/Dolphin/Thunar implementam). Reusado pela busca e
+        pelo caçador de duplicatas — 'o usuário decide no gerenciador dele'."""
+        if not paths:
             return
-        dirs = list(dict.fromkeys(os.path.dirname(m.path) for m in ms))
+        dirs = list(dict.fromkeys(os.path.dirname(p) for p in paths))
         # A janela tem que abrir no gerenciador PADRÃO DO USUÁRIO. O ShowItems é
         # ativado por nome no barramento, e quem registra o FileManager1 pode não
         # ser o padrão dele (no Mint o Nemo registra mesmo se o padrão for outro).
         # Então: só usa o barramento se o padrão for um implementador conhecido.
         fm = xdg.default_file_manager()
         if fm is None or xdg.implements_showitems(fm):
-            if self._show_items([m.path for m in ms]):
+            if self._show_items(list(paths)):
                 return
         if fm is not None and xdg.launch(fm, dirs):   # padrão do usuário, sem seleção
             return
         # último recurso: xdg-open pelo Qt (WM exótico, sistema sem associação)
         for d in dirs:
             QDesktopServices.openUrl(QUrl.fromLocalFile(d))
+
+    def _disk_badge(self, path: str) -> str:
+        """Nome amigável do disco onde o arquivo está (label do volume > mountpoint
+        > classe). Humanos reconhecem o disco pelo Label — é o que o menu de discos
+        já faz; aqui o grupo de duplicatas mostra em QUE disco cada cópia mora."""
+        try:
+            prof = disks.search_profile(path)
+            mp = prof.mountpoint or "/"
+            if mp in ("/", ""):
+                return t("system")
+            return disks.volume_label(mp) or os.path.basename(mp.rstrip("/")) or mp
+        except Exception:
+            return ""
+
+    def open_duplicates(self):
+        """F10c: abre o caçador de duplicatas semeado com os caminhos da busca."""
+        seed = self.ed_path.text().strip() or os.path.expanduser("~")
+        dlg = DuplicatesWindow(self, seed)
+        dlg.show()                                # não-modal: a busca continua viva
+        self._dupwin = dlg                        # segura a referência (senão some)
 
     def _show_items(self, paths) -> bool:
         if getattr(self, "_fm1_ok", None) is False:

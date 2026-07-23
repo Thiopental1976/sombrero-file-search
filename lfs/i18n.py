@@ -323,6 +323,38 @@ _PT = {
     "{verb} {done}/{total} locations · {found} found · {sec}":
         "{verb} {done}/{total} locais · {found} achados · {sec}",
 
+    # --- F10c: caçador de duplicatas ---
+    "Duplicates…": "Duplicatas…",
+    "Find byte-identical files under the search paths.\n"
+    "Shows and exports them — never deletes.":
+        "Acha arquivos byte-idênticos sob os caminhos da busca.\n"
+        "Mostra e exporta — nunca apaga.",
+    "Duplicate hunter": "Caçador de duplicatas",
+    "include empty files": "incluir arquivos vazios",
+    "Ignore files smaller than this (e.g. 1M, 500K).":
+        "Ignora arquivos menores que isto (ex.: 1M, 500K).",
+    "  Scan  ": "  Varrer  ",
+    "Disk": "Disco",
+    "Export CSV…": "Exportar CSV…",
+    "Export JSON…": "Exportar JSON…",
+    "Close": "Fechar",
+    "Choose folder": "Escolher pasta",
+    "Choose at least one folder to scan.":
+        "Escolha ao menos uma pasta para varrer.",
+    "Scanning…": "Varrendo…",
+    "Listing files…": "Listando arquivos…",
+    "Comparing heads…": "Comparando cabeças…",
+    "Hashing full files…": "Hasheando arquivos inteiros…",
+    "Working…": "Trabalhando…",
+    "{n} group(s) · {size} recoverable{extra}":
+        "{n} grupo(s) · {size} recuperáveis{extra}",
+    "  ·  {d} unreadable": "  ·  {d} ilegíveis",
+    "{k} copies · {each} each · {waste} recoverable":
+        "{k} cópias · {each} cada · {waste} recuperáveis",
+    "Export duplicates": "Exportar duplicatas",
+    "   —  exported ✔": "   —  exportado ✔",
+    "system": "sistema",
+
     # --- humane.py (F10b #6): frases de erro humanas ---
     "The network location stopped responding.":
         "O local de rede parou de responder.",
