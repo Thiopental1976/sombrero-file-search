@@ -585,9 +585,11 @@ def _iter_content_python(q: Query, cancel, stats=None):
 # ---------------------------------------------------------------- API pública
 def _live_roots(paths, stats, probe_timeout: float = 3.0):
     """F9a §2.2 — GATE DE DESCIDA. Antes de o walker entrar num root, se ele for
-    uma montagem de rede (NFS/CIFS/SSHFS/…), sonda `mount_alive` numa thread
-    descartável. Montagem MORTA (D-state, `stat` travado) é PULADA com aviso
-    visível em `stats['skipped_mounts']` — nunca congela o programa, nunca silêncio.
+    uma montagem de rede (NFS/CIFS/SSHFS/…), sonda `mount_status` numa PROCESSO
+    descartável (F1). Montagem que não responde (D-state, `stat` travado) ou que
+    responde QUEBRADA (ENOTCONN/ESTALE… — F2) é PULADA com aviso visível em
+    `stats['skipped_mounts']`, com `reason` = 'no_response' | 'broken_mount' —
+    nunca congela o programa, nunca silêncio.
 
     Roots locais (disco/SSD/SMR) passam direto, sem custo de sonda. Retorna a
     lista de roots vivos, na ordem original. Se `disks` não puder ser importado
@@ -608,11 +610,12 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0):
             continue
         if prof.is_network:
             mp = prof.mountpoint or root
-            if not disks.mount_alive(mp, timeout=probe_timeout):
+            status = disks.mount_status(mp, timeout=probe_timeout)
+            if status != "alive":
                 if stats is not None:
                     stats.setdefault("skipped_mounts", []).append(
                         {"path": root, "mount": mp, "fstype": prof.fstype,
-                         "reason": "no_response"})
+                         "reason": status})   # 'no_response' | 'broken_mount'
                 continue
         live.append(root)
     return live

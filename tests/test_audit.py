@@ -1279,28 +1279,38 @@ def test_search_profile_classification():
 
 
 def test_mount_alive_watchdog():
-    """F9a §2.2: mount_alive() sonda a vida da montagem em thread daemon com
-    timeout. Uma montagem VIVA responde (True) — inclusive se o stat der erro de
-    I/O (respondeu = viva). Uma montagem TRAVADA (stat que nunca volta, o D-state
-    do NFS morto) estoura o timeout e devolve False SEM travar o chamador — a
-    thread presa fica órfã e inofensiva. Testado com _stat injetável: determinístico,
-    sem precisar de NFS/sshfs real (a fase de integração usa SIGSTOP no sshfs)."""
+    """F9a §2.2 + F1/F2: mount_status() sonda a vida da montagem num PROCESSO
+    descartável (fork) com timeout. VIVA responde 'alive' — inclusive se o stat
+    negar com EACCES/EPERM/ENOENT/EIO (respondeu = viva). QUEBRADA (F2: stat
+    responde na hora com ENOTCONN/ESTALE/EHOSTDOWN/ENODEV) = 'broken_mount'.
+    TRAVADA (D-state do NFS morto, stat que nunca volta) estoura o timeout =
+    'no_response' SEM travar o chamador — o filho preso é ABANDONADO (F1), nunca
+    vira zumbi que impede a saída. _stat injetável: determinístico, sem NAS real."""
+    import errno as _errno
     d = tempfile.mkdtemp(prefix="lfs_alive_")
     try:
-        assert disks.mount_alive(d, timeout=2.0), "dir real: viva"
-        # stat que ERRA rápido = respondeu = viva
-        boom = lambda p: (_ for _ in ()).throw(OSError("stale"))
-        assert disks.mount_alive(d, timeout=2.0, _stat=boom), "erro de I/O = respondeu = viva"
-        # stat que TRAVA além do timeout = montagem morta; NÃO pode travar o teste
+        assert disks.mount_status(d, timeout=2.0) == "alive", "dir real: viva"
+        assert disks.mount_alive(d, timeout=2.0), "mount_alive bool: viva"
+        # F2: errno de montagem morta => broken_mount
+        enotconn = lambda p: (_ for _ in ()).throw(OSError(_errno.ENOTCONN, "not connected"))
+        assert disks.mount_status(d, timeout=2.0, _stat=enotconn) == "broken_mount"
+        assert not disks.mount_alive(d, timeout=2.0, _stat=enotconn), "quebrada != viva"
+        # EACCES respondeu = a montagem está VIVA (só negou o alvo)
+        eacces = lambda p: (_ for _ in ()).throw(OSError(_errno.EACCES, "denied"))
+        assert disks.mount_status(d, timeout=2.0, _stat=eacces) == "alive", "EACCES = viva"
+        # F1: stat que TRAVA além do timeout = no_response, chamador livre, filho
+        # abandonado (não pode travar o teste nem virar zumbi que impede a saída).
         hang = lambda p: time.sleep(30)
         t0 = time.time()
-        dead = disks.mount_alive(d, timeout=0.3, _stat=hang)
+        dead = disks.mount_status(d, timeout=0.3, _stat=hang)
         elapsed = time.time() - t0
-        assert dead is False, "montagem travada deveria dar False (morta)"
-        assert elapsed < 2.0, f"mount_alive NÃO respeitou o timeout (levou {elapsed:.1f}s)"
+        assert dead == "no_response", "montagem travada deveria dar no_response"
+        assert elapsed < 2.0, f"mount_status NÃO respeitou o timeout (levou {elapsed:.1f}s)"
+        # o filho preso ficou registrado p/ reap oportunista, não perdido
+        assert disks._abandoned_pids, "sonda travada deveria ter sido abandonada (F1)"
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    print("ok  F9a  mount_alive: viva=True, travada=False sem congelar o chamador")
+    print("ok  F9a  mount_status: viva/quebrada/travada via processo, sem zumbi (F1/F2)")
 
 
 def test_descent_gate_skips_dead_network_mount():
@@ -1317,23 +1327,26 @@ def test_descent_gate_skips_dead_network_mount():
     prof_live = IOP("network", "/mnt/nas2", "cifs", serialize=False,
                     is_network=True, max_workers=4, enumerate_default=True)
     by_path = {"/mnt/repo": prof_local, "/mnt/nas/x": prof_dead, "/mnt/nas2/y": prof_live}
-    alive = {"/mnt/nas": False, "/mnt/nas2": True}   # nas morto, nas2 vivo
-    orig_prof, orig_alive = _disks.search_profile, _disks.mount_alive
+    # nas travou (no_response), nas2 vivo — o gate lê o status, não só um bool
+    status = {"/mnt/nas": "no_response", "/mnt/nas2": "alive"}
+    orig_prof, orig_status = _disks.search_profile, _disks.mount_status
     try:
         _disks.search_profile = lambda p, mounts=None: by_path[p]
-        _disks.mount_alive = lambda mp, timeout=3.0, **k: alive[mp]
+        _disks.mount_status = lambda mp, timeout=3.0, **k: status[mp]
         stats: dict = {}
         roots = engine._live_roots(["/mnt/repo", "/mnt/nas/x", "/mnt/nas2/y"], stats)
         assert roots == ["/mnt/repo", "/mnt/nas2/y"], f"gate errou os vivos: {roots}"
         sk = stats.get("skipped_mounts", [])
         assert len(sk) == 1 and sk[0]["mount"] == "/mnt/nas", f"aviso ausente/errado: {sk}"
         assert sk[0]["fstype"] == "nfs4" and sk[0]["reason"] == "no_response"
-        # todos mortos → lista vazia (search() retorna 0 cedo, sem tocar disco)
-        _disks.mount_alive = lambda mp, timeout=3.0, **k: False
-        assert engine._live_roots(["/mnt/nas/x"], {}) == [], "root único morto = vazio"
+        # F2: montagem QUEBRADA (responde ENOTCONN) é pulada com reason=broken_mount
+        _disks.mount_status = lambda mp, timeout=3.0, **k: "broken_mount"
+        st2: dict = {}
+        assert engine._live_roots(["/mnt/nas/x"], st2) == [], "quebrada = pulada"
+        assert st2["skipped_mounts"][0]["reason"] == "broken_mount", "motivo F2 ausente"
     finally:
-        _disks.search_profile, _disks.mount_alive = orig_prof, orig_alive
-    print("ok  F9a  gate de descida: NAS morto pulado c/ aviso, vivo passa")
+        _disks.search_profile, _disks.mount_status = orig_prof, orig_status
+    print("ok  F9a  gate de descida: NAS morto/quebrado pulado c/ aviso, vivo passa")
 
 
 def test_list_search_targets_boundary_visibility():

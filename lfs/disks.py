@@ -22,7 +22,7 @@ Three jobs:
      fails at byte 4294967296, not at the start, so we check BEFORE writing.
 """
 from __future__ import annotations
-import os, re, threading
+import os, re, errno, select, threading
 from dataclasses import dataclass
 
 try:                        # pacote (GUI) e flat (cli.py/testes)
@@ -175,30 +175,125 @@ def search_profile(path: str, mounts=None) -> IOProfile:
                      max_workers=None, enumerate_default=True)
 
 
-def mount_alive(mp: str, timeout: float = 3.0, _stat=os.stat) -> bool:
-    """Sonda de vida de uma montagem (F9a). Dispara `os.stat(mp)` numa thread
-    DESCARTÁVEL (daemon) e espera `timeout`. Uma montagem de rede morta (NFS
-    hard-mount com o servidor fora do ar) trava o `stat()` em D-state
-    ININTERRUPTÍVEL — nem `kill` alcança, e cancel via Event não chega numa
-    syscall presa. A thread bloqueada fica órfã e inofensiva (daemon, sem lock
-    compartilhado): é o ÚNICO jeito seguro de "desistir" de uma syscall que o
-    kernel não deixa interromper.
+# F2 (achado Fable, NAS FUSE real): errnos que significam "a montagem RESPONDEU,
+# mas está QUEBRADA" — não é uma negação de permissão, é um cadáver que responde na
+# hora. Entrar num root desses dá vazio silencioso; tratamos como MORTO (pulado com
+# aviso). ENOTCONN = servidor FUSE/sshfs caiu; ESTALE = handle NFS velho; EHOSTDOWN
+# = host fora; ENODEV = device sumiu. EACCES/EPERM/ENOENT ficam VIVOS (a montagem
+# respondeu; o problema é permissão/ausência do alvo, não da montagem). EIO fica
+# VIVO (disco com defeito ainda é uma montagem presente — escolha documentada).
+_DEAD_MOUNT_ERRNOS = frozenset({
+    errno.ENOTCONN,   # 107
+    errno.ESTALE,     # 116
+    errno.EHOSTDOWN,  # 112
+    errno.ENODEV,     # 19
+})
 
-    Retorna True se a montagem RESPONDEU no prazo (sucesso OU erro de I/O — está
-    viva, só negou/sumiu); False se não respondeu (trate como morta: pule com
-    aviso VISÍVEL, nunca em silêncio). `_stat` é injetável p/ teste determinístico
-    do caminho de travamento (sem precisar de NAS/sshfs real)."""
-    done: list = []
-    def _probe():
+_PROBE_ALIVE = b"A"
+_PROBE_DEAD = b"D"
+
+# F1 (achado Fable): sondas abandonadas presas em D-state, reapadas oportunistamente
+# quando (e se) o mount ressuscitar. Nunca bloqueia; nunca reapa filho de terceiros
+# (só PIDs que ESTA função forkou), então não rouba os filhos rg/fd do subprocess.
+_abandoned_lock = threading.Lock()
+_abandoned_pids: list = []
+
+
+def _reap_abandoned():
+    """Reapa (WNOHANG) as sondas antes abandonadas que já morreram; mantém as ainda
+    presas em D. Chamado a cada sonda nova — o processo longo (GUI) não acumula
+    zumbis quando o mount volta; o processo curto (CLI) sai limpo e o init reapa o
+    que sobrar."""
+    with _abandoned_lock:
+        if not _abandoned_pids:
+            return
+        still = []
+        for p in _abandoned_pids:
+            try:
+                done, _ = os.waitpid(p, os.WNOHANG)
+            except OSError:
+                done = p                  # não é mais filho / não existe => esquece
+            if done == 0:
+                still.append(p)           # ainda em D-state
+        _abandoned_pids[:] = still
+
+
+def mount_status(mp: str, timeout: float = 3.0, _stat=os.stat) -> str:
+    """Sonda de vida de uma montagem (F9a §2.2 + F1/F2). Devolve
+    'alive' | 'no_response' | 'broken_mount'.
+
+    Por que um PROCESSO (fork) e não uma thread (achado F1 do Fable, NAS FUSE
+    real): um NFS/FUSE morto trava o `stat()` em D-state ININTERRUPTÍVEL — nem
+    SIGKILL alcança. Uma THREAD presa vira órfã que IMPEDE o `exit_group`: a main
+    termina (vira zumbi Z) mas o processo não morre enquanto a sonda estiver em D.
+    Num processo CURTO (CLI/cron) isso pendura o cadáver e trava pipelines. Um
+    PROCESSO filho preso em D é reparentado ao init quando o pai sai; o pai lê o
+    resultado por um pipe com timeout e ABANDONA o filho, saindo limpo. Vale para
+    a GUI também (uniforme e mais seguro); custo de um fork por root de rede,
+    desprezível.
+
+    'no_response' = travou (não respondeu no prazo). 'broken_mount' = respondeu na
+    hora com um errno de montagem morta (F2). 'alive' = respondeu OK, ou negou com
+    um errno que não é da montagem (EACCES/EPERM/ENOENT/EIO). `_stat` é injetável
+    p/ teste determinístico (sem NAS/sshfs real)."""
+    _reap_abandoned()
+    r, w = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        # FILHO: só stat + 1 byte + _exit. Nada de finally/atexit do pai (os._exit).
+        try:
+            os.close(r)
+        except OSError:
+            pass
+        code = _PROBE_ALIVE
         try:
             _stat(mp)
+        except OSError as e:
+            if e.errno in _DEAD_MOUNT_ERRNOS:
+                code = _PROBE_DEAD        # respondeu, mas a montagem está QUEBRADA
+            # demais errnos => respondeu = VIVA
+        except BaseException:
+            pass                          # qualquer outra falha => trate como viva
+        try:
+            os.write(w, code)
         except OSError:
-            pass                      # respondeu com erro => VIVA
-        done.append(True)
-    t = threading.Thread(target=_probe, daemon=True)
-    t.start()
-    t.join(timeout)
-    return bool(done)                 # preencheu => respondeu; vazio => travou
+            pass
+        os._exit(0)
+    # PAI
+    os.close(w)
+    result = "no_response"
+    try:
+        rlist, _, _ = select.select([r], [], [], timeout)
+        if rlist:
+            data = os.read(r, 1)
+            if data == _PROBE_DEAD:
+                result = "broken_mount"
+            elif data == _PROBE_ALIVE:
+                result = "alive"
+            # pipe fechou sem byte (filho morreu sem responder) => no_response
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(r)
+        except OSError:
+            pass
+    # reapa sem NUNCA bloquear; se ainda preso em D, abandona ao init / ao sweep
+    try:
+        done, _ = os.waitpid(pid, os.WNOHANG)
+    except OSError:
+        done = pid
+    if done == 0:
+        with _abandoned_lock:
+            _abandoned_pids.append(pid)
+    return result
+
+
+def mount_alive(mp: str, timeout: float = 3.0, _stat=os.stat) -> bool:
+    """Contrato bool (F9a): True só se a montagem está VIVA e OK. 'no_response'
+    (travou) e 'broken_mount' (respondeu quebrada, F2) contam como MORTA. Para o
+    aviso distinguir o motivo, use `mount_status` diretamente."""
+    return mount_status(mp, timeout=timeout, _stat=_stat) == "alive"
 
 
 def mounts_under(root: str, mounts=None):
