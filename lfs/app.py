@@ -107,6 +107,11 @@ def natural_key(s: str):
         if i < len(nums):
             n = nums[i].lstrip("0")       # "007" -> "7"; "000" -> "" (valor zero)
             key.append((0, len(n), n))    # ordem numérica sem int(): comprimento, depois lexical
+    # A5: desempate determinístico (estilo Nautilus). Nomes numericamente iguais mas
+    # com zeros à esquerda distintos ("img007" vs "img7") têm chave idêntica até aqui;
+    # o rank 2 (> texto=1, > número=0) só entra em jogo NESSE empate e desempata pela
+    # string crua — assim a ordem é estável entre sessões, não depende da ordem de chegada.
+    key.append((2, s))
     return key
 
 

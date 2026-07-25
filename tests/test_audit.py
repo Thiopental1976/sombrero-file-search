@@ -2648,6 +2648,17 @@ def test_natural_sort_names():
     assert sorted(versoes, key=lfsapp.natural_key) == ["v1.2", "v1.9", "v1.10"], \
         "natural_key erra versão v1.9 vs v1.10"
 
+    # A5: zeros à esquerda desempatam de forma determinística (estilo Nautilus),
+    # sem depender da ordem de chegada; "img007" < "img7" pela string crua
+    assert sorted(["img7", "img007", "img07"], key=lfsapp.natural_key) == \
+        ["img007", "img07", "img7"], "natural_key não desempata zeros à esquerda"
+
+    # A2/A5: número gigante (>4300 dígitos) não estoura int() e ainda ordena certo
+    grande = "f" + "9" * 5000
+    assert lfsapp.natural_key(grande)                       # não levanta ValueError
+    assert sorted(["f" + "9"*5000, "f" + "9"*4999], key=lfsapp.natural_key) == \
+        ["f" + "9"*4999, "f" + "9"*5000], "natural_key erra ordem de números gigantes"
+
     # caixa: casefold já vem do SORT_ROLE; a chave é estável p/ caixa mista
     assert lfsapp.natural_key("Arquivo".casefold()) == lfsapp.natural_key("arquivo"), \
         "natural_key sensível à caixa (deveria receber casefold)"
