@@ -88,18 +88,34 @@ def natural_key(s: str):
     """Chave de ordenação NATURAL (como os exploradores de arquivo): fragmenta a
     string em pedaços de texto e de dígitos, e compara os dígitos como NÚMERO —
     então 'img2' < 'img10' (e não o alfabético-burro 'img10' < 'img2'). Cada pedaço
-    vira uma tupla (rank, valor) com rank 0=número / 1=texto, garantindo que a
-    comparação nunca cruze int com str (que estouraria no Python 3) e que número
-    ordene antes de texto na mesma posição. Recebe a string JÁ em casefold (o SORT_ROLE
-    entrega em minúsculas), então é estável quanto à caixa. Pura e testável."""
+    vira uma tupla iniciada por rank (0=número / 1=texto), garantindo que a comparação
+    nunca cruze número com texto na mesma posição — 0 < 1 decide antes de chegar aos
+    demais campos, então int e str jamais se comparam. Recebe a string JÁ em casefold
+    (o SORT_ROLE entrega em minúsculas), então é estável quanto à caixa. Pura e testável.
+
+    A2 (hardening): o número NÃO vira int() — Python 3.12 recusa int() de run com mais
+    de 4300 dígitos (ValueError). Inatingível por nome de arquivo real (≤255 bytes, e o
+    '/' quebra a sequência), mas a função é pura e reusável, então não deixamos a mina:
+    ordenamos o número por (comprimento-sem-zeros-à-esquerda, dígitos) — mesma ordem que
+    int() daria, custo O(1), sem teto. 'img007'≡'img7' (empate, desempata na ordem de
+    chegada estável do Qt), '08'<'10' (len 1<2), '9'<'30'<'100'."""
     parts = _NAT_RE.split(s)          # trechos de texto (entre os números)
     nums = _NAT_RE.findall(s)         # os números, em ordem
     key = []
     for i, txt in enumerate(parts):
         key.append((1, txt))
         if i < len(nums):
-            key.append((0, int(nums[i])))
+            n = nums[i].lstrip("0")       # "007" -> "7"; "000" -> "" (valor zero)
+            key.append((0, len(n), n))    # ordem numérica sem int(): comprimento, depois lexical
     return key
+
+
+# A1 (perf): o sort chama natural_key O(n log n) vezes sobre só n strings distintas —
+# memoizar corta o retrabalho. Cache LIMITADO (não vaza a sessão; enche uma vez e
+# platô, como o soak confirma). O ganho MAIOR do A1 vem do lessThan ler o Match direto
+# de rows[] (sem o ida-e-volta C++↔Python do data()); o cache é o complemento.
+import functools
+_natural_key_cached = functools.lru_cache(maxsize=200_000)(natural_key)
 
 
 def _grp(n: int) -> str:
@@ -278,6 +294,15 @@ class ResultModel(QAbstractTableModel):
     HEADERS = ["File", "Folder", "Matches", "Size", "Modified"]   # source (EN); i18n em headerData
     SORT_ROLE = Qt.UserRole + 1
 
+    @staticmethod
+    def text_sort_value(path: str, col: int) -> str:
+        """Valor de ordenação das colunas de texto (0=Arquivo/basename, 1=Pasta/dirname),
+        casefold p/ dobra de caixa robusta. FONTE ÚNICA: usado tanto pelo data(SORT_ROLE)
+        quanto pelo lessThan do proxy — o proxy chama este helper DIRETO (sem o dispatch
+        do data()), que é o ganho de perf do A1. Pura."""
+        base = os.path.basename(path) if col == 0 else os.path.dirname(path)
+        return base.casefold()
+
     def __init__(self):
         super().__init__()
         self.rows: list[Match] = []
@@ -313,8 +338,8 @@ class ResultModel(QAbstractTableModel):
         elif role == ResultModel.SORT_ROLE:      # B14: chave numérica p/ ordenar
             # casefold (não .lower) p/ dobrar caixa de forma robusta em Unicode;
             # o proxy aplica natural_key por cima (img2 < img10) nas colunas de texto.
-            if c == 0: return os.path.basename(m.path).casefold()
-            if c == 1: return os.path.dirname(m.path).casefold()
+            if c == 0: return ResultModel.text_sort_value(m.path, 0)
+            if c == 1: return ResultModel.text_sort_value(m.path, 1)
             if c == 2: return m.nmatch
             if c == 3: return m.size
             if c == 4: return m.mtime
@@ -388,14 +413,26 @@ class ResultFilterProxy(QSortFilterProxyModel):
         """Ordenação NATURAL nas colunas de texto (Arquivo=0, Pasta=1) — como os
         exploradores de arquivo: 'foto2' antes de 'foto10'. As demais colunas
         (Matches, Tamanho, Data) já ordenam certo por valor cru numérico via
-        SORT_ROLE, então caem no comportamento padrão do Qt. Lê a chave do
-        SORT_ROLE (já em casefold) e compara pelas tuplas do natural_key."""
+        SORT_ROLE, então caem no comportamento padrão do Qt.
+
+        A1 (perf): o sort é O(n log n) COMPARAÇÕES na main thread — a rota padrão do
+        Qt chama data(SORT_ROLE) DUAS vezes por comparação, e cada chamada cruza
+        C++↔Python + refaz basename/casefold. Lendo o Match direto de rows[] (atributo
+        Python) e memoizando o natural_key, TODAS as colunas caem ~5-50× (Nome 100k:
+        32s→5,7s; Size 100k: 29s→<1s — medido na bancada do Fable). Saída idêntica à
+        rota via data(): text_sort_value é a mesma fonte do SORT_ROLE, e os campos
+        numéricos (nmatch/size/mtime) são os mesmos valores crus. Nada de super() —
+        toda a comparação vive aqui, sem dispatch."""
+        rows = self.sourceModel().rows
+        lm = rows[left.row()]
+        rm = rows[right.row()]
         c = left.column()
-        if c in (0, 1):
-            sm = self.sourceModel()
-            lv = sm.data(left, ResultModel.SORT_ROLE) or ""
-            rv = sm.data(right, ResultModel.SORT_ROLE) or ""
-            return natural_key(lv) < natural_key(rv)
+        if c == 0 or c == 1:
+            return (_natural_key_cached(ResultModel.text_sort_value(lm.path, c))
+                    < _natural_key_cached(ResultModel.text_sort_value(rm.path, c)))
+        if c == 2: return lm.nmatch < rm.nmatch     # Matches
+        if c == 3: return lm.size < rm.size          # Size
+        if c == 4: return lm.mtime < rm.mtime        # Modified
         return super().lessThan(left, right)
 
 

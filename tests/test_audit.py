@@ -2670,8 +2670,10 @@ def test_natural_sort_names():
 
     model = lfsapp.ResultModel()
     nomes = ["img10.jpg", "img2.jpg", "img1.jpg", "img20.jpg"]
+    # tamanhos DESALINHADOS com a ordem natural do nome, p/ o teste de Size distinguir
+    tam = {"img10.jpg": 5, "img2.jpg": 100, "img1.jpg": 50, "img20.jpg": 1}
     matches = [lfsapp.Match(path="/acervo/%s" % n, is_dir=False,
-                            size=0, mtime=0, nmatch=0) for n in nomes]
+                            size=tam[n], mtime=0, nmatch=0) for n in nomes]
     model.append(matches)
 
     proxy = lfsapp.ResultFilterProxy()
@@ -2682,7 +2684,15 @@ def test_natural_sort_names():
               for r in range(proxy.rowCount())]
     assert vistos == ["img1.jpg", "img2.jpg", "img10.jpg", "img20.jpg"], \
         "proxy.lessThan não aplicou ordenação natural na coluna Arquivo: %r" % vistos
-    print("ok  GUI  ordenação natural (img2 < img10) na coluna Arquivo via proxy.lessThan")
+
+    # A1: o lessThan otimizado lê rows[] direto tb nas colunas numéricas — Size ordena
+    # por valor cru (não pela ordem do nome). Trava o caminho numérico novo.
+    proxy.sort(3, Qt.AscendingOrder)   # coluna Size
+    sizes = [proxy.data(proxy.index(r, 0), Qt.DisplayRole)
+             for r in range(proxy.rowCount())]
+    assert sizes == ["img20.jpg", "img10.jpg", "img1.jpg", "img2.jpg"], \
+        "proxy.lessThan não ordenou a coluna Size por valor cru: %r" % sizes
+    print("ok  GUI  ordenação natural (img2<img10) + Size por valor cru via proxy.lessThan")
 
 
 def test_main_table_columns_are_resizable():
