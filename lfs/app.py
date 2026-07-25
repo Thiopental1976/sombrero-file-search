@@ -1447,6 +1447,24 @@ class MainWindow(QMainWindow):
         # janela maior que a tela perde o botão de maximizar no Muffin/Cinnamon
         scr = QGuiApplication.primaryScreen().availableGeometry()
         self.resize(min(1160, scr.width() - 24), min(760, scr.height() - 48))
+        # Robustez do edge-tiling (Muffin/Cinnamon & cia.): o WM só oferece o encaixe
+        # topo/base (aero-snap) se o min-height da janela couber na metade útil do
+        # monitor MENOS a titlebar. O mínimo natural do layout (671×610) era o MAIOR
+        # da área de trabalho e reprovava SÓ o SFS onde qBittorrent/Nemo passavam —
+        # exatamente no topo/base do monitor retrato. Cravar 620×480 (a UI continua
+        # íntegra nesse tamanho — a janela real de uso é bem maior) faz o SFS deixar
+        # de ser a janela de maior mínimo e passar em qualquer portão que apps comuns
+        # passam, aqui e em telas pequenas de notebook. Causa lida no fonte do Muffin
+        # pelo Fable (meta_window_get_tile_fractions). SFS_MIN_OVERRIDE=WxH sobrepõe
+        # para diagnóstico (bisseção do portão, §2.1 do parecer).
+        _mw, _mh = 620, 480
+        _mo = os.environ.get("SFS_MIN_OVERRIDE")
+        if _mo:
+            try:
+                _mw, _mh = (int(x) for x in _mo.lower().split("x"))
+            except Exception:
+                _mw, _mh = 620, 480
+        self.setMinimumSize(_mw, _mh)
         ico = os.path.join(ASSETS, "icon_256.png")
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
@@ -2382,6 +2400,48 @@ class MainWindow(QMainWindow):
         if tab.searching:
             tab.worker.cancel()
             self._set_status(tab, t("Cancelling…"))
+
+    @staticmethod
+    def _fit_geometry(geom: QRect, avail: QRect, min_w: int = 640, min_h: int = 480) -> QRect:
+        """Dado o retângulo ATUAL da janela e a área útil do monitor, devolve o
+        retângulo ajustado: encolhido p/ caber (respeitando um mínimo) e transladado
+        p/ dentro dos limites. PURA — sem Qt de display, testável com QRect sintético.
+
+        É o coração do auto-ajuste multi-monitor: o gerenciador pode abrir a janela
+        num monitor que NÃO é o primário (retrato, ou menor), e o tamanho calculado
+        pelo primário não caberia. Encolhe, nunca cresce — não briga com o usuário que
+        arrasta a janela de propósito; só resgata janela grande demais ou fora da tela."""
+        w = max(min_w, min(geom.width(), avail.width()))
+        h = max(min_h, min(geom.height(), avail.height()))
+        r = QRect(geom.x(), geom.y(), w, h)
+        r.moveLeft(max(avail.left(), min(r.left(), avail.right() - w + 1)))
+        r.moveTop(max(avail.top(), min(r.top(), avail.bottom() - h + 1)))
+        return r
+
+    def _fit_to_screen(self):
+        """Aplica _fit_geometry ao monitor onde a janela REALMENTE está agora
+        (`self.screen()`), não ao primário. Chamado no 1º show e a cada mudança de
+        monitor (arrastar entre telas)."""
+        scr = self.screen() or QGuiApplication.primaryScreen()
+        if scr is None:
+            return
+        target = self._fit_geometry(self.geometry(), scr.availableGeometry())
+        if target.size() != self.size():
+            self.resize(target.size())
+        if target.topLeft() != self.pos():
+            self.move(target.topLeft())
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        # No 1º show a janela já tem monitor e moldura reais: reconfere o ajuste
+        # contra o monitor onde caiu (não o primário) e passa a segui-lo se o
+        # usuário arrastar p/ outra tela. singleShot(0) deixa o WM mapear antes.
+        if not getattr(self, "_fitted", False):
+            self._fitted = True
+            wh = self.windowHandle()
+            if wh is not None:
+                wh.screenChanged.connect(lambda _s: self._fit_to_screen())
+            QTimer.singleShot(0, self._fit_to_screen)
 
     def closeEvent(self, ev):
         """B5/A1: fechar no meio de uma busca não pode derrubar o processo.

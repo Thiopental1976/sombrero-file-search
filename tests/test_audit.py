@@ -2545,6 +2545,88 @@ def test_menu_labels_disambiguates_collisions():
     print("ok  discos: menu_labels desambigua labels colididos com o mountpoint (P1)")
 
 
+def test_fit_geometry_multimonitor():
+    """GUI auto-ajuste: a janela nasce dimensionada contra o primaryScreen, mas o
+    WM pode renderizá-la em OUTRO monitor (retrato alto vs paisagem). _fit_geometry
+    é a matemática PURA que reconcilia: encolhe p/ caber no monitor real (nunca
+    cresce além do pedido), respeita o mínimo, e transloca moldura que caiu fora
+    de volta p/ dentro — tudo relativo ao offset do monitor (DP-0 mora em +1440+0).
+    Rodei presencial no servidorcedro: janela abriu inteira dentro do HDMI-0."""
+    try:
+        from PySide6.QtCore import QRect
+    except ImportError:
+        print("--  GUI  _fit_geometry: pulado (sem PySide6)")
+        return
+    sys.path.insert(0, os.path.join(RAIZ, "lfs"))
+    import app as lfsapp
+    fit = lfsapp.MainWindow._fit_geometry
+
+    # (a) já cabe folgado no paisagem primário (offset +1440+0): intocado
+    avail_land = QRect(1440, 0, 1920, 1080)
+    g = QRect(1880, 184, 1160, 760)
+    assert fit(g, avail_land) == g, "cabendo, não deve mexer"
+
+    # (b) retrato alto e estreito: nada a encolher (1160x760 cabe em 1440x2560)
+    avail_port = QRect(0, 0, 1440, 2560)
+    assert fit(QRect(0, 0, 1160, 760), avail_port) == QRect(0, 0, 1160, 760)
+
+    # (c) largura maior que o monitor -> encolhe SÓ a largura, mantém a altura
+    r = fit(QRect(0, 0, 2000, 760), avail_port)
+    assert r.width() == 1440 and r.height() == 760, r
+
+    # (d) maior nos dois eixos -> clampa aos dois, ancorado no offset do monitor
+    r = fit(QRect(1440, 0, 5000, 5000), avail_land)
+    assert r.width() == 1920 and r.height() == 1080, r
+    assert r.left() == 1440 and r.top() == 0, r    # colado no canto do monitor
+
+    # (e) moldura caída fora à direita/abaixo -> puxada de volta p/ dentro
+    r = fit(QRect(3000, 900, 800, 600), avail_land)
+    assert avail_land.contains(r), (r, avail_land)  # inteira dentro
+    assert r.width() == 800 and r.height() == 600, "cabe: não encolhe, só move"
+    assert r.right() == avail_land.right(), r       # encostada na borda direita
+
+    # (f) NUNCA cresce (acima do mínimo): menor que o monitor fica do tamanho pedido
+    r = fit(QRect(1500, 100, 800, 600), avail_land)
+    assert r.width() == 800 and r.height() == 600, "fit não pode inflar a janela"
+
+    # (g) mínimo vence um monitor minúsculo (min 640x480 > avail 300x200)
+    r = fit(QRect(0, 0, 500, 500), QRect(0, 0, 300, 200), 640, 480)
+    assert r.width() == 640 and r.height() == 480, "respeita o mínimo sobre o avail"
+
+    print("ok  GUI  _fit_geometry: encolhe/reposiciona por monitor, nunca cresce (multimon)")
+
+
+def test_window_minimum_allows_edge_tiling():
+    """Robustez do edge-tiling (aero-snap): o WM (Muffin/Cinnamon & cia.) só oferece
+    o encaixe topo/base se o min-height da janela couber na metade útil do monitor
+    MENOS a titlebar. O mínimo natural do layout (671×610) era o MAIOR da área de
+    trabalho e reprovava SÓ o SFS no topo/base do monitor retrato — qBittorrent e
+    Nemo, com mínimos menores, passavam no mesmo lugar. O fix crava setMinimumSize
+    (620×480); a UI segue íntegra nesse porte (validado presencial no servidorcedro).
+    Causa lida no fonte do Muffin pelo Fable (meta_window_get_tile_fractions). Este
+    teste trava a regressão: reinflar o mínimo faz o encaixe topo/base voltar a
+    quebrar. Constrói a janela mas NÃO a mostra (minimumSize não exige show)."""
+    try:
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        print("--  GUI  min-size edge-tiling: pulado (sem PySide6)")
+        return
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    sys.path.insert(0, os.path.join(RAIZ, "lfs"))
+    import app as lfsapp
+    _ = QApplication.instance() or QApplication([])
+    win = lfsapp.MainWindow()
+    try:
+        ms = win.minimumSize()
+        assert ms.width() <= 620 and ms.height() <= 480, (
+            f"mínimo {ms.width()}x{ms.height()} reinflado acima de 620x480 — o portão "
+            "de edge-tiling do Muffin volta a reprovar o topo/base no retrato")
+    finally:
+        win.close()
+    print(f"ok  GUI  min-size {ms.width()}x{ms.height()} ≤ 620x480: edge-tiling topo/base preservado")
+
+
 def test_result_filter_predicate():
     """F10a #1: o filtro-nos-resultados é um predicado PURO sobre linhas já
     carregadas (nome, caminho, mtime) — substring casa nome OU caminho, '*.odt'
@@ -3372,6 +3454,8 @@ def main():
            test_result_filter_predicate, test_root_events_stream,
            test_volume_label_prefers_label,
            test_menu_labels_disambiguates_collisions,
+           test_fit_geometry_multimonitor,
+           test_window_minimum_allows_edge_tiling,
            # F10b — a milha final humana (humane.py: nenhum errno vivo na tela)
            test_humane_maps_errno, test_humane_passthrough_and_context,
            test_gui_errors_go_through_humane,
