@@ -1010,11 +1010,22 @@ class SearchTab(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(28)
         hh = self.table.horizontalHeader()
         hh.setHighlightSections(False)
-        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(1, QHeaderView.Stretch)
-        hh.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        # Colunas ajustáveis pelo usuário (como nos exploradores de arquivo e como
+        # já era na aba de duplicatas): modo Interactive deixa arrastar a borda.
+        # Os modos automáticos (ResizeToContents/Stretch) TRAVAM o arrasto — por isso
+        # a busca principal não permitia redimensionar. Folder segue Stretch: é a
+        # coluna elástica que absorve a sobra, então arrastar as outras a acomoda.
+        hh.setSectionResizeMode(0, QHeaderView.Interactive)    # File
+        hh.setSectionResizeMode(1, QHeaderView.Stretch)        # Folder (elástica)
+        hh.setSectionResizeMode(2, QHeaderView.Interactive)    # Matches
+        hh.setSectionResizeMode(3, QHeaderView.Interactive)    # Size
+        hh.setSectionResizeMode(4, QHeaderView.Interactive)    # Modified
+        hh.setStretchLastSection(False)
+        hh.setMinimumSectionSize(48)                           # não some ao arrastar
+        self.table.setColumnWidth(0, 320)                      # File — nomes longos
+        self.table.setColumnWidth(2, 84)                       # Matches
+        self.table.setColumnWidth(3, 96)                       # Size
+        self.table.setColumnWidth(4, 132)                      # Modified
         self.table.selectionModel().currentRowChanged.connect(win.on_select)
         self.table.doubleClicked.connect(win.open_file)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)

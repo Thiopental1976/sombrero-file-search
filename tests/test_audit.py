@@ -2685,6 +2685,38 @@ def test_natural_sort_names():
     print("ok  GUI  ordenação natural (img2 < img10) na coluna Arquivo via proxy.lessThan")
 
 
+def test_main_table_columns_are_resizable():
+    """Colunas da BUSCA PRINCIPAL ajustáveis pelo usuário (arrastar a borda), como
+    já era na aba de duplicatas e como em qualquer explorador. Regressão: os modos
+    automáticos ResizeToContents/Stretch TRAVAM o arrasto — o único modo que deixa
+    puxar é Interactive. Este teste crava que File/Matches/Size/Modified são
+    Interactive (arrastáveis) e que Folder segue Stretch (coluna elástica). Constrói
+    a janela sem show()."""
+    try:
+        from PySide6.QtWidgets import QApplication, QHeaderView
+    except ImportError:
+        print("--  GUI  colunas redimensionáveis: pulado (sem PySide6)")
+        return
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    sys.path.insert(0, os.path.join(RAIZ, "lfs"))
+    import app as lfsapp
+    _ = QApplication.instance() or QApplication([])
+    win = lfsapp.MainWindow()
+    try:
+        hh = win.table.horizontalHeader()
+        modos = {c: hh.sectionResizeMode(c) for c in range(5)}
+        for c in (0, 2, 3, 4):
+            assert modos[c] == QHeaderView.Interactive, (
+                f"coluna {c} está em modo {modos[c]} (não Interactive) — o usuário "
+                "não consegue arrastar a borda na busca principal")
+        assert modos[1] == QHeaderView.Stretch, \
+            "coluna Folder deveria ser Stretch (elástica que absorve a sobra)"
+    finally:
+        win.close()
+    print("ok  GUI  colunas da busca principal Interactive (arrastáveis); Folder elástica")
+
+
 def test_result_filter_predicate():
     """F10a #1: o filtro-nos-resultados é um predicado PURO sobre linhas já
     carregadas (nome, caminho, mtime) — substring casa nome OU caminho, '*.odt'
@@ -3515,6 +3547,7 @@ def main():
            test_fit_geometry_multimonitor,
            test_window_minimum_allows_edge_tiling,
            test_natural_sort_names,
+           test_main_table_columns_are_resizable,
            # F10b — a milha final humana (humane.py: nenhum errno vivo na tela)
            test_humane_maps_errno, test_humane_passthrough_and_context,
            test_gui_errors_go_through_humane,
