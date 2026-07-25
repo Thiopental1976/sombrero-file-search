@@ -2627,6 +2627,64 @@ def test_window_minimum_allows_edge_tiling():
     print(f"ok  GUI  min-size {ms.width()}x{ms.height()} ≤ 620x480: edge-tiling topo/base preservado")
 
 
+def test_natural_sort_names():
+    """Ordenação NATURAL das colunas de texto (como os exploradores de arquivo):
+    'foto2' vem ANTES de 'foto10' — não o alfabético-burro que põe '10' antes de '2'.
+    Duas travas: (1) a função pura natural_key ordena uma lista bagunçada na ordem
+    humana esperada, com caixa e acento dobrados; (2) o ResultFilterProxy.lessThan
+    usa essa chave nas colunas 0/1, e mantém o comportamento padrão (valor cru) nas
+    de número. Sem I/O, sem show()."""
+    sys.path.insert(0, os.path.join(RAIZ, "lfs"))
+    import app as lfsapp
+
+    # (1) função pura — a ordenação natural clássica
+    entrada = ["img10", "img2", "img1", "img20", "img3"]
+    esperado = ["img1", "img2", "img3", "img10", "img20"]
+    assert sorted(entrada, key=lfsapp.natural_key) == esperado, \
+        "natural_key não ordena img2 antes de img10"
+
+    # números embutidos no meio + versões
+    versoes = ["v1.9", "v1.10", "v1.2"]
+    assert sorted(versoes, key=lfsapp.natural_key) == ["v1.2", "v1.9", "v1.10"], \
+        "natural_key erra versão v1.9 vs v1.10"
+
+    # caixa: casefold já vem do SORT_ROLE; a chave é estável p/ caixa mista
+    assert lfsapp.natural_key("Arquivo".casefold()) == lfsapp.natural_key("arquivo"), \
+        "natural_key sensível à caixa (deveria receber casefold)"
+
+    # só-texto e só-número não estouram (int vs str nunca se cruzam nas tuplas)
+    _ = sorted(["banana", "abacaxi", "caju"], key=lfsapp.natural_key)
+    _ = sorted(["100", "9", "30"], key=lfsapp.natural_key)
+    assert sorted(["100", "9", "30"], key=lfsapp.natural_key) == ["9", "30", "100"]
+
+    # (2) através do proxy real (precisa de Qt; pula com elegância se ausente)
+    try:
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import Qt, QModelIndex
+    except ImportError:
+        print("ok  natural_key puro OK; proxy.lessThan pulado (sem PySide6)")
+        return
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    _ = QApplication.instance() or QApplication([])
+
+    model = lfsapp.ResultModel()
+    nomes = ["img10.jpg", "img2.jpg", "img1.jpg", "img20.jpg"]
+    matches = [lfsapp.Match(path="/acervo/%s" % n, is_dir=False,
+                            size=0, mtime=0, nmatch=0) for n in nomes]
+    model.append(matches)
+
+    proxy = lfsapp.ResultFilterProxy()
+    proxy.setSourceModel(model)
+    proxy.sort(0, Qt.AscendingOrder)   # coluna Arquivo, natural
+
+    vistos = [proxy.data(proxy.index(r, 0), Qt.DisplayRole)
+              for r in range(proxy.rowCount())]
+    assert vistos == ["img1.jpg", "img2.jpg", "img10.jpg", "img20.jpg"], \
+        "proxy.lessThan não aplicou ordenação natural na coluna Arquivo: %r" % vistos
+    print("ok  GUI  ordenação natural (img2 < img10) na coluna Arquivo via proxy.lessThan")
+
+
 def test_result_filter_predicate():
     """F10a #1: o filtro-nos-resultados é um predicado PURO sobre linhas já
     carregadas (nome, caminho, mtime) — substring casa nome OU caminho, '*.odt'
@@ -3456,6 +3514,7 @@ def main():
            test_menu_labels_disambiguates_collisions,
            test_fit_geometry_multimonitor,
            test_window_minimum_allows_edge_tiling,
+           test_natural_sort_names,
            # F10b — a milha final humana (humane.py: nenhum errno vivo na tela)
            test_humane_maps_errno, test_humane_passthrough_and_context,
            test_gui_errors_go_through_humane,

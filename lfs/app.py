@@ -15,7 +15,7 @@ Recursos: nome+conteúdo, booleano (A OR B) AND C NOT D, documentos (PDF/docx/ep
 Desenho: GARIMPO_Desenho_Busca_ripgrep.md (Fable 5) — nome final "Sombrero File Search".
 """
 from __future__ import annotations
-import os, sys, threading, time, queue
+import os, sys, threading, time, queue, re
 from urllib.parse import quote
 
 from PySide6.QtCore import (Qt, QThread, Signal, QAbstractTableModel, QModelIndex,
@@ -80,6 +80,26 @@ def human_size(n: int) -> str:
             return f"{int(f)} {u}" if u == "B" else f"{f:.1f} {u}"
         f /= 1024
     return f"{f:.1f} TB"
+
+
+_NAT_RE = re.compile(r"\d+")
+
+def natural_key(s: str):
+    """Chave de ordenação NATURAL (como os exploradores de arquivo): fragmenta a
+    string em pedaços de texto e de dígitos, e compara os dígitos como NÚMERO —
+    então 'img2' < 'img10' (e não o alfabético-burro 'img10' < 'img2'). Cada pedaço
+    vira uma tupla (rank, valor) com rank 0=número / 1=texto, garantindo que a
+    comparação nunca cruze int com str (que estouraria no Python 3) e que número
+    ordene antes de texto na mesma posição. Recebe a string JÁ em casefold (o SORT_ROLE
+    entrega em minúsculas), então é estável quanto à caixa. Pura e testável."""
+    parts = _NAT_RE.split(s)          # trechos de texto (entre os números)
+    nums = _NAT_RE.findall(s)         # os números, em ordem
+    key = []
+    for i, txt in enumerate(parts):
+        key.append((1, txt))
+        if i < len(nums):
+            key.append((0, int(nums[i])))
+    return key
 
 
 def _grp(n: int) -> str:
@@ -291,8 +311,10 @@ class ResultModel(QAbstractTableModel):
         elif role == Qt.UserRole:
             return m
         elif role == ResultModel.SORT_ROLE:      # B14: chave numérica p/ ordenar
-            if c == 0: return os.path.basename(m.path).lower()
-            if c == 1: return os.path.dirname(m.path).lower()
+            # casefold (não .lower) p/ dobrar caixa de forma robusta em Unicode;
+            # o proxy aplica natural_key por cima (img2 < img10) nas colunas de texto.
+            if c == 0: return os.path.basename(m.path).casefold()
+            if c == 1: return os.path.dirname(m.path).casefold()
             if c == 2: return m.nmatch
             if c == 3: return m.size
             if c == 4: return m.mtime
@@ -361,6 +383,20 @@ class ResultFilterProxy(QSortFilterProxyModel):
         m = self.sourceModel().rows[row]     # Match; sem I/O — dados em memória
         name = os.path.basename(m.path)
         return self._pred(name, m.path, m.mtime)
+
+    def lessThan(self, left, right):
+        """Ordenação NATURAL nas colunas de texto (Arquivo=0, Pasta=1) — como os
+        exploradores de arquivo: 'foto2' antes de 'foto10'. As demais colunas
+        (Matches, Tamanho, Data) já ordenam certo por valor cru numérico via
+        SORT_ROLE, então caem no comportamento padrão do Qt. Lê a chave do
+        SORT_ROLE (já em casefold) e compara pelas tuplas do natural_key."""
+        c = left.column()
+        if c in (0, 1):
+            sm = self.sourceModel()
+            lv = sm.data(left, ResultModel.SORT_ROLE) or ""
+            rv = sm.data(right, ResultModel.SORT_ROLE) or ""
+            return natural_key(lv) < natural_key(rv)
+        return super().lessThan(left, right)
 
 
 # ----------------------------------------------------------------- temas
