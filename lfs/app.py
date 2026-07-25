@@ -1064,10 +1064,25 @@ class SearchTab(QWidget):
             hh.setSectionResizeMode(_c, QHeaderView.Interactive)
         hh.setStretchLastSection(True)
         hh.setMinimumSectionSize(48)                           # não some ao arrastar
-        self.table.setColumnWidth(0, 300)                      # File — nomes longos
-        self.table.setColumnWidth(1, 380)                      # Folder — caminhos
-        self.table.setColumnWidth(2, 84)                       # Matches
-        self.table.setColumnWidth(3, 96)                       # Size  (Modified estica)
+        # Larguras: padrão de fábrica, sobrescrito pelas que o usuário deixou salvas.
+        # A coluna 4 (Modified) estica (setStretchLastSection); persistimos só 0-3.
+        # _restoring_cols evita que o próprio setColumnWidth do restore dispare uma
+        # gravação (o sinal sectionResized não distingue arrasto de código).
+        self._restoring_cols = True
+        default_w = [300, 380, 84, 96]                         # File/Folder/Matches/Size
+        saved = self.win.cfg.get("col_widths")
+        for _c, _dw in enumerate(default_w):
+            _w = _dw
+            if isinstance(saved, list) and _c < len(saved):
+                try:
+                    _cand = int(saved[_c])
+                    if _cand >= 48:                            # respeita minimumSectionSize
+                        _w = _cand
+                except (TypeError, ValueError):
+                    pass
+            self.table.setColumnWidth(_c, _w)
+        self._restoring_cols = False
+        hh.sectionResized.connect(self._on_section_resized)
         self.table.selectionModel().currentRowChanged.connect(win.on_select)
         self.table.doubleClicked.connect(win.open_file)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -1102,6 +1117,19 @@ class SearchTab(QWidget):
         self.proxy.rowsInserted.connect(self._update_filter_count)
         self.proxy.rowsRemoved.connect(self._update_filter_count)
         self._update_filter_count()
+
+    def _on_section_resized(self, index, old, new):
+        """Persiste larguras das colunas 0-3 quando o usuário arrasta uma borda.
+        FileLocator-style: a próxima aba (e a próxima sessão) já nascem com o
+        layout que ele escolheu. Ignora mudanças programáticas (restore/stretch)
+        e a coluna 4, que estica sozinha."""
+        if getattr(self, "_restoring_cols", False):
+            return
+        if index >= 4:                                     # Modified estica, não guarda
+            return
+        widths = [self.table.columnWidth(_c) for _c in range(4)]
+        self.win.cfg["col_widths"] = widths
+        save_cfg(self.win.cfg)
 
     def _on_filter_changed(self, text):
         self.proxy.set_filter_text(text)

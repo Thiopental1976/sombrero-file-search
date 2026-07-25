@@ -2741,6 +2741,71 @@ def test_main_table_columns_are_resizable():
     print("ok  GUI  colunas da busca principal todas Interactive (toda borda arrasta); última estica")
 
 
+def test_column_widths_persist():
+    """Persistência FileLocator-style: arrastar uma borda grava a largura no
+    config.json; a próxima aba/sessão nasce com o layout escolhido. Regressão em
+    três pontos: (1) o handler sectionResized grava col_widths[0..3]; (2) o restore
+    aplica larguras salvas ao construir a aba; (3) o restore NÃO dispara gravação
+    (guarda _restoring_cols) nem confia em valor abaixo do mínimo. Faz tudo com um
+    config falso em memória — não escreve no disco do usuário."""
+    try:
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        print("--  GUI  persistência de larguras: pulado (sem PySide6)")
+        return
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    sys.path.insert(0, os.path.join(RAIZ, "lfs"))
+    import app as lfsapp
+    _ = QApplication.instance() or QApplication([])
+
+    # intercepta save_cfg para não tocar o disco e contar as gravações
+    gravou = {"n": 0}
+    orig_save = lfsapp.save_cfg
+    lfsapp.save_cfg = lambda d: gravou.__setitem__("n", gravou["n"] + 1)
+    try:
+        win = lfsapp.MainWindow()
+        try:
+            tab = win.tab
+            # (2)+(3): construir a aba com config vazio NÃO grava nada
+            assert gravou["n"] == 0, "o restore não deveria gravar config"
+            # (1): arrastar a borda da coluna 0 grava a nova largura
+            hh = tab.table.horizontalHeader()
+            antes = gravou["n"]
+            tab.table.setColumnWidth(0, 222)          # emula o arrasto do usuário
+            hh.sectionResized.emit(0, 300, 222)       # (o sinal real dispara no arrasto)
+            assert gravou["n"] > antes, "arrastar a borda deveria persistir"
+            assert win.cfg.get("col_widths") is not None
+            assert win.cfg["col_widths"][0] == 222
+            assert len(win.cfg["col_widths"]) == 4     # só 0-3; Modified estica
+            # coluna 4 (Modified) não persiste mesmo se sinalizada
+            antes = gravou["n"]
+            hh.sectionResized.emit(4, 100, 150)
+            assert gravou["n"] == antes, "coluna que estica não deveria gravar"
+        finally:
+            win.close()
+
+        # (2): uma aba nova com col_widths salvo NASCE com a largura salva
+        cfg2 = {"col_widths": [177, 250, 60, 88]}
+        win2 = lfsapp.MainWindow()
+        win2.cfg = cfg2
+        try:
+            gravou["n"] = 0
+            tab2 = lfsapp.SearchTab(win2)
+            assert tab2.table.columnWidth(0) == 177
+            assert tab2.table.columnWidth(1) == 250
+            assert gravou["n"] == 0, "o restore da aba nova não deveria gravar"
+            # (3): valor absurdo abaixo do mínimo é ignorado, cai no padrão
+            win2.cfg = {"col_widths": [5, 380, 84, 96]}
+            tab3 = lfsapp.SearchTab(win2)
+            assert tab3.table.columnWidth(0) == 300, "largura < 48 deveria cair no padrão"
+        finally:
+            win2.close()
+    finally:
+        lfsapp.save_cfg = orig_save
+    print("ok  GUI  larguras de coluna persistem no config (grava ao arrastar, restaura na aba nova)")
+
+
 def test_result_filter_predicate():
     """F10a #1: o filtro-nos-resultados é um predicado PURO sobre linhas já
     carregadas (nome, caminho, mtime) — substring casa nome OU caminho, '*.odt'
@@ -3572,6 +3637,7 @@ def main():
            test_window_minimum_allows_edge_tiling,
            test_natural_sort_names,
            test_main_table_columns_are_resizable,
+           test_column_widths_persist,
            # F10b — a milha final humana (humane.py: nenhum errno vivo na tela)
            test_humane_maps_errno, test_humane_passthrough_and_context,
            test_gui_errors_go_through_humane,
