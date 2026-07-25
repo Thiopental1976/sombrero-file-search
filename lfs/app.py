@@ -1011,21 +1011,21 @@ class SearchTab(QWidget):
         hh = self.table.horizontalHeader()
         hh.setHighlightSections(False)
         # Colunas ajustáveis pelo usuário (como nos exploradores de arquivo e como
-        # já era na aba de duplicatas): modo Interactive deixa arrastar a borda.
-        # Os modos automáticos (ResizeToContents/Stretch) TRAVAM o arrasto — por isso
-        # a busca principal não permitia redimensionar. Folder segue Stretch: é a
-        # coluna elástica que absorve a sobra, então arrastar as outras a acomoda.
-        hh.setSectionResizeMode(0, QHeaderView.Interactive)    # File
-        hh.setSectionResizeMode(1, QHeaderView.Stretch)        # Folder (elástica)
-        hh.setSectionResizeMode(2, QHeaderView.Interactive)    # Matches
-        hh.setSectionResizeMode(3, QHeaderView.Interactive)    # Size
-        hh.setSectionResizeMode(4, QHeaderView.Interactive)    # Modified
-        hh.setStretchLastSection(False)
+        # já era na aba de duplicatas): TODAS em modo Interactive, pois só esse modo
+        # deixa arrastar a borda. Os automáticos (ResizeToContents/Stretch) TRAVAM o
+        # arrasto — e o cursor de ajuste só surge na borda DIREITA de uma coluna se
+        # ela for Interactive; por isso Folder em Stretch deixava a borda
+        # Folder↔Matches sem cursor. setStretchLastSection mantém a tabela preenchendo
+        # a largura toda (a última coluna absorve a sobra) sem tirar o arrasto das
+        # bordas internas, que é o que o usuário puxa.
+        for _c in range(5):
+            hh.setSectionResizeMode(_c, QHeaderView.Interactive)
+        hh.setStretchLastSection(True)
         hh.setMinimumSectionSize(48)                           # não some ao arrastar
-        self.table.setColumnWidth(0, 320)                      # File — nomes longos
+        self.table.setColumnWidth(0, 300)                      # File — nomes longos
+        self.table.setColumnWidth(1, 380)                      # Folder — caminhos
         self.table.setColumnWidth(2, 84)                       # Matches
-        self.table.setColumnWidth(3, 96)                       # Size
-        self.table.setColumnWidth(4, 132)                      # Modified
+        self.table.setColumnWidth(3, 96)                       # Size  (Modified estica)
         self.table.selectionModel().currentRowChanged.connect(win.on_select)
         self.table.doubleClicked.connect(win.open_file)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)

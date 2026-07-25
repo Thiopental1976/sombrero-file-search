@@ -2689,9 +2689,11 @@ def test_main_table_columns_are_resizable():
     """Colunas da BUSCA PRINCIPAL ajustáveis pelo usuário (arrastar a borda), como
     já era na aba de duplicatas e como em qualquer explorador. Regressão: os modos
     automáticos ResizeToContents/Stretch TRAVAM o arrasto — o único modo que deixa
-    puxar é Interactive. Este teste crava que File/Matches/Size/Modified são
-    Interactive (arrastáveis) e que Folder segue Stretch (coluna elástica). Constrói
-    a janela sem show()."""
+    puxar é Interactive. Além disso, o cursor de ajuste só aparece na borda DIREITA
+    de uma coluna Interactive; por isso TODAS as 5 são Interactive (senão a borda
+    Folder↔Matches ficava sem cursor, com Folder em Stretch). setStretchLastSection
+    mantém a tabela preenchendo a largura sem travar as bordas internas. Constrói a
+    janela sem show()."""
     try:
         from PySide6.QtWidgets import QApplication, QHeaderView
     except ImportError:
@@ -2706,15 +2708,16 @@ def test_main_table_columns_are_resizable():
     try:
         hh = win.table.horizontalHeader()
         modos = {c: hh.sectionResizeMode(c) for c in range(5)}
-        for c in (0, 2, 3, 4):
+        for c in range(5):
             assert modos[c] == QHeaderView.Interactive, (
                 f"coluna {c} está em modo {modos[c]} (não Interactive) — o usuário "
                 "não consegue arrastar a borda na busca principal")
-        assert modos[1] == QHeaderView.Stretch, \
-            "coluna Folder deveria ser Stretch (elástica que absorve a sobra)"
+        assert hh.stretchLastSection(), (
+            "setStretchLastSection deveria estar ligado — a tabela precisa preencher "
+            "a largura sem travar as bordas internas")
     finally:
         win.close()
-    print("ok  GUI  colunas da busca principal Interactive (arrastáveis); Folder elástica")
+    print("ok  GUI  colunas da busca principal todas Interactive (toda borda arrasta); última estica")
 
 
 def test_result_filter_predicate():
