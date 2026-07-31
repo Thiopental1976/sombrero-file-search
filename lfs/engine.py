@@ -51,8 +51,9 @@ def engine_info():
 
 def user_mounts(lines=None):
     """Pontos de montagem 'de usuário' — discos externos/acervo: dispositivos
-    reais (/dev/*) montados sob /media, /mnt ou /run/media. São os candidatos
-    da busca MULTIDISCOS na GUI ("Discos ▾"). `lines` injetável p/ teste."""
+    reais (/dev/*) montados sob /media, /mnt, /run/media ou /var/mnt (ostree:
+    Bazzite/Silverblue montam discos fixos ali, pois /mnt é da imagem ro). São os
+    candidatos da busca MULTIDISCOS na GUI ("Discos ▾"). `lines` injetável p/ teste."""
     if lines is None:
         try:
             with open("/proc/mounts", encoding="utf-8") as f:
@@ -65,7 +66,7 @@ def user_mounts(lines=None):
         if len(parts) < 2 or not parts[0].startswith("/dev/"):
             continue
         mp = parts[1].replace("\\040", " ")     # espaço vem escapado no mounts
-        if mp.startswith(("/media/", "/mnt/", "/run/media/")):
+        if mp.startswith(("/media/", "/mnt/", "/run/media/", "/var/mnt/")):
             out.add(mp)
     return sorted(out)
 

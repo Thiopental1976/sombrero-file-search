@@ -374,6 +374,52 @@ def test_user_mounts_parsing():
     print("ok  UX  user_mounts: /dev/* sob /media|/mnt|/run/media (espaço decodificado)")
 
 
+def test_var_mnt_bazzite_disk_detection():
+    """Bazzite/ostree monta discos secundários em /var/mnt (o /mnt da imagem é
+    ro) — sem esse prefixo o disco vira "só uma pasta": fora do menu Discos ▾,
+    sem label amigável e, pior, um HD SMR ali seria varrido em paralelo. Cobre
+    os 5 casos do plano (BUG_Bazzite_Deteccao_Disco_var_mnt §4)."""
+    # 1. Bazzite típico: /var/mnt entra em user_mounts
+    lines = [
+        "/dev/mapper/root / btrfs rw 0 0\n",
+        "/dev/sda1 /var/mnt/DadosMedicos ext4 rw 0 0\n",
+    ]
+    assert engine.user_mounts(lines) == ["/var/mnt/DadosMedicos"]
+
+    # 2. mounts de SISTEMA não viram disco de usuário (raiz, /var do ostree)
+    lines = [
+        "/dev/mapper/root / btrfs rw 0 0\n",
+        "/dev/sda2 /var ext4 rw 0 0\n",
+    ]
+    assert engine.user_mounts(lines) == []
+
+    # 3. coexistência: udisks (/run/media) e ostree (/var/mnt) juntos
+    lines = [
+        "/dev/sdd1 /run/media/rodrigo/PEN vfat rw 0 0\n",
+        "/dev/sda1 /var/mnt/HD ext4 rw 0 0\n",
+    ]
+    assert engine.user_mounts(lines) == ["/run/media/rodrigo/PEN", "/var/mnt/HD"]
+
+    # 4. label por basename: disco sem entrada em by-label montado em /var/mnt
+    M = disks._read_mounts(["/dev/sdz9 /var/mnt/ACERVO ext4 rw 0 0\n"])
+    assert disks.volume_label("/var/mnt/ACERVO", M) == "ACERVO"
+
+    # 5. SMR/rotacional em /var/mnt serializa (o seek thrash que o SFS evita)
+    assert disks._under_mount("/var/mnt/HD")
+    orig = disks._rotational
+    disks._rotational = lambda dev: "1"
+    try:
+        M2 = disks._read_mounts(["/dev/sda1 /var/mnt/HD ext4 rw 0 0\n"])
+        prof = disks.search_profile("/var/mnt/HD/filmes", mounts=M2)
+        assert prof.serialize and prof.klass == "rotational", prof
+        disks._rotational = lambda dev: "0"          # SSD confirmado libera
+        prof = disks.search_profile("/var/mnt/HD/filmes", mounts=M2)
+        assert not prof.serialize, prof
+    finally:
+        disks._rotational = orig
+    print("ok  UX  /var/mnt (Bazzite/ostree): detecta, rotula e serializa SMR")
+
+
 # ------------------------------------------------------------------ N1 fd caixa-sensível
 def test_fd_case_sensitive():
     """N1: com 'Aa' LIGADO, o fd não pode vazar por smart-case.
@@ -3577,7 +3623,8 @@ def main():
            test_t2_boolean_lines_without_rg, test_one_file_system_fallback,
            test_boolean_parser, test_boolean_unterminated_quote,
            test_boolean_empty_quoted_term, test_name_contains_semantics,
-           test_user_mounts_parsing, test_fd_case_sensitive,
+           test_user_mounts_parsing, test_var_mnt_bazzite_disk_detection,
+           test_fd_case_sensitive,
            test_and_progressive_correctness, test_and_progressive_restricts,
            test_glob_to_regex, test_fd_merge_single_pass,
            test_mnt_serializes, test_or_parallel_correctness,

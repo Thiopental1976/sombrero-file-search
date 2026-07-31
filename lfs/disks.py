@@ -45,7 +45,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning,
 # ------------------------------------------------------------------ topologia
 # Pontos de montagem onde discos SMR/USB do acervo costumam viver: seek concorrente
 # os castiga, então buscas AQUI são SERIALIZADAS (1 processo por vez).
-_MNT_PREFIXES = ("/mnt", "/media", "/run/media")
+# /var/mnt é o "/mnt gravável" das distros ostree (Bazzite/Silverblue).
+_MNT_PREFIXES = ("/mnt", "/media", "/run/media", "/var/mnt")
 
 
 def _under_mount(ap: str) -> bool:
@@ -104,8 +105,8 @@ def volume_label(mp: str, mounts=None):
     """Rótulo amigável do volume montado em `mp` (ex.: 'DiscoL'), para a UI
     preferir o nome ao mountpoint cru. Fontes, em ordem:
       1. /dev/disk/by-label/<label> cujo alvo é o MESMO dev de `mp`;
-      2. basename de `mp` sob /media ou /run/media (o auto-mount costuma nomear
-         a pasta pelo próprio label).
+      2. basename de `mp` sob /media, /run/media ou /var/mnt (auto-mount e o
+         fluxo ostree costumam nomear a pasta pelo próprio label).
     Devolve None quando nada é melhor que o mountpoint (ex.: /mnt/dados à mão).
     Só faz syscalls locais (/dev, string) — nunca toca o conteúdo da montagem."""
     dev = _mount_entry(mp, mounts)[0]
@@ -118,7 +119,7 @@ def volume_label(mp: str, mounts=None):
                     return _udev_unescape(name)
         except OSError:
             pass
-    for prefix in ("/media/", "/run/media/"):
+    for prefix in ("/media/", "/run/media/", "/var/mnt/"):
         if mp.startswith(prefix):
             base = os.path.basename(mp.rstrip("/"))
             if base:
