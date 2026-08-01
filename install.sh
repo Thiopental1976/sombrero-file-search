@@ -2,13 +2,15 @@
 # ==========================================================================
 #  Sombrero File Search — instalador universal
 #  Instala o app + TODAS as dependências, em qualquer distro:
-#    - ripgrep, fd            (busca de conteúdo / nome)
+#    - ripgrep, fd            (busca de conteúdo / nome)          [binário estático]
 #    - poppler-utils          (pdftotext, p/ PDF no modo documentos)
 #    - PySide6                (GUI; via sistema ou venv próprio)
 #    - ripgrep-all (rga)      (busca dentro de PDF/docx/epub/zip)  [binário estático]
 #    - pandoc                 (docx/epub/odt/html no rga)          [binário estático]
-#  Não requer root para o app: instala em ~/.local. Só usa sudo p/ pacotes
-#  de sistema (ripgrep/fd/poppler), e apenas se você autorizar.
+#  Não requer root para o app: instala em ~/.local. Espaço de usuário primeiro,
+#  gerenciador de pacotes como alternativa — importa em distros imutáveis
+#  (ostree/Bazzite/Silverblue), onde /usr é somente-leitura e pacotes de sistema
+#  exigem rpm-ostree + reboot. Só usa sudo se você autorizar, e nunca em ostree.
 # ==========================================================================
 set -euo pipefail
 
@@ -19,6 +21,8 @@ OLD_PREFIX="$HOME/.local/share/$OLD_APP"
 BIN="$HOME/.local/bin"
 APPDIR="$HOME/.local/share/applications"
 ICONS="$HOME/.local/share/icons/hicolor"
+mkdir -p "$BIN"   # rga/pandoc/rg/fd (binário estático) symlinkam aqui já em [1/5]-[3/5],
+                  # antes do install_app() em [5/5] — sem isto, ln -sf falha em HOME limpo
 
 # Rebranding: reaproveita a instalação antiga (o venv de ~250 MB, sobretudo) em
 # vez de recriá-la sob o nome novo. Só move se o destino NOVO ainda não existe.
@@ -35,22 +39,68 @@ c()  { printf "\033[1;36m%s\033[0m\n" "$*"; }
 ok() { printf "  \033[32m✓\033[0m %s\n" "$*"; }
 wn() { printf "  \033[33m!\033[0m %s\n" "$*"; }
 er() { printf "  \033[31m✗\033[0m %s\n" "$*"; }
-has(){ command -v "$1" >/dev/null 2>&1; }
-# pergunta S/n (default Sim); respeita -y e ambiente não-interativo
-ask(){ # ask "pergunta"
+has(){ type -P "$1" >/dev/null 2>&1; }   # só binário no PATH — imune a função/alias de shell
+# pergunta S/n (default Sim); respeita -y e ambiente não-interativo.
+# ask "pergunta" [padrao_sem_tty: y|n] — padrao_sem_tty só importa quando NÃO há
+# TTY e ASSUME_YES=0: usar "n" nos pontos que escalam para instalação de
+# sistema via sudo (tem alternativa segura em espaço de usuário); o gate geral
+# de "seguir com as dependências" continua "y" (automação não deve travar).
+ask(){
   [ "$ASSUME_YES" = 1 ] && return 0
-  [ -t 0 ] || return 0
-  local r; printf "  \033[1;36m?\033[0m %s [S/n] " "$1"; read -r r
-  case "$r" in [nN]|[nN][aãoOÃ]*) return 1;; *) return 0;; esac
+  if [ -t 0 ]; then
+    local r; printf "  \033[1;36m?\033[0m %s [S/n] " "$1"; read -r r
+    case "$r" in [nN]|[nN][aãoOÃ]*) return 1;; *) return 0;; esac
+  fi
+  [ "${2:-y}" = "n" ] && return 1
+  return 0
 }
 
 # -------------------------------------------------- gerenciador de pacotes
-PM=""; INSTALL=""
+PM=""; INSTALL=""; IMMUTABLE=0; IMMUTABLE_KIND=""
+
+# Sistema de imagem imutável (/ e /usr somente-leitura; estado gravável só sob
+# /var): cobre as três famílias que existem hoje, não só o Bazzite.
+#   - Fedora Atomic/uBlue (Bazzite, Silverblue, Kinoite, …): marcador /run/ostree-booted
+#   - openSUSE MicroOS/Aeon: comando transactional-update no PATH
+#   - fallback genérico: /usr montado "ro" em /proc/mounts (pega qualquer
+#     imutável futura que não use nenhum dos dois marcadores acima)
+# Preenche IMMUTABLE_KIND (ostree|transactional|generic) — o comando de sistema
+# pra escapar do modo imutável difere por família; "rpm-ostree" não existe no
+# MicroOS, "transactional-update" não existe no ostree.
+detect_immutable() {
+  [ -e /run/ostree-booted ] && { IMMUTABLE_KIND=ostree; return 0; }
+  has transactional-update && { IMMUTABLE_KIND=transactional; return 0; }
+  grep -qE '^\S+[[:space:]]+/usr[[:space:]]+\S+[[:space:]]+ro[,[:space:]]' /proc/mounts 2>/dev/null \
+    && { IMMUTABLE_KIND=generic; return 0; }
+  return 1
+}
+
+# comando de sistema equivalente a "instalar pacote" nesta família de imutável
+# (usado só em mensagens — nunca executado por nós)
+immutable_pkg_cmd() { # immutable_pkg_cmd <pacote>
+  case "$IMMUTABLE_KIND" in
+    ostree)        echo "rpm-ostree install $1";;
+    transactional) echo "transactional-update pkg install $1";;
+    *)             echo "o mecanismo de atualização atômica da sua distro";;
+  esac
+}
+
 detect_pm() {
-  if   has apt-get; then PM=apt;    INSTALL="sudo apt-get install -y"
-  elif has dnf;     then PM=dnf;    INSTALL="sudo dnf install -y"
-  elif has pacman;  then PM=pacman; INSTALL="sudo pacman -S --noconfirm"
-  elif has zypper;  then PM=zypper; INSTALL="sudo zypper install -y"
+  if detect_immutable; then
+    PM=""; IMMUTABLE=1
+    wn "sistema imutável (imagem atômica) — pacotes de sistema exigiriam"
+    wn "$(immutable_pkg_cmd '<pacote>') + REBOOT; usando binários estáticos"
+    wn "e venv em ~/.local (nenhum root necessário)."
+    return
+  fi
+  # timeout: cinto de segurança universal — nenhum gerenciador de pacotes deve
+  # poder pendurar o instalador para sempre (ex.: um wrapper que abre browser
+  # e trava esperando algo que nunca chega). Vale p/ toda distro, não só ostree.
+  local T="timeout ${SFS_PM_TIMEOUT:-300}"
+  if   has apt-get; then PM=apt;    INSTALL="$T sudo apt-get install -y"
+  elif has dnf;     then PM=dnf;    INSTALL="$T sudo dnf install -y"
+  elif has pacman;  then PM=pacman; INSTALL="$T sudo pacman -S --noconfirm"
+  elif has zypper;  then PM=zypper; INSTALL="$T sudo zypper install -y"
   else PM=""; fi
 }
 # nome do pacote por distro (var indireta)
@@ -96,9 +146,55 @@ dl() { # dl <url> <destino>
   else er "preciso de curl ou wget"; return 1; fi
 }
 
+# true se o binário já está no PATH OU já foi instalado por nós em $PREFIX/bin.
+# Reexecutar o instalador não deve rebaixar ~150 MB de binários estáticos só
+# porque $PREFIX/bin ainda não entrou no PATH desta sessão (aviso do próprio
+# script, no fim da instalação).
+engine_present() { has "$1" || [ -x "$PREFIX/bin/$1" ]; }
+
+# baixa um .tar.gz e instala UM binário (nome = $2) em $PREFIX/bin + symlink em $BIN
+dl_tar() { # dl_tar <url> <binario>
+  local url="$1" bin="$2" tmp f
+  tmp="$(mktemp -d)"
+  if dl "$url" "$tmp/a.tgz" && tar xzf "$tmp/a.tgz" -C "$tmp" --no-same-owner; then
+    f="$(find "$tmp" -type f -name "$bin" | head -1)"
+    if [ -n "$f" ]; then
+      install -m755 "$f" "$PREFIX/bin/$bin"
+      ln -sf "$PREFIX/bin/$bin" "$BIN/$bin"
+      rm -rf "$tmp"; return 0
+    fi
+  fi
+  rm -rf "$tmp"; return 1
+}
+
+# rg/fd como binário estático — mesmo padrão de install_rga/install_pandoc.
+# "espaço de usuário primeiro": roda em QUALQUER distro sem pedir root, e é o
+# que evita cair no gerenciador de pacotes (o ponto que travava no Bazzite).
+install_static_engines() {
+  mkdir -p "$PREFIX/bin"
+  local rgv="15.2.0" fdv="v10.4.2"
+  if [ "$ARCH" != "x86_64" ]; then
+    wn "rg/fd: binário pronto só p/ x86_64 (seu: $ARCH) — usando o gerenciador de pacotes."
+    sys_install ripgrep rg
+    sys_install fd "$(has fdfind && echo fdfind || echo fd)"
+    return
+  fi
+  if engine_present rg; then ok "rg já presente"; else
+    c "Baixando rg $rgv (binário estático, sem root)…"
+    dl_tar "https://github.com/BurntSushi/ripgrep/releases/download/$rgv/ripgrep-$rgv-x86_64-unknown-linux-musl.tar.gz" rg \
+      && ok "rg instalado" || wn "download do rg falhou — busca de conteúdo cai no fallback Python"
+  fi
+  if engine_present fd; then ok "fd já presente"; else
+    c "Baixando fd $fdv (binário estático, sem root)…"
+    dl_tar "https://github.com/sharkdp/fd/releases/download/$fdv/fd-$fdv-x86_64-unknown-linux-musl.tar.gz" fd \
+      && ok "fd instalado" || wn "download do fd falhou — busca por nome cai no fallback Python"
+  fi
+  if [ "$IMMUTABLE" = 1 ]; then wn "alternativa via sistema (exige reboot): $(immutable_pkg_cmd 'ripgrep fd')"; fi
+}
+
 install_rga() {
   mkdir -p "$PREFIX/bin"
-  if has rga; then ok "rga já disponível ($(command -v rga))"; return; fi
+  if engine_present rga; then ok "rga já presente"; return; fi
   if [ "$ARCH" != "x86_64" ]; then
     wn "rga: binário pronto só p/ x86_64 (seu: $ARCH). Instale 'ripgrep-all' pelo gerenciador."
     sys_install ripgrep-all rga; return
@@ -108,7 +204,7 @@ install_rga() {
   c "Baixando ripgrep-all $v (estático)…"
   local tmp; tmp="$(mktemp -d)"
   if dl "$url" "$tmp/rga.tgz"; then
-    tar xzf "$tmp/rga.tgz" -C "$tmp"
+    tar xzf "$tmp/rga.tgz" -C "$tmp" --no-same-owner
     local d; d="$(find "$tmp" -maxdepth 1 -type d -name 'ripgrep_all-*')"
     install -m755 "$d/rga" "$d/rga-preproc" "$PREFIX/bin/"
     ln -sf "$PREFIX/bin/rga" "$BIN/rga"; ln -sf "$PREFIX/bin/rga-preproc" "$BIN/rga-preproc"
@@ -118,7 +214,7 @@ install_rga() {
 }
 
 install_pandoc() {
-  if has pandoc; then ok "pandoc já disponível"; return; fi
+  if engine_present pandoc; then ok "pandoc já presente"; return; fi
   local amd; case "$ARCH" in x86_64) amd=amd64;; aarch64|arm64) amd=arm64;; *) amd="";; esac
   if [ -z "$amd" ]; then wn "pandoc: arquitetura $ARCH sem binário pronto — docx/epub ficam de fora"; return; fi
   local v="3.10"
@@ -126,7 +222,7 @@ install_pandoc() {
   c "Baixando pandoc $v (estático, p/ docx/epub/odt)…"
   local tmp; tmp="$(mktemp -d)"
   if dl "$url" "$tmp/p.tgz"; then
-    tar xzf "$tmp/p.tgz" -C "$tmp"
+    tar xzf "$tmp/p.tgz" -C "$tmp" --no-same-owner
     install -m755 "$(find "$tmp" -type f -name pandoc)" "$PREFIX/bin/pandoc"
     ln -sf "$PREFIX/bin/pandoc" "$BIN/pandoc"
     ok "pandoc instalado (docx/epub/odt/html cobertos)"
@@ -146,7 +242,13 @@ ensure_qt_xcb() {
   # derruba o pipeline — a lib presente pareceria ausente
   ldconfig -p 2>/dev/null | grep 'libxcb-cursor\.so\.0' >/dev/null && return 0
   if [ -z "$PM" ]; then
-    wn "libxcb-cursor ausente — sem ela a GUI não abre em X11; instale pela sua distro"; return 1
+    if [ "$IMMUTABLE" = 1 ]; then
+      wn "libxcb-cursor ausente — só falta se você abrir em X11 (Wayland não precisa dela)."
+      wn "em sistema imutável só entra via '$(immutable_pkg_cmd xcb-util-cursor)' + REBOOT — não faço isso por você."
+    else
+      wn "libxcb-cursor ausente — sem ela a GUI não abre em X11; instale pela sua distro"
+    fi
+    return 1
   fi
   local p; case "$PM" in
     dnf|pacman) p=xcb-util-cursor;;
@@ -186,7 +288,7 @@ setup_python() {
   # (recusa no prompt ≠ pacote inexistente: cada caso tem sua mensagem)
   if [ -n "$PM" ] && ! pkg_exists "$(pkg pyside6)"; then
     wn "$(pkg pyside6) não existe no repositório desta distro — usando venv."
-  elif [ -n "$PM" ] && ask "Instalar PySide6 pelo gerenciador ($(pkg pyside6))?"; then
+  elif [ -n "$PM" ] && ask "Instalar PySide6 pelo gerenciador ($(pkg pyside6))?" n; then
     $INSTALL "$(pkg pyside6)" || true
     if python3 -c "import PySide6" >/dev/null 2>&1; then
       PYBIN="$(command -v python3)"; ok "PySide6 do sistema OK"; return
@@ -316,9 +418,8 @@ DEPS_OK=1; plan_and_confirm || DEPS_OK=0
 echo
 
 if [ "$DEPS_OK" = 1 ]; then
-c "[1/5] Dependências de busca (ripgrep, fd, poppler)"
-sys_install ripgrep rg
-sys_install fd "$(has fdfind && echo fdfind || echo fd)"
+c "[1/5] Motores de busca (ripgrep, fd) + poppler"
+install_static_engines
 sys_install poppler pdftotext
 echo
 c "[2/5] ripgrep-all (busca dentro de documentos)"
