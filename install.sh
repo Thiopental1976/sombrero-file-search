@@ -12,7 +12,7 @@
 #  (ostree/Bazzite/Silverblue), onde /usr é somente-leitura e pacotes de sistema
 #  exigem rpm-ostree + reboot. Só usa sudo se você autorizar, e nunca em ostree.
 # ==========================================================================
-set -euo pipefail
+set -Eeuo pipefail   # -E: o trap ERR abaixo também vale dentro de função (ver on_err)
 
 APP="sombrero-file-search"
 OLD_APP="linux-file-search"                 # nome anterior (rebranding jul/2026)
@@ -35,11 +35,27 @@ ASSUME_YES=0
 for a in "$@"; do case "$a" in -y|--yes) ASSUME_YES=1;; -h|--help)
   echo "uso: ./install.sh [-y|--yes]   (-y = não perguntar, instala tudo)"; exit 0;; esac; done
 
-c()  { printf "\033[1;36m%s\033[0m\n" "$*"; }
+STAGE="início"                       # última seção anunciada por c() — usado por on_err
+c()  { STAGE="$*"; printf "\033[1;36m%s\033[0m\n" "$*"; }
 ok() { printf "  \033[32m✓\033[0m %s\n" "$*"; }
 wn() { printf "  \033[33m!\033[0m %s\n" "$*"; }
 er() { printf "  \033[31m✗\033[0m %s\n" "$*"; }
 has(){ type -P "$1" >/dev/null 2>&1; }   # só binário no PATH — imune a função/alias de shell
+
+# Rede de segurança geral: qualquer falha NÃO tratada explicitamente (os pontos
+# já protegidos por if/else/wn continuam só avisando e seguindo) cai aqui em vez
+# de abortar em silêncio. Aponta a seção em que quebrou (STAGE, do último c()) e
+# o comando exato — sem isso, "o instalador travou" vira depuração às cegas.
+on_err() {
+  local line="$1" cmd="$2"
+  echo
+  er "instalação interrompida em: $STAGE"
+  er "comando que falhou (install.sh linha $line): $cmd"
+  echo "  Isso não deveria derrubar o app inteiro — rode 'bash -x install.sh' pra ver"
+  echo "  o passo a passo, ou abra um issue citando a linha e a mensagem acima."
+  exit 1
+}
+trap 'on_err "$LINENO" "$BASH_COMMAND"' ERR
 # pergunta S/n (default Sim); respeita -y e ambiente não-interativo.
 # ask "pergunta" [padrao_sem_tty: y|n] — padrao_sem_tty só importa quando NÃO há
 # TTY e ASSUME_YES=0: usar "n" nos pontos que escalam para instalação de
@@ -114,7 +130,13 @@ pkg() {
     pandoc:*) echo pandoc;;
     rga:pacman) echo ripgrep-all;;  rga:*) echo ripgrep-all;;
     pyside6:apt) echo python3-pyside6;;   pyside6:dnf) echo python3-pyside6;;
-    pyside6:pacman) echo pyside6;;        pyside6:zypper) echo python3-PySide6;;
+    pyside6:pacman) echo pyside6;;
+    pyside6:zypper)
+      # Tumbleweed nomeia com o prefixo de versão do python3 do sistema
+      # (ex.: python313-pyside6) — "python3-PySide6" nunca existiu no repo.
+      local pv; pv="$(python3 -c 'import sys; print("%d%d" % sys.version_info[:2])' 2>/dev/null)"
+      if [ -n "$pv" ]; then echo "python${pv}-pyside6"; else echo "python3-pyside6"; fi
+      ;;
     pyside6:*) echo python3-pyside6;;
     *) echo "$key";;
   esac
@@ -202,14 +224,20 @@ install_rga() {
   local v="v0.10.10"
   local url="https://github.com/phiresky/ripgrep-all/releases/download/$v/ripgrep_all-$v-x86_64-unknown-linux-musl.tar.gz"
   c "Baixando ripgrep-all $v (estático)…"
-  local tmp; tmp="$(mktemp -d)"
-  if dl "$url" "$tmp/rga.tgz"; then
-    tar xzf "$tmp/rga.tgz" -C "$tmp" --no-same-owner
-    local d; d="$(find "$tmp" -maxdepth 1 -type d -name 'ripgrep_all-*')"
-    install -m755 "$d/rga" "$d/rga-preproc" "$PREFIX/bin/"
+  local tmp d; tmp="$(mktemp -d)"
+  # cadeia inteira na condição do if (como dl_tar): sob `set -e`, um tar/find/install
+  # solto no corpo do then aborta o instalador inteiro num download truncado — aqui
+  # uma falha em qualquer etapa só cai no wn de aviso, sem derrubar o script.
+  if dl "$url" "$tmp/rga.tgz" \
+    && tar xzf "$tmp/rga.tgz" -C "$tmp" --no-same-owner \
+    && d="$(find "$tmp" -maxdepth 1 -type d -name 'ripgrep_all-*')" \
+    && [ -n "$d" ] \
+    && install -m755 "$d/rga" "$d/rga-preproc" "$PREFIX/bin/"; then
     ln -sf "$PREFIX/bin/rga" "$BIN/rga"; ln -sf "$PREFIX/bin/rga-preproc" "$BIN/rga-preproc"
     ok "rga instalado em $PREFIX/bin (+ symlink em $BIN)"
-  else wn "download do rga falhou — modo documentos ficará indisponível"; fi
+  else
+    wn "download/extração do rga falhou — modo documentos ficará indisponível"
+  fi
   rm -rf "$tmp"
 }
 
@@ -220,13 +248,17 @@ install_pandoc() {
   local v="3.10"
   local url="https://github.com/jgm/pandoc/releases/download/$v/pandoc-$v-linux-$amd.tar.gz"
   c "Baixando pandoc $v (estático, p/ docx/epub/odt)…"
-  local tmp; tmp="$(mktemp -d)"
-  if dl "$url" "$tmp/p.tgz"; then
-    tar xzf "$tmp/p.tgz" -C "$tmp" --no-same-owner
-    install -m755 "$(find "$tmp" -type f -name pandoc)" "$PREFIX/bin/pandoc"
+  local tmp f; tmp="$(mktemp -d)"
+  if dl "$url" "$tmp/p.tgz" \
+    && tar xzf "$tmp/p.tgz" -C "$tmp" --no-same-owner \
+    && f="$(find "$tmp" -type f -name pandoc)" \
+    && [ -n "$f" ] \
+    && install -m755 "$f" "$PREFIX/bin/pandoc"; then
     ln -sf "$PREFIX/bin/pandoc" "$BIN/pandoc"
     ok "pandoc instalado (docx/epub/odt/html cobertos)"
-  else wn "download do pandoc falhou — só PDF/zip no modo documentos"; fi
+  else
+    wn "download/extração do pandoc falhou — só PDF/zip no modo documentos"
+  fi
   rm -rf "$tmp"
 }
 
