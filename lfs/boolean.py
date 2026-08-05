@@ -180,11 +180,29 @@ def positive_terms(node) -> list[str]:
 
 
 # ------------------------------------------------------------------ conjuntos de arquivos por termo
+def _content_binary(q: engine.Query):
+    """Binário que resolve os conjuntos de termo — MESMA decisão do
+    `engine._iter_content_rg`: em modo documentos, com o rga presente, é o rga
+    (que extrai texto de PDF/docx/epub/odt/zip…); senão, o rg puro.
+
+    Sem isto o booleano varria só texto plano e devolvia MENOS arquivos que a
+    busca simples pelo mesmo termo — em silêncio, que é o pior modo de errar
+    numa ferramenta cuja identidade é 'honestidade > completude'.
+    Sem rga instalado, `documents` é ignorado aqui exatamente como no motor.
+    Devolve vazio quando não há binário nenhum (o chamador cai no fallback Python).
+    """
+    if q.documents and engine.RGA:
+        return engine.RGA
+    return engine.RG
+
+
 def _rg_base(q: engine.Query, matching: bool = True):
-    """Flags comuns do rg. `matching=False` (usado pelo universo do NOT) omite as
-    flags de CASAMENTO de conteúdo (--word-regexp) — o universo lista todo arquivo
-    de texto com padrão vazio, e --word-regexp quebraria esse padrão."""
-    cmd = [engine.RG]
+    """Flags comuns do rg (ou do rga em modo documentos). `matching=False` (usado
+    pelo universo do NOT) omite as flags de CASAMENTO de conteúdo (--word-regexp)
+    — o universo lista todo arquivo de texto com padrão vazio, e --word-regexp
+    quebraria esse padrão.
+    Em modo documentos o binário é o rga, que aceita as mesmas flags do rg."""
+    cmd = [_content_binary(q)]
     if not q.respect_gitignore: cmd.append("--no-ignore")
     if q.include_hidden:        cmd.append("--hidden")
     if q.follow_symlinks:       cmd.append("--follow")
@@ -211,7 +229,7 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
     Retorna sempre um subconjunto de `restrict` quando ele é dado.
     N2: `stats` recebe 'denied' (inacessíveis) contados do stderr do rg.
     """
-    if not engine.RG:
+    if not _content_binary(q):
         res = _files_with_term_py(term, q, cancel, stats)
         return res & set(restrict) if restrict is not None else res
     base = _rg_base(q) + ["-l"]
@@ -273,8 +291,11 @@ def _universe(q: engine.Query, cancel, stats=None) -> set[str]:
     positiva — o rg PULA binários nos conjuntos de termo, então o universo também
     é só-texto. Senão um `NOT termo` despejava TODO binário (inclusive os que
     CONTÊM o termo, que o `rg -l` não lista → falso positivo)."""
-    if engine.RG:
+    if _content_binary(q):
         # -l -e "" lista todo arquivo que o rg trata como TEXTO (binário fora).
+        # Em modo documentos o binário é o rga, então o universo inclui também
+        # PDF/docx/odt/… — senão `NOT termo` despejaria todo documento, inclusive
+        # os que CONTÊM o termo, que agora entram nos conjuntos positivos.
         # matching=False remove --word-regexp (quebraria o padrão vazio).
         cmd = _rg_base(q, matching=False) + ["-l", "-e", "", "--"] + q.paths
         errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr
@@ -610,8 +631,8 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
     N2: `stats` recebe 'denied' contados do stderr do rg."""
     if not files:
         return {}
-    if not engine.RG:                       # T2: sem rg, colhe as linhas em Python
-        return _display_lines_py(pos_terms, files, q, cancel)
+    if not _content_binary(q):              # T2: sem rg, colhe as linhas em Python
+        return _display_lines_py(pos_terms, files, q, cancel)   # (o fallback só lê texto plano)
     base = _rg_base(q) + ["--json"]
     if not q.content_is_regex: base.append("--fixed-strings")
     for term in pos_terms: base += ["-e", term]   # B6: não sombrear o tradutor t()

@@ -3616,6 +3616,72 @@ def test_copyjobs_resume_is_idempotent():
             shutil.rmtree(d, ignore_errors=True)
 
 
+def _docs_tree():
+    """Árvore para o modo documentos: um arquivo de texto plano e um CONTAINER
+    (zip) cujo membro tem o MESMO termo. O rg puro vê o zip como binário e pula;
+    o rga extrai. Usa zip em vez de um PDF/ODT de verdade para o teste não
+    depender do LibreOffice nem de fixture binária no repo — o caminho de código
+    exercitado (adaptador do rga sobre arquivo não-texto) é o mesmo."""
+    import zipfile
+    d = tempfile.mkdtemp(prefix="lfs_docs_")
+    open(os.path.join(d, "plain.txt"), "w").write("report with laudo inside\n")
+    open(os.path.join(d, "other.txt"), "w").write("nothing relevant here\n")
+    with zipfile.ZipFile(os.path.join(d, "packed.zip"), "w") as z:
+        z.writestr("inner.txt", "report with laudo inside\n")
+    return d
+
+
+def test_boolean_documents_matches_simple_search():
+    """REGRESSÃO: a busca booleana ignorava o `--docs`. O `_rg_base` fixava
+    engine.RG, então `-b termo --docs` varria só texto plano e devolvia MENOS
+    arquivos que `-c termo --docs` pelo MESMO termo — em silêncio. Pego em campo
+    num acervo de 60 laudos: busca simples achava 60 (pdf/odt/docx/txt), a
+    booleana achava 20 (só txt).
+
+    Trava o invariante nos DOIS sentidos: em modo documentos as duas buscas têm
+    de devolver o mesmo conjunto, e o universo do NOT precisa ser montado com o
+    mesmo binário — senão `NOT termo` despeja todo documento, inclusive os que
+    CONTÊM o termo."""
+    if not engine.RG or not engine.RGA:
+        print("ok  boolean/--docs (sem rg ou sem rga — pulado)"); return
+    d = _docs_tree()
+    try:
+        q = Query(paths=[d], content="laudo", documents=True)
+        simple = set()
+        engine.search(q, lambda m: simple.add(m.path))
+
+        boolean_hits = set()
+        boolean.search_boolean(Query(paths=[d], content="", documents=True),
+                               "laudo", lambda m: boolean_hits.add(m.path))
+
+        names = lambda s: {os.path.basename(p) for p in s}
+        assert names(simple) == {"plain.txt", "packed.zip"}, names(simple)
+        assert names(boolean_hits) == names(simple), (
+            f"booleano divergiu da busca simples em modo documentos: "
+            f"{names(boolean_hits)} != {names(simple)}")
+
+        # o universo do NOT também tem de enxergar o container: 'packed.zip'
+        # CONTÉM o termo, logo NÃO pode aparecer num `NOT laudo`.
+        neg = set()
+        boolean.search_boolean(Query(paths=[d], content="", documents=True),
+                               "report NOT laudo", lambda m: neg.add(m.path))
+        assert "packed.zip" not in names(neg), (
+            f"universo do NOT ficou só-texto: {names(neg)}")
+
+        # sem --docs o container volta a ser binário para os DOIS modos (paridade
+        # na direção oposta — o conserto não pode vazar rga para fora do modo).
+        plainq = Query(paths=[d], content="laudo")
+        s2 = set()
+        engine.search(plainq, lambda m: s2.add(m.path))
+        b2 = set()
+        boolean.search_boolean(Query(paths=[d], content=""),
+                               "laudo", lambda m: b2.add(m.path))
+        assert names(s2) == names(b2) == {"plain.txt"}, (names(s2), names(b2))
+        print("ok  booleano ≡ busca simples em modo documentos (e fora dele)")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def main():
     fns = [test_parse_size, test_reap_kills_process, test_no_orphan_on_cancel,
            test_glob_case_insensitive, test_boolean_name_regex,
@@ -3636,6 +3702,7 @@ def main():
            test_max_depth_backend_parity, test_boolean_deep_nesting,
            test_boolean_not_excludes_binaries, test_boolean_escaped_quotes,
            test_boolean_single_flight,
+           test_boolean_documents_matches_simple_search,
            # F7 — gerenciador de arquivos (cópia não-destrutiva)
            test_copy_hostile_names, test_copy_symlinks_and_cycles,
            test_copy_conflicts, test_copy_cancel_removes_partial,
