@@ -223,7 +223,7 @@ lfs ~ -n '*.md' -l 2>/dev/null | fzf
 | **install.sh** | qualquer distro, instala no `~`, sem root | usa o do sistema ou cria um venv |
 
 Detalhes de cada caminho e das dependências opcionais (`rg`, `fd`, `rga`) estão no
-`README_SOMBRERO_FILE_SEARCH.md`.
+[`README.pt-BR.md`](README.pt-BR.md).
 
 ---
 

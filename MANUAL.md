@@ -222,7 +222,7 @@ lfs ~ -n '*.md' -l 2>/dev/null | fzf
 | **install.sh** | any distro, installs into `~`, no root | uses the system's or builds a venv |
 
 Details for each path and the optional dependencies (`rg`, `fd`, `rga`) are in
-`README_SOMBRERO_FILE_SEARCH.md`.
+[`README.md`](README.md).
 
 ---
 

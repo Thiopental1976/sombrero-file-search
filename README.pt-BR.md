@@ -12,6 +12,8 @@
 ![ripgrep](https://img.shields.io/badge/engine-ripgrep%20%2B%20fd-orange)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 
+[English](README.md) · **Português (BR)**
+
 </div>
 
 ---
