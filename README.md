@@ -14,6 +14,10 @@
 
 **English** · [Português (BR)](README.pt-BR.md)
 
+<img src="assets/demo.gif" width="960" alt="Searching by name, then by content inside PDF and ODT files, then with a boolean expression">
+
+<sub>Name → content **inside documents** (PDF/ODT) → boolean expression, live, no index.</sub>
+
 </div>
 
 ---

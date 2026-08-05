@@ -14,6 +14,10 @@
 
 [English](README.md) · **Português (BR)**
 
+<img src="assets/demo.gif" width="960" alt="Busca por nome, depois por conteúdo dentro de PDF e ODT, depois com expressão booleana">
+
+<sub>Nome → conteúdo **dentro de documentos** (PDF/ODT) → expressão booleana, ao vivo, sem índice.</sub>
+
 </div>
 
 ---
