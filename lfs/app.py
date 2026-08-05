@@ -1761,9 +1761,9 @@ class MainWindow(QMainWindow):
             "Also accepts | & !  and \"quotes\" for phrases. Precedence NOT>AND>OR."))
         self.ck_bool.toggled.connect(self._on_bool_toggled)
         self.ck_doc = QCheckBox(t("documents"))
-        self.ck_doc.toggled.connect(self._on_doc_toggled)      # B6
         if engine.RGA:
-            self.ck_doc.setToolTip(t("Searches INSIDE PDF/docx/epub/odt/zip… (ripgrep-all)."))
+            self.ck_doc.setToolTip(t("Searches INSIDE PDF/docx/epub/odt/zip… (ripgrep-all).\n"
+                                     "Combines with 'boolean'."))
         else:
             self.ck_doc.setEnabled(False)
             self.ck_doc.setToolTip(t("Requires 'ripgrep-all' (rga) — run the installer."))
@@ -1971,19 +1971,16 @@ class MainWindow(QMainWindow):
             self.ck_crx.setChecked(False); self.ck_crx.setEnabled(False)
             self.ed_content.setPlaceholderText(
                 t("Boolean expression:   (note OR report) AND patient NOT draft"))
-            if self.ck_doc.isChecked():           # B6: não combinam
-                self.ck_doc.setChecked(False)
         else:
             self.ck_crx.setEnabled(True)
             self.ed_content.setPlaceholderText(
                 t("Content to contain (text or regex)…   — empty = search by name only"))
-        # B6: booleano ainda não busca dentro de documentos — um desabilita o outro
-        self.ck_doc.setEnabled(not on and bool(engine.RGA))
-
-    def _on_doc_toggled(self, on):
-        if on and self.ck_bool.isChecked():       # B6
-            self.ck_bool.setChecked(False)
-        self.ck_bool.setEnabled(not on)
+        # B6 (revogado): o booleano JÁ busca dentro de documentos — os conjuntos de
+        # termo, o universo do NOT e as linhas de preview passaram todos a usar o
+        # rga em modo documentos. A trava que desabilitava um chip com o outro
+        # existia só enquanto o motor não sabia combinar os dois; mantê-la agora
+        # esconderia do usuário da GUI um recurso que a CLI já entrega.
+        self.ck_doc.setEnabled(bool(engine.RGA))
 
     def browse(self):
         d = QFileDialog.getExistingDirectory(self, t("Choose the folder"),

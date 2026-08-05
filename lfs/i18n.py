@@ -84,8 +84,9 @@ _PT = {
         "Interpreta o campo Conteúdo como expressão: (A OR B) AND C NOT D\n"
         "Também aceita | & !  e \"aspas\" p/ frases. Precedência NOT>AND>OR.",
     "documents": "documentos",
-    "Searches INSIDE PDF/docx/epub/odt/zip… (ripgrep-all).":
-        "Busca DENTRO de PDF/docx/epub/odt/zip… (ripgrep-all).",
+    "Searches INSIDE PDF/docx/epub/odt/zip… (ripgrep-all).\nCombines with 'boolean'.":
+        "Busca DENTRO de PDF/docx/epub/odt/zip… (ripgrep-all).\n"
+        "Combina com o 'booleano'.",
     "Requires 'ripgrep-all' (rga) — run the installer.":
         "Requer 'ripgrep-all' (rga) — rode o instalador.",
     "content regex": "regex conteúdo",
