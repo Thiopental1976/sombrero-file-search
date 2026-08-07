@@ -11,9 +11,11 @@ in English and passed through `t()`. Other languages are translation tables keye
 by the English string. If a key is missing, `t()` returns the English source — so
 a partially translated language degrades gracefully instead of showing blanks.
 
-Language is picked from the system locale (LFS_LANG override, then the standard
-LC_ALL / LC_MESSAGES / LANG / LANGUAGE chain). No Qt dependency, so the engine can
-localize its progress labels too and the tests run without a display.
+Language is picked from the system locale (SFS_LANG override — LFS_LANG still works,
+from before the rename — then the standard LC_ALL / LC_MESSAGES / LANG / LANGUAGE
+chain). Anything that is not a supported language falls back to English, so the app
+is in English on every system that is not explicitly Portuguese. No Qt dependency, so
+the engine can localize its progress labels too and the tests run without a display.
 
 Adding a language = add a `{ "english source": "translation" }` dict to `_TABLES`
 and list its code in `_SUPPORTED`. Placeholders use `str.format` names, e.g.
@@ -446,7 +448,8 @@ _PT = {
 _TABLES = {"pt": _PT}
 _SUPPORTED = ("en", "pt")
 
-_LOCALE_VARS = ("LFS_LANG", "LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE")
+# SFS_LANG é o nome atual; LFS_LANG fica por compatibilidade com quem já usava.
+_LOCALE_VARS = ("SFS_LANG", "LFS_LANG", "LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE")
 
 
 def _normalize(value: str) -> str:

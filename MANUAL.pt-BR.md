@@ -14,6 +14,11 @@ Duas caras, o mesmo motor:
 
 O que a GUI acha, a CLI acha igual: são a mesma engine.
 
+**Idioma da interface.** O inglês é a língua-fonte e o fallback de todo locale que não
+seja português, então a GUI sai em inglês a menos que o sistema esteja em português; a
+CLI é só em inglês. Para forçar, independentemente do locale:
+`SFS_LANG=en sombrero-file-search` ou `SFS_LANG=pt sombrero-file-search`.
+
 ---
 
 ## 1. Conceitos que valem para as duas interfaces

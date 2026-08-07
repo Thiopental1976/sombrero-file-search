@@ -11,6 +11,7 @@
 ![PySide6](https://img.shields.io/badge/GUI-PySide6-41cd52)
 ![ripgrep](https://img.shields.io/badge/engine-ripgrep%20%2B%20fd-orange)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
+![Interface](https://img.shields.io/badge/interface-English%20(default)%20%2B%20Portugu%C3%AAs-informational)
 
 **English** · [Português (BR)](README.pt-BR.md)
 
@@ -34,6 +35,25 @@ The Windows searchers are **useless on Linux**: they read the NTFS MFT/USN, whic
 not exist here. This project reimplements the job natively.
 
 > 📖 **Full manual:** [MANUAL.md](MANUAL.md) (English) · [MANUAL.pt-BR.md](MANUAL.pt-BR.md) (Português) — GUI usage and every CLI capability.
+
+## Interface language
+
+**English is the source language.** Every user-facing string is written in English in the
+code; other languages are optional translation tables keyed by the English string. The GUI
+follows your system locale and **falls back to English for any locale that is not
+Portuguese** — so on `en_US`, `de_DE`, `fr_FR`, `ja_JP`, `C`, or an unset locale, the whole
+interface is English. The **CLI is English-only**.
+
+Force a language explicitly, whatever the system locale says:
+
+```bash
+SFS_LANG=en sombrero-file-search   # English
+SFS_LANG=pt sombrero-file-search   # Português (BR)
+```
+
+Currently shipped: **English** (source) and **Português (BR)**. Adding one is a single
+dictionary in [`lfs/i18n.py`](lfs/i18n.py); any key you don't translate falls back to the
+English source, so a partial translation degrades gracefully instead of showing blanks.
 
 ## Features
 

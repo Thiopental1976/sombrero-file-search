@@ -719,6 +719,41 @@ def test_i18n_mechanism():
         i18n.set_lang(None)
 
 
+def test_i18n_env_override():
+    """SFS_LANG força o idioma acima do locale; LFS_LANG segue valendo (pré-rename);
+    locale não suportado (ou ausente) sai em inglês — é a regra que o AlternativeTo
+    cobra ('the app must support English')."""
+    import os
+    salvos = {v: os.environ.get(v) for v in i18n._LOCALE_VARS}
+    try:
+        for v in i18n._LOCALE_VARS:
+            os.environ.pop(v, None)
+        casos = [
+            ({"LANG": "pt_BR.UTF-8"}, "pt"),                        # locale manda
+            ({"LANG": "pt_BR.UTF-8", "SFS_LANG": "en"}, "en"),      # override vence
+            ({"LANG": "en_US.UTF-8", "SFS_LANG": "pt"}, "pt"),      # nos dois sentidos
+            ({"LANG": "pt_BR.UTF-8", "LFS_LANG": "en"}, "en"),      # nome antigo vale
+            ({"LANG": "pt_BR.UTF-8", "SFS_LANG": "en",
+              "LFS_LANG": "pt"}, "en"),                             # SFS_ tem precedência
+            ({"LANG": "de_DE.UTF-8"}, "en"),                        # não suportado -> en
+            ({}, "en"),                                             # sem locale -> en
+        ]
+        for env, esperado in casos:
+            for v in i18n._LOCALE_VARS:
+                os.environ.pop(v, None)
+            os.environ.update(env)
+            i18n.set_lang(None)                       # força re-detecção
+            assert i18n.current_lang() == esperado, (env, i18n.current_lang())
+        print("ok  i18n  SFS_LANG/LFS_LANG sobrepõem o locale; desconhecido cai em inglês")
+    finally:
+        for v, val in salvos.items():
+            if val is None:
+                os.environ.pop(v, None)
+            else:
+                os.environ[v] = val
+        i18n.set_lang(None)
+
+
 def test_i18n_no_stale_keys():
     """Toda chave do dicionário PT precisa existir como literal t(...) no código —
     pega 'drift' (typo entre a fonte no código e a chave da tradução)."""
@@ -3696,7 +3731,7 @@ def main():
            test_mnt_serializes, test_or_parallel_correctness,
            test_on_phase_reports, test_on_phase_optional,
            test_walk_onerror_counts_denied, test_boolean_stats_denied,
-           test_i18n_mechanism, test_i18n_no_stale_keys,
+           test_i18n_mechanism, test_i18n_env_override, test_i18n_no_stale_keys,
            test_name_search_includes_dirs,
            test_name_newline_in_filename, test_name_broken_symlink,
            test_max_depth_backend_parity, test_boolean_deep_nesting,

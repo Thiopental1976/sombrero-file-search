@@ -14,6 +14,11 @@ Two faces, one engine:
 
 Whatever the GUI finds, the CLI finds too: they share the same engine.
 
+**Interface language.** English is the source language and the fallback for every
+locale that is not Portuguese, so the GUI is in English unless your system is set to
+Portuguese; the CLI is English-only. To force it either way, regardless of the system
+locale: `SFS_LANG=en sombrero-file-search` or `SFS_LANG=pt sombrero-file-search`.
+
 ---
 
 ## 1. Concepts common to both interfaces

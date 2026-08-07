@@ -11,6 +11,7 @@
 ![PySide6](https://img.shields.io/badge/GUI-PySide6-41cd52)
 ![ripgrep](https://img.shields.io/badge/engine-ripgrep%20%2B%20fd-orange)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
+![Interface](https://img.shields.io/badge/interface-English%20(default)%20%2B%20Portugu%C3%AAs-informational)
 
 [English](README.md) · **Português (BR)**
 
@@ -33,6 +34,25 @@ Os buscadores do Windows (FileLocator, Everything, UltraSearch) são **inúteis 
 MFT/USN do NTFS, que não existe aqui. Este projeto reimplementa a função de forma nativa.
 
 > 📖 **Manual completo:** [MANUAL.md](MANUAL.md) (English) · [MANUAL.pt-BR.md](MANUAL.pt-BR.md) (Português) — uso da GUI e todas as capacidades da CLI.
+
+## Idioma da interface
+
+**O inglês é a língua-fonte.** Toda frase que aparece para o usuário está escrita em inglês
+no código; os outros idiomas são tabelas de tradução opcionais, indexadas pela frase em
+inglês. A GUI segue o locale do sistema e **cai para o inglês em qualquer locale que não
+seja português** — em `en_US`, `de_DE`, `fr_FR`, `ja_JP`, `C` ou sem locale definido, a
+interface inteira sai em inglês. A **CLI é só em inglês**.
+
+Para forçar um idioma, independentemente do locale:
+
+```bash
+SFS_LANG=en sombrero-file-search   # English
+SFS_LANG=pt sombrero-file-search   # Português (BR)
+```
+
+Hoje acompanham **English** (fonte) e **Português (BR)**. Acrescentar um idioma é um único
+dicionário em [`lfs/i18n.py`](lfs/i18n.py); toda chave não traduzida cai na fonte em inglês,
+então uma tradução parcial degrada suave em vez de mostrar espaço em branco.
 
 ## Recursos
 
