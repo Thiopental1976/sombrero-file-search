@@ -1774,8 +1774,15 @@ class MainWindow(QMainWindow):
         self.ck_git = QCheckBox(".gitignore"); self.ck_git.setToolTip(t("Respect .gitignore rules"))
         self.ck_ofs = QCheckBox(t("1 disk")); self.ck_ofs.setToolTip(t(
             "--one-file-system: don't cross into other mount points"))
+        # F11: esconder resultado por padrão só é aceitável se for VISÍVEL que
+        # está sendo escondido — daí a caixa aqui e o aviso no painel narrativo.
+        self.ck_snap = QCheckBox(t("snapshots")); self.ck_snap.setToolTip(t(
+            "Also search inside system snapshot trees (Timeshift, snapper, ZFS). "
+            "Off by default: they are copies of the OS and can multiply the walk "
+            "tenfold on the disk that hosts them."))
         for w in (self.ck_case, self.ck_word, self.ck_bool, self.ck_doc, self.ck_crx,
-                  self.ck_nrx, self.ck_rec, self.ck_hid, self.ck_git, self.ck_ofs):
+                  self.ck_nrx, self.ck_rec, self.ck_hid, self.ck_git, self.ck_ofs,
+                  self.ck_snap):
             r3.addWidget(w)
         # rótulo+campo num mini-widget: a quebra de linha não pode separá-los
         def _pair(label, field):
@@ -2129,6 +2136,7 @@ class MainWindow(QMainWindow):
             "case": self.ck_case.isChecked(), "word": self.ck_word.isChecked(),
             "recursive": self.ck_rec.isChecked(), "hidden": self.ck_hid.isChecked(),
             "gitignore": self.ck_git.isChecked(), "one_fs": self.ck_ofs.isChecked(),
+            "snapshots": self.ck_snap.isChecked(),
             "min_size": self.ed_minsz.text(), "days": self.sp_days.value(),
         })
 
@@ -2142,6 +2150,7 @@ class MainWindow(QMainWindow):
         self.ck_case.setChecked(f["case"]); self.ck_word.setChecked(f["word"])
         self.ck_rec.setChecked(f["recursive"]); self.ck_hid.setChecked(f["hidden"])
         self.ck_git.setChecked(f["gitignore"]); self.ck_ofs.setChecked(f["one_fs"])
+        self.ck_snap.setChecked(f.get("snapshots", False))   # buscas salvas antigas
         self.ed_minsz.setText(f["min_size"]); self.sp_days.setValue(f["days"])
 
     # ---- F5: buscas salvas + histórico
@@ -2277,6 +2286,7 @@ class MainWindow(QMainWindow):
             include_hidden=self.ck_hid.isChecked(),
             respect_gitignore=self.ck_git.isChecked(),
             one_file_system=self.ck_ofs.isChecked(),
+            skip_snapshots=not self.ck_snap.isChecked(),
             min_size=parse_size(self.ed_minsz.text()),
             modified_after=mod_after,
             documents=self.ck_doc.isChecked(),
@@ -2367,10 +2377,12 @@ class MainWindow(QMainWindow):
         if rec is None:
             name = disks.volume_label(path) or os.path.basename(path.rstrip("/")) or path
             rec = {"name": name, "klass": info.get("klass", "unknown"),
-                   "state": "scanning", "found": 0, "reason": ""}
+                   "state": "scanning", "found": 0, "reason": "", "snap": False}
             tab.roots[path] = rec
             tab.root_order.append(path)
-        if ev == "root_scanning":
+        if ev == "snapshots_skipped":
+            rec["snap"] = True          # F11: houve poda; o usuário precisa saber
+        elif ev == "root_scanning":
             rec["state"] = "scanning"
             rec["klass"] = info.get("klass", rec["klass"])
         elif ev == "root_skipped":
@@ -2423,6 +2435,9 @@ class MainWindow(QMainWindow):
                 dot = f'<span style="color:{pal["accent"]}">●</span>'
                 line = (f'{dot} {badge}<span style="color:{pal["txt"]}">{name}</span>'
                         f' <span style="color:{pal["muted"]}">— {_esc(t("scanning…"))}</span>')
+            if r.get("snap"):
+                line += (f' <span style="color:{pal["muted"]}">'
+                         f'({_esc(t("snapshots skipped"))})</span>')
             lines.append(line)
         self.narr_body.setText("<br>".join(lines))
         self.narr.setVisible(True)

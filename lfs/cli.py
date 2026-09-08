@@ -54,6 +54,10 @@ def main():
     ap.add_argument("--hidden", action="store_true")
     ap.add_argument("--gitignore", action="store_true", help="respect .gitignore")
     ap.add_argument("--one-fs", action="store_true", help="do not cross mounts")
+    ap.add_argument("--snapshots", action="store_true",
+                    help="also search inside system snapshot trees (Timeshift, snapper, "
+                         "ZFS). Skipped by default: they are copies of the OS and can "
+                         "multiply the walk by 10x on the disk that hosts them")
     ap.add_argument("--min-size", type=str, default=None, help="e.g. 10M, 1G")
     ap.add_argument("--days", type=int, default=0, help="modified within the last N days")
     ap.add_argument("-0", "--print0", action="store_true", help="separate paths with NUL (for xargs -0)")
@@ -93,7 +97,8 @@ def main():
         content=args.content, content_is_regex=args.content_regex,
         case_sensitive=args.case_sensitive, whole_word=args.word,
         include_hidden=args.hidden, respect_gitignore=args.gitignore,
-        one_file_system=args.one_fs, min_size=parse_size(args.min_size),
+        one_file_system=args.one_fs, skip_snapshots=not args.snapshots,
+        min_size=parse_size(args.min_size),
         modified_after=(time.time()-args.days*86400) if args.days > 0 else None,
         documents=args.docs,
     )

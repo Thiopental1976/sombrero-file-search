@@ -71,6 +71,65 @@ def user_mounts(lines=None):
     return sorted(out)
 
 
+# --------------------------------------------------- arvores de SNAPSHOT (F11)
+# Descoberto medindo (08/09/2026): o 4TB-Portable levava ~1090 s numa busca que
+# os outros discos fechavam em 1-17 s. Nao era o barramento USB (enlace em
+# 5 Gbps; discos em USB 2.0 de 480 Mbps terminavam em segundos) — era CONTAGEM
+# DE ARQUIVOS: o disco hospeda 5 snapshots diarios do Timeshift, cada um uma
+# copia da raiz do sistema. 2.426.925 inodes contra 175.553 do DiscoQ.
+# Varrer backup do sistema pra achar arquivo do usuario e ruido caro: devolve
+# milhares de /usr/share/icons. Pulado por padrao, com como voltar atras.
+# Os padroes sao GLOB DE COMPONENTE, nao substring de caminho (F11 bug4):
+#  - "timeshift/snapshots*" cobre tambem snapshots-daily/, -boot/, -weekly/…,
+#    que o Timeshift cria como fazenda de symlinks pra dentro de snapshots/.
+#    Com --follow o fd entrava por ali e varria os cinco snapshots de novo.
+#  - "@GMT-*": o diretorio do Samba nunca se chama "@GMT-" exato, tem a data.
+#  - componente, e nao substring, pra "meus_timeshift_backups/" nao ser vitima.
+EXCLUSOES_SNAPSHOT = (
+    "timeshift/snapshots*",    # Timeshift (rsync): <destino>/timeshift/snapshots/<data>/
+    "timeshift-btrfs",         # Timeshift em modo btrfs
+    ".snapshots",              # snapper (openSUSE/btrfs)
+    ".zfs/snapshot",           # ZFS
+    "@GMT-*",                  # Samba/shadow copies (@GMT-2026.01.01-00.00.00)
+)
+
+
+def eh_snapshot(path: str) -> bool:
+    """True se o caminho esta DENTRO de uma arvore de snapshot de sistema.
+    Casa por COMPONENTE do caminho (um ou mais, em sequencia), com glob."""
+    comps = path.strip("/").split("/")
+    for m in EXCLUSOES_SNAPSHOT:
+        mp = m.split("/")
+        n = len(mp)
+        for i in range(len(comps) - n + 1):
+            if all(fnmatch.fnmatchcase(comps[i + j], mp[j]) for j in range(n)):
+                return True
+    return False
+
+
+def tem_snapshot(root: str) -> bool:
+    """Este root hospeda arvore de snapshot? Um punhado de stat, sem caminhada —
+    serve pro motor AVISAR que escondeu algo (esconder em silencio e que nao)."""
+    for m in ("timeshift/snapshots", "timeshift-btrfs", ".snapshots", ".zfs/snapshot"):
+        try:
+            if os.path.isdir(os.path.join(root, m)):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def _globs_snapshot():
+    """Padroes p/ o --exclude do fd e o --glob '!' do rg. Precisa ser exclusao
+    NO MOTOR, nao filtro na saida: filtrar depois nao economiza a caminhada,
+    e a caminhada e justamente o custo (2,4 milhoes de entradas)."""
+    fora = []
+    for m in EXCLUSOES_SNAPSHOT:
+        fora.append(f"**/{m}/**")
+        fora.append(f"**/{m}")
+    return fora
+
+
 # ---------------------------------------------------------------- utilidades
 def _reap(proc, errf=None, stats=None):
     """Encerra o subprocesso SEM deixar órfão (B1) e conta 'inacessíveis' do
@@ -148,6 +207,7 @@ class Query:
     follow_symlinks: bool = False
     respect_gitignore: bool = False   # False = busca TUDO (estilo Agent Ransack)
     one_file_system: bool = False     # não cruzar mounts (útil c/ USB do acervo)
+    skip_snapshots: bool = True       # pula timeshift/snapper/zfs (ver EXCLUSOES_SNAPSHOT)
     min_size: Optional[int] = None         # bytes
     max_size: Optional[int] = None
     modified_after: Optional[float] = None # epoch
@@ -259,6 +319,12 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                     pass
             if not q.include_hidden:
                 dns[:] = [d for d in dns if not d.startswith(".")]
+            if q.skip_snapshots:                    # F11: poda a arvore de snapshot
+                dns[:] = [d for d in dns           # ANTES de descer nela — filtrar
+                          if not eh_snapshot(os.path.join(dp, d) + "/")]  # depois nao
+                if eh_snapshot(dp + "/"):          # economiza a caminhada, que e o custo
+                    dns[:] = []
+                    continue
             if root_dev is not None:
                 keep = []
                 for d in dns:
@@ -359,7 +425,7 @@ def _merge_globs(pats) -> Optional[str]:
     return merged
 
 
-def _iter_names_fd(q: Query, cancel, stats=None):
+def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
     """fd/fdfind quando disponível (rápido). Multi-glob: >3 padrões viram UMA regex
     alternada (opt#3, 1 só fd); até 3, um fd por padrão."""
     pats = q.name_patterns or ["."]
@@ -375,6 +441,9 @@ def _iter_names_fd(q: Query, cancel, stats=None):
         # arquivos E pastas (e symlinks): busca só-por-nome acha "Argentina/" como
         # pasta e "argentina.txt" como arquivo — dir não tem conteúdo p/ filtrar.
         cmd = [FD, "--absolute-path", "--type", "f", "--type", "d", "--type", "l"]
+        if jobs:
+            cmd += ["--threads", str(jobs)]   # F11: particionado por disco -> pool
+                                              # enxuto por processo (ver _grupos_por_disco)
         if not q.respect_gitignore:
             cmd.append("--no-ignore")
         if q.include_hidden:
@@ -383,6 +452,9 @@ def _iter_names_fd(q: Query, cancel, stats=None):
             cmd.append("--follow")
         if q.one_file_system:
             cmd.append("--one-file-system")
+        if q.skip_snapshots:
+            for g in _globs_snapshot():
+                cmd += ["--exclude", g]
         if not q.recursive:
             cmd += ["--max-depth", "1"]
         elif q.max_depth is not None:
@@ -402,6 +474,10 @@ def _iter_names_fd(q: Query, cancel, stats=None):
             # binário (sem text=): lê bytes e decodifica com surrogateescape p/
             # sobreviver a nomes não-UTF-8 (E2) — o str resultante volta pro os.stat.
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
+            if procs is not None:
+                procs.append(proc)     # F11 bug1: quem cancela precisa alcancar
+                                       # o processo; read1() so ve o `parar` se
+                                       # vier chunk, e disco silencioso nao vem
         except OSError:
             errf.close()
             yield from _iter_names_python(q, stats, cancel); return
@@ -450,7 +526,7 @@ def _iter_names_fd(q: Query, cancel, stats=None):
 
 
 # ---------------------------------------------------------------- busca por CONTEÚDO
-def _iter_content_rg(q: Query, cancel, stats=None):
+def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
     """ripgrep --json (ou rga p/ documentos): filtra por nome (glob) E casa conteúdo, streaming.
 
     Em modo documentos (q.documents + rga presente) o rga extrai texto de PDF/docx/epub/zip…
@@ -460,6 +536,8 @@ def _iter_content_rg(q: Query, cancel, stats=None):
     docs = bool(q.documents and RGA)
     binary = RGA if docs else RG
     cmd = [binary, "--json"]
+    if jobs and not docs:
+        cmd += ["--threads", str(jobs)]        # F11: idem ao fd, ver _grupos_por_disco
     if not docs:                                   # --encoding é do rg; rga extrai já em UTF-8
         cmd += ["--encoding", "auto"]
     if not q.respect_gitignore:
@@ -486,6 +564,13 @@ def _iter_content_rg(q: Query, cancel, stats=None):
             cmd.append("--glob-case-insensitive")   # B2: glob insensível como o fd/Agent Ransack
         for p in q.name_patterns:
             cmd += ["--glob", p]
+    # F11 bug2: no rg o ULTIMO glob que casa vence. Se os negativos de snapshot
+    # entrassem antes dos globs de nome, um padrao como '*shot*' (ou '*' da CLI)
+    # casaria o proprio diretorio 'snapshots' DEPOIS e reabriria a arvore — a
+    # busca ficava 10x mais lenta sem o usuario saber por que. Aqui e o fim.
+    if q.skip_snapshots:
+        for g in _globs_snapshot():
+            cmd += ["--glob", "!" + g]
     cmd += ["-e", q.content, "--"]
     cmd += q.paths
 
@@ -497,6 +582,8 @@ def _iter_content_rg(q: Query, cancel, stats=None):
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
                                 text=True, errors="replace")
+        if procs is not None:
+            procs.append(proc)                 # F11 bug1: idem ao fd
     except OSError:
         errf.close()
         yield from _iter_content_python(q, cancel); return
@@ -631,6 +718,169 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
     return live
 
 
+# ------------------------------------------- F11: paralelismo de I/O por disco
+# Um `fd`/`rg` só, recebendo os 10 roots, tem pool de threads GLOBAL e CEGO à
+# montagem: os resultados saem por um iterador serial e os discos rápidos ficam
+# reféns do mais lento. Medido no acervo (padrão "Kevlyn", 10 montagens): nove
+# discos entregavam tudo em menos de 1,4 s enquanto o 4TB-Portable (USB numa
+# placa de expansão PCIe) levava 168 s sozinho — e a GUI só via o primeiro
+# resultado quando o iterador serial chegasse nele.
+# Aqui a busca é PARTICIONADA por dispositivo (st_dev): um processo por disco,
+# rodando em paralelo, e um consumidor único que repassa cada achado assim que
+# chega. Regra da casa: UMA thread por ponto de montagem, nunca mais que isso
+# (cabeça de HDD não se divide; em SMR é pior) — por isso cada processo recebe
+# um pool enxuto (_JOBS_POR_DISCO) em vez do padrão do fd, que é nº de CPUs.
+_JOBS_POR_DISCO = 3          # threads DENTRO de cada fd/rg particionado
+_FILA_MAX = 4096             # contrapressão: o produtor espera se a GUI não drena
+
+
+def _chave_de_disco(root):
+    """Identidade do DISCO FÍSICO do root. st_dev sozinho não serve (Fable 5):
+    btrfs com subvolumes @/@home — o padrão de Ubuntu e Fedora — e LVM com duas
+    partições no mesmo prato dão st_dev diferentes para o MESMO cabeçote, e aí
+    abriríamos dois fd concorrendo no mesmo disco, que é exatamente a regra da
+    casa que este módulo existe para respeitar. Quando `disks` sabe dizer o
+    disco-pai, ele manda; st_dev é o reserva."""
+    try:
+        from . import disks
+    except Exception:
+        try:
+            import disks  # type: ignore
+        except Exception:
+            disks = None
+    if disks is not None:
+        try:
+            dev = disks._dev_for_path(root)
+            pai = disks._sys_disk(dev) if dev else None
+            if pai:
+                return ("disco", pai)
+        except Exception:
+            pass
+    return ("dev", os.stat(root).st_dev)
+
+
+def _grupos_por_disco(paths):
+    """Agrupa roots por disco físico. Roots do mesmo disco vão juntos no mesmo
+    processo — o ganho é entre discos, não dentro de um."""
+    grupos, ordem = {}, []
+    for r in paths:
+        try:
+            chave = _chave_de_disco(r)
+        except OSError:
+            chave = ("?", r)                  # não deu stat: fica sozinho
+        if chave not in grupos:
+            grupos[chave] = []
+            ordem.append(chave)
+        grupos[chave].append(r)
+    return [grupos[k] for k in ordem]
+
+
+def _funde_stats(dst, src):
+    """Soma os contadores de um worker no dict compartilhado (só o consumidor
+    chama isto — os workers escrevem em dicts próprios, sem lock)."""
+    if dst is None or not src:
+        return
+    for k, v in src.items():
+        if isinstance(v, list):
+            dst.setdefault(k, []).extend(v)
+        elif isinstance(v, (int, float)):
+            dst[k] = dst.get(k, 0) + v
+        else:
+            dst.setdefault(k, v)
+
+
+def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None):
+    """Roda `fabrica(q_do_grupo, cancel, stats_do_grupo)` em uma thread por grupo
+    e devolve os Matches EM STREAMING, na ordem em que chegarem.
+
+    `ao_fim(paths)` é chamado quando o grupo termina — e só é chamado depois que
+    todos os achados dele já foram entregues, porque cada worker enfileira seus
+    Matches ANTES da própria sentinela e a fila preserva essa ordem por produtor.
+    """
+    import threading, queue
+    fila = queue.Queue(maxsize=_FILA_MAX)
+    parar = threading.Event()
+    FIM = object()
+
+    def _cancel():
+        return parar.is_set() or cancel()
+
+    procs = []          # list.append e atomico sob o GIL; so o finally le
+
+    def trabalha(paths):
+        meu = {}
+        try:
+            for m in fabrica(replace(q, paths=paths), _cancel, meu, procs):
+                if _cancel():
+                    break
+                fila.put(m)
+        except Exception as e:                # um disco quebrar não derruba a busca
+            meu.setdefault("erros", []).append({"paths": paths, "erro": repr(e)})
+        finally:
+            fila.put((FIM, paths, meu))
+
+    threads = [threading.Thread(target=trabalha, args=(g,), daemon=True,
+                                name=f"sfs-disco-{i}") for i, g in enumerate(grupos)]
+    for t in threads:
+        t.start()
+    vivos = len(threads)
+    try:
+        while vivos:
+            try:
+                item = fila.get(timeout=0.2)
+            except queue.Empty:
+                if cancel():
+                    return
+                continue
+            if isinstance(item, tuple) and item and item[0] is FIM:
+                _, paths, meu = item
+                _funde_stats(stats, meu)
+                if ao_fim is not None:
+                    ao_fim(paths, meu)
+                vivos -= 1
+                continue
+            yield item
+    finally:
+        # Saída antecipada (cancelamento ou max_results). O `parar` sozinho NÃO
+        # basta: o worker está bloqueado em read1() de um fd que não tem mais
+        # nada a dizer naquele disco, e só olharia o evento se chegasse chunk —
+        # num disco silencioso ele esperaria a caminhada inteira terminar (no
+        # 4TB-Portable, ~1000 s de Cancel que não solta e de disco martelado à
+        # toa). Matar o processo faz o read1() devolver EOF e o worker sair;
+        # _reap é idempotente, então o finally do próprio worker não se irrita.
+        parar.set()
+        mortos = set()
+
+        def _mata():
+            # dentro do laço, não uma vez só: um worker pode ainda estar ABRINDO
+            # o processo quando o cancelamento chega, e um único tiro no início
+            # erraria justamente quem ia varrer o disco lento.
+            for pr in list(procs):
+                if id(pr) in mortos:
+                    continue
+                mortos.add(id(pr))
+                try:
+                    pr.terminate()
+                except Exception:
+                    pass
+
+        limite = time.time() + 5.0     # teto: são daemon threads, jamais seguram
+        while time.time() < limite:    # a busca refém de um I/O que não volta
+            _mata()
+            if not any(t.is_alive() for t in threads):
+                break
+            try:
+                item = fila.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            # não perde o 'denied' de quem foi interrompido no meio
+            if isinstance(item, tuple) and item and item[0] is FIM:
+                _funde_stats(stats, item[2])
+        _mata()
+        for t in threads:
+            t.join(timeout=0.2)
+
+
 def search(q: Query, on_result: Callable[[Match], None],
            cancel: Callable[[], bool] = lambda: False,
            on_progress: Callable[[int], None] = lambda n: None,
@@ -664,13 +914,64 @@ def search(q: Query, on_result: Callable[[Match], None],
                 counts[r] += 1
                 return
         counts[roots[0]] += 1          # sem prefixo casável (ex.: '.') → 1º root
-    if q.content:
-        if RG or (q.documents and RGA):
-            it = _iter_content_rg(q, cancel, stats)
-        else:
-            it = _iter_content_python(q, cancel, stats)
+    # F11: fábrica do iterador — a MESMA nos dois modos (serial e particionado).
+    # `jobs` só é aplicado no modo particionado; no serial o fd/rg segue com o
+    # pool padrão (nº de CPUs), que é o certo quando há um processo só.
+    def _fabrica(qq, cc, ss, jobs=None, procs=None):
+        if qq.content:
+            if RG or (qq.documents and RGA):
+                return _iter_content_rg(qq, cc, ss, jobs=jobs, procs=procs)
+            return _iter_content_python(qq, cc, ss)
+        if FD:
+            return _iter_names_fd(qq, cc, ss, jobs=jobs, procs=procs)
+        return _iter_names_python(qq, ss, cc)
+
+    # F11 bug3: root apontado PRA DENTRO de um snapshot. Quem navega ate
+    # .../timeshift/snapshots/2026-09-01/home/rodrigo esta procurando justamente
+    # ali — e os tres backends divergiam (fd achava, rg e o fallback devolviam
+    # vazio EM SILENCIO), quebrando o contrato de paridade do projeto.
+    if q.skip_snapshots and any(
+            eh_snapshot(os.path.abspath(os.path.expanduser(r)) + "/") for r in roots):
+        q = replace(q, skip_snapshots=False)
+
+    if q.skip_snapshots:
+        for r in roots:
+            if tem_snapshot(r):
+                # o painel de narrativa avisa; nada de esconder calado
+                on_event("snapshots_skipped", {"path": r})
+
+    grupos = _grupos_por_disco(roots)
+    # 1 disco só (ou fallback Python, que já é os.walk por root) → nada a ganhar
+    # abrindo threads: mantém o caminho serial de sempre.
+    paralelo = len(grupos) > 1 and (FD or (q.content and (RG or (q.documents and RGA))))
+    if paralelo:
+        pendentes = set(roots)
+
+        def _grupo_terminou(paths, meu=None):
+            # o disco acabou: já dá pra fechar a narrativa dos roots dele, sem
+            # esperar os discos lentos (era isso que o iterador serial impedia)
+            erro = (meu or {}).get("erros")
+            for r in paths:
+                if r in pendentes:
+                    pendentes.discard(r)
+                    if erro:
+                        # honestidade > completude: se o disco caiu no meio, a
+                        # GUI pinta linha vermelha em vez de dizer "0 achados"
+                        on_event("root_skipped",
+                                 {"path": r, "mount": r, "fstype": None,
+                                  "klass": None, "reason": "error",
+                                  "erro": erro[0].get("erro", "")[:200]})
+                    else:
+                        on_event("root_done", {"path": r, "found": counts[r]})
+
+        it = _iter_particionado(
+            q, cancel, stats, grupos,
+            lambda qq, cc, ss, procs: _fabrica(qq, cc, ss, jobs=_JOBS_POR_DISCO,
+                                               procs=procs),
+            ao_fim=_grupo_terminou)
     else:
-        it = _iter_names_fd(q, cancel, stats) if FD else _iter_names_python(q, stats, cancel)
+        pendentes = set(roots)
+        it = _fabrica(q, cancel, stats)
     for m in it:
         if cancel():
             break
@@ -681,9 +982,10 @@ def search(q: Query, on_result: Callable[[Match], None],
             on_progress(n)
         if n >= q.max_results:
             break
-    for r in roots:
-        on_event("root_done", {"path": r, "found": counts[r]})
-    return n, time.time() - t0
+    for r in roots:                       # F11: no modo particionado a maioria já
+        if r in pendentes:                # foi anunciada assim que o disco fechou;
+            on_event("root_done", {"path": r, "found": counts[r]})   # aqui sobram
+    return n, time.time() - t0            # os interrompidos por cancel/max_results
 
 
 if __name__ == "__main__":

@@ -215,6 +215,13 @@ def _rg_base(q: engine.Query, matching: bool = True):
         if not q.case_sensitive:                 # B2: glob insensível
             cmd.append("--glob-case-insensitive")
         for p in q.name_patterns: cmd += ["--glob", p]
+    # F11 (achado pelo Fable 5): o booleano montava o próprio rg e ignorava
+    # skip_snapshots — busca simples e booleana pelo mesmo termo devolviam
+    # conjuntos diferentes, e dentro do booleano o rg divergia do fallback
+    # Python (que honra, por usar _iter_names_python). Depois dos globs de nome:
+    # no rg o ÚLTIMO glob que casa vence.
+    if q.skip_snapshots:
+        for g in engine._globs_snapshot(): cmd += ["--glob", "!" + g]
     return cmd
 
 
