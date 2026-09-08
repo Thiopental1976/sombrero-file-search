@@ -65,6 +65,32 @@ def test_eh_snapshot():
     ok(not bad, f"eh_snapshot casa por componente ({len(casos)} casos)" + (f" — errou {bad}" if bad else ""))
 
 
+# ---- 1c) F11b: tamanho do pool por classe de disco
+def test_jobs_por_classe():
+    ok(E._jobs_para_classe(["ssd"]) is None,
+       "SSD fica com o padrao do fd (estrangular custou 12,5x no NVMe, medido)")
+    ok(E._jobs_para_classe(["rotational"]) == E._JOBS_POR_CLASSE["rotational"],
+       "disco rotacional leva a politica de rotacional")
+    ok(E._jobs_para_classe(["ssd", "rotational"]) == E._JOBS_POR_CLASSE["rotational"],
+       "grupo misto leva a politica MAIS conservadora")
+    ok(E._jobs_para_classe([]) == 2, "grupo sem classe conhecida nao explode")
+    ok(E._jobs_para_classe(["klass_que_nao_existe"]) == 2,
+       "classe desconhecida cai no meio-termo, nao no padrao do fd")
+
+
+def test_classe_efetiva_lvm():
+    """/ no Mint e no Ubuntu e LVM: /dev/mapper/* nao tem 'rotational' e o disks
+    devolve 'unknown'. Sem corrigir, o disco de SISTEMA da maioria dos usuarios
+    cairia na politica conservadora."""
+    if not os.path.isdir("/sys/block"):
+        print("~pula classe_efetiva_lvm (sem /sys/block)"); return
+    e = E._classe_efetiva("/", "unknown")
+    ok(e in ("ssd", "rotational"),
+       f"'unknown' sobre LVM/LUKS e resolvido pelo disco fisico (deu {e!r})")
+    ok(E._classe_efetiva("/qualquer", "rotational") == "rotational",
+       "classe ja conhecida nao e mexida")
+
+
 # ---- 2) streaming: o rápido não espera o lento
 def _m(p): return E.Match(p, 0, 0.0)
 
@@ -151,7 +177,8 @@ def test_cancel_mata_processo():
 
 
 for fn in (test_grupos, test_grupos_discos_reais, test_grupo_inacessivel,
-           test_eh_snapshot, test_streaming,
+           test_eh_snapshot, test_jobs_por_classe, test_classe_efetiva_lvm,
+           test_streaming,
            test_saida_antecipada, test_erro_de_um_disco, test_cancel_mata_processo):
     fn()
 print(f"\n{'FALHOU: ' + ', '.join(falhas) if falhas else 'todos os testes passaram'}")

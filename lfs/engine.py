@@ -672,7 +672,7 @@ def _iter_content_python(q: Query, cancel, stats=None):
 
 # ---------------------------------------------------------------- API pública
 def _live_roots(paths, stats, probe_timeout: float = 3.0,
-                on_event=lambda ev, info: None):
+                on_event=lambda ev, info: None, classes=None):
     """F9a §2.2 — GATE DE DESCIDA. Antes de o walker entrar num root, se ele for
     uma montagem de rede (NFS/CIFS/SSHFS/…), sonda `mount_status` numa PROCESSO
     descartável (F1). Montagem que não responde (D-state, `stat` travado) ou que
@@ -682,7 +682,11 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
 
     Roots locais (disco/SSD/SMR) passam direto, sem custo de sonda. Retorna a
     lista de roots vivos, na ordem original. Se `disks` não puder ser importado
-    (uso do engine solto, sem o pacote), degrada para os paths originais."""
+    (uso do engine solto, sem o pacote), degrada para os paths originais.
+
+    F11b: `classes` (dict opcional) recebe root -> klass. A classificação já era
+    calculada aqui e jogada fora; agora ela escolhe o tamanho do pool de cada
+    processo particionado (ver _jobs_para_classe)."""
     try:
         from . import disks
     except Exception:
@@ -695,6 +699,8 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
         try:
             prof = disks.search_profile(root)
         except Exception:
+            if classes is not None:
+                classes[root] = "unknown"
             live.append(root)          # não sei classificar → não bloqueio
             on_event("root_scanning",   # F10a §2: badge de classe p/ o painel
                      {"path": root, "klass": "unknown", "mountpoint": None})
@@ -713,6 +719,8 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
                           "klass": prof.klass, "reason": status})
                 continue
         live.append(root)
+        if classes is not None:
+            classes[root] = prof.klass
         on_event("root_scanning",
                  {"path": root, "klass": prof.klass, "mountpoint": prof.mountpoint})
     return live
@@ -730,8 +738,59 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
 # chega. Regra da casa: UMA thread por ponto de montagem, nunca mais que isso
 # (cabeça de HDD não se divide; em SMR é pior) — por isso cada processo recebe
 # um pool enxuto (_JOBS_POR_DISCO) em vez do padrão do fd, que é nº de CPUs.
-_JOBS_POR_DISCO = 3          # threads DENTRO de cada fd/rg particionado
 _FILA_MAX = 4096             # contrapressão: o produtor espera se a GUI não drena
+
+# F11b — quantas threads DENTRO de cada fd/rg, por classe de disco. O 3 fixo da
+# primeira versão era chute, e chute caro nos DOIS sentidos. Medido em 08/09/2026
+# (cache frio via drop_caches, máquina quiescida), busca por nome:
+#
+#   NVMe (/usr)                     threads=1  5,0 s   padrão do fd  0,4 s   -> 12,5x PIOR
+#   SMR grande (1,15 M de inodes)   threads=1 38,4 s   padrão do fd 48,4 s   ->   21% MELHOR
+#   SMR pequeno (175 k de inodes)   9,3 a 11,4 s em qualquer configuração (ruído)
+#
+# Ou seja: estrangular o SSD é caro, e não estrangular o disco mecânico também.
+# A árvore pequena não distingue as políticas — é preciso volume de inodes pro
+# cabeçote começar a passear. As duas pontas medidas, a política se escreve só.
+_JOBS_POR_CLASSE = {
+    "ssd": None,             # None = padrão do fd (nº de CPUs): SSD quer fila funda
+    "rotational": 1,         # um cabeçote, uma thread — a regra da casa, confirmada
+    "unknown": 2,            # não sei o que é: nem estrangula, nem martela
+}
+
+
+def _classe_efetiva(root, klass):
+    """Corrige o 'unknown' que o `disks` devolve quando o root está sobre LVM ou
+    LUKS — o /dev/mapper/* não tem 'rotational', e LVM é o padrão de instalação
+    do Mint e do Ubuntu. Sem isto o disco de SISTEMA da maioria dos usuários
+    cairia na política conservadora e a busca em / ficaria lenta à toa."""
+    if klass != "unknown":
+        return klass
+    try:
+        from . import disks
+    except Exception:
+        try:
+            import disks  # type: ignore
+        except Exception:
+            return klass
+    try:
+        base = disks._sys_disk(disks._dev_for_path(root))
+        if base:
+            with open("/sys/block/%s/queue/rotational" % base, encoding="ascii") as f:
+                return "rotational" if f.read().strip() == "1" else "ssd"
+    except Exception:
+        pass
+    return klass
+
+
+def _jobs_para_classe(classes_do_grupo):
+    """Pool de um processo particionado. Grupo com classes mistas (roots do mesmo
+    disco não deveriam divergir, mas pode acontecer com bind mount) leva a
+    política MAIS conservadora — errar para menos só custa tempo; errar para
+    mais faz o cabeçote de um SMR passear."""
+    valores = [_JOBS_POR_CLASSE.get(k, 2) for k in classes_do_grupo] or [2]
+    if any(v is not None for v in valores):
+        return min(v for v in valores if v is not None)
+    return None
 
 
 def _chave_de_disco(root):
@@ -899,7 +958,8 @@ def search(q: Query, on_result: Callable[[Match], None],
     Padrão no-op: chamadores e testes antigos seguem intactos."""
     t0 = time.time()
     n = 0
-    roots = _live_roots(q.paths, stats, on_event=on_event)
+    classes = {}
+    roots = _live_roots(q.paths, stats, on_event=on_event, classes=classes)
     if not roots:
         return 0, time.time() - t0
     if roots != list(q.paths):
@@ -941,6 +1001,11 @@ def search(q: Query, on_result: Callable[[Match], None],
                 on_event("snapshots_skipped", {"path": r})
 
     grupos = _grupos_por_disco(roots)
+    # F11b: a classe do disco escolhe o pool de cada processo (SSD solto, SMR
+    # numa thread só). Vale TAMBÉM no caminho serial: um único SMR ganhava o
+    # padrão do fd, nº de CPUs, que era a maior violação da regra da casa aqui.
+    efetivas = {r: _classe_efetiva(r, classes.get(r, "unknown")) for r in roots}
+
     # 1 disco só (ou fallback Python, que já é os.walk por root) → nada a ganhar
     # abrindo threads: mantém o caminho serial de sempre.
     paralelo = len(grupos) > 1 and (FD or (q.content and (RG or (q.documents and RGA))))
@@ -966,12 +1031,14 @@ def search(q: Query, on_result: Callable[[Match], None],
 
         it = _iter_particionado(
             q, cancel, stats, grupos,
-            lambda qq, cc, ss, procs: _fabrica(qq, cc, ss, jobs=_JOBS_POR_DISCO,
-                                               procs=procs),
+            lambda qq, cc, ss, procs: _fabrica(
+                qq, cc, ss, procs=procs,
+                jobs=_jobs_para_classe([efetivas.get(r, "unknown") for r in qq.paths])),
             ao_fim=_grupo_terminou)
     else:
         pendentes = set(roots)
-        it = _fabrica(q, cancel, stats)
+        it = _fabrica(q, cancel, stats,
+                      jobs=_jobs_para_classe([efetivas.get(r, "unknown") for r in roots]))
     for m in it:
         if cancel():
             break
