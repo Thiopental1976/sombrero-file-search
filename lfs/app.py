@@ -1420,10 +1420,13 @@ class DuplicatesPanel(QWidget):
         self.btn_cancel.setEnabled(False)
         denied = stats.get("denied", 0)
         extra = t("  ·  {d} unreadable", d=denied) if denied else ""
-        # F11b: falha do motor não pode virar "0 resultados" caladamente
-        for f in (stats.get("engine_errors") or [])[:1]:
-            extra += t("  ·  ⚠ engine failed (exit {rc}): {msg} — results INCOMPLETE",
-                       rc=f.get("rc"), msg=str(f.get("erro"))[:120])
+        # F11c: a barra DERIVA do funil único — antes mostrava só o primeiro
+        # erro de motor e as outras perdas não apareciam em lugar nenhum.
+        grave, linhas = engine.resumo_incompleto(stats)
+        if linhas:
+            extra += t("  ·  ⚠ incomplete: {what}", what="; ".join(linhas[:3])[:240])
+            if len(linhas) > 3:
+                extra += t(" (+{n} more)", n=len(linhas) - 3)
         if self._mode == "files":
             names = dupes.name_verdicts(self._files, groups)
             self._fill_names(names)

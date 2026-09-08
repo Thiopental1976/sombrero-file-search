@@ -193,8 +193,10 @@ def main():
                        "mount": sk.get("mount"), "fstype": sk.get("fstype")})
         if denied:
             emit_json({"warn": "denied", "count": denied})
-        for f in falhas:
-            emit_json({"error": "engine_failed", "rc": f.get("rc"), "message": f.get("erro")})
+        for e in (stats.get("incompleto") or []):
+            emit_json({"warn" if e["motivo"] not in engine.MOTIVOS_GRAVES else "error":
+                       "incomplete", "reason": e["motivo"], "where": e["onde"],
+                       "detail": e["detalhe"], "count": e["n"]})
     wb.flush()
     for sk in skipped:
         print(f"# warning: mount not responding — skipped: {sk.get('mount')} "
@@ -202,15 +204,24 @@ def main():
     if denied:
         print(f"# warning: {denied} directories without permission — partial results",
               file=sys.stderr)
-    for f in falhas:
-        print(f"# ERROR: search engine failed (exit {f.get('rc')}): {f.get('erro')}\n"
-              f"#        results are INCOMPLETE — this is not 'nothing was found'",
+    # F11c: o aviso e o exit code DERIVAM do funil único (engine.anota_incompleto),
+    # não de cada canal solto. Quem adiciona uma perda nova em qualquer módulo
+    # aparece aqui de graça.
+    grave, linhas = engine.resumo_incompleto(stats)
+    for L in linhas:
+        print(f"# incomplete: {L}", file=sys.stderr)
+    if grave:
+        print("#        results are INCOMPLETE — this is not 'nothing was found'",
               file=sys.stderr)
     print(f"\n# {tot} files · {dt:.2f}s", file=sys.stderr)
     # contrato de exit code estilo grep: 0=achou, 1=nada, 2=erro (F9b §3.1).
     # F11b: motor que falhou e devolveu zero NÃO é "nada encontrado" — é erro.
     # Sair 1 aqui faria um script chamador concluir que o arquivo não existe.
-    if falhas:
+    # "grave" = o resultado pode estar ERRADO (motor falhou/ausente, disco caiu),
+    # não apenas incompleto. Uma pasta do sistema negando leitura NÃO muda o
+    # código de saída: um script que faz `sfs ... || echo "não achei"` não pode
+    # passar a falhar por causa disso.
+    if grave:
         sys.exit(2)
     sys.exit(0 if tot > 0 else 1)
 

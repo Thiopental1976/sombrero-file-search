@@ -156,6 +156,65 @@ def _globs_snapshot():
     return fora
 
 
+# ------------------------------------------------- FUNIL ÚNICO DE INCOMPLETUDE
+# O lema do projeto é "honestidade > completude", mas até 08/09/2026 ele valia
+# onde alguém tinha olhado: havia QUATRO canais paralelos de "algo se perdeu"
+# (`denied`, `skipped_mounts`, `engine_errors`, `erros`) e várias perdas não iam
+# para nenhum — Popen falhando e caindo no walker Python sem avisar (e o walker
+# NÃO acha UTF-16 com BOM que o rg acha), lote de 400 arquivos falhando no
+# booleano com um `continue`, match descartado porque o `stat` falhou.
+#
+# `stats['incompleto']` é o canal único: toda perda passa por aqui, e a barra da
+# GUI e o código de saída da CLI DERIVAM dele. Assim "honestidade" deixa de ser
+# frase em docstring e vira invariante que dá para testar.
+#
+# Os canais antigos continuam sendo preenchidos (a GUI e os testes os leem), mas
+# são vista, não fonte.
+_INCOMPLETO_MAX = 200        # teto: um disco negando 50 mil pastas não vira 50 mil linhas
+
+# Motivos que significam "o resultado pode estar ERRADO", não só "faltou um
+# pedaço" — só estes mudam o código de saída da CLI, porque um script que checa
+# `sfs ... || echo "não achei"` não pode passar a falhar porque uma pasta do
+# sistema negou leitura.
+MOTIVOS_GRAVES = frozenset({"motor_falhou", "motor_ausente", "disco_caiu"})
+
+
+def anota_incompleto(stats, motivo, onde="", detalhe="", n=1):
+    """Registra uma perda de completude. Agrega por (motivo, onde) para não
+    estourar, e conta o que passar do teto em vez de descartar em silêncio —
+    seria a própria doença que este funil trata."""
+    if stats is None:
+        return
+    fila = stats.setdefault("incompleto", [])
+    for e in fila:
+        if e["motivo"] == motivo and e["onde"] == onde:
+            e["n"] += n
+            if detalhe and not e.get("detalhe"):
+                e["detalhe"] = detalhe[:200]
+            return
+    if len(fila) >= _INCOMPLETO_MAX:
+        stats["incompleto_omitidos"] = stats.get("incompleto_omitidos", 0) + n
+        return
+    fila.append({"motivo": motivo, "onde": onde, "detalhe": (detalhe or "")[:200], "n": n})
+
+
+def resumo_incompleto(stats):
+    """(grave, linhas) a partir do funil — fonte única da barra da GUI e do
+    código de saída da CLI."""
+    fila = (stats or {}).get("incompleto") or []
+    grave = any(e["motivo"] in MOTIVOS_GRAVES for e in fila)
+    linhas = []
+    for e in fila:
+        alvo = f" em {e['onde']}" if e["onde"] else ""
+        vezes = f" (×{e['n']})" if e["n"] > 1 else ""
+        det = f": {e['detalhe']}" if e["detalhe"] else ""
+        linhas.append(f"{e['motivo']}{alvo}{vezes}{det}")
+    om = (stats or {}).get("incompleto_omitidos")
+    if om:
+        linhas.append(f"e mais {om} ocorrência(s) não listadas")
+    return grave, linhas
+
+
 # ---------------------------------------------------------------- utilidades
 def _reap(proc, errf=None, stats=None):
     """Encerra o subprocesso SEM deixar órfão (B1) e conta 'inacessíveis' do
@@ -176,8 +235,11 @@ def _reap(proc, errf=None, stats=None):
             try:
                 errf.seek(0)
                 linhas = errf.readlines()
-                stats["denied"] = stats.get("denied", 0) + sum(
-                    1 for L in linhas if "ermission denied" in L)
+                d = sum(1 for L in linhas if "ermission denied" in L)
+                if d:
+                    stats["denied"] = stats.get("denied", 0) + d
+                    anota_incompleto(stats, "sem_permissao", n=d,
+                                     detalhe="diretórios que negaram leitura")
                 # F11b (Fable 5): o rg sai com codigo 2 quando NAO ENTENDE uma
                 # flag — p.ex. --glob-case-insensitive, que so existe do rg 12
                 # pra cima e falta no Ubuntu 20.04. Antes disso o erro morria
@@ -191,11 +253,21 @@ def _reap(proc, errf=None, stats=None):
                 # permission denied. Tratar os dois como legitimos funciona
                 # porque o denied ja tem canal proprio, logo acima.
                 rc = proc.returncode if proc is not None else None
-                if rc is not None and rc not in (0, 1, -15, 143):
-                    motivo = next((L.strip() for L in linhas
-                                   if L.strip() and "ermission denied" not in L), "")
-                    stats.setdefault("engine_errors", []).append(
-                        {"rc": rc, "erro": (motivo or f"o motor saiu com codigo {rc}")[:200]})
+                # O rg sai com 2 tambem quando so encontrou pasta sem permissao —
+                # comportamento NORMAL, e ja contado em 'denied' logo acima. Se a
+                # unica queixa no stderr for negacao de permissao, isto nao e
+                # falha de motor: chamar de falha faria a CLI sair 2 e um script
+                # concluir que a busca quebrou. (Achado pelo proprio funil, no
+                # primeiro teste real depois de liga-lo — 08/09/2026.)
+                motivo = next((L.strip() for L in linhas
+                               if L.strip() and "ermission denied" not in L), "")
+                so_permissao = bool(d) and not motivo
+                if (rc is not None and rc not in (0, 1, -15, 143)
+                        and not so_permissao):
+                    msg = (motivo or f"o motor saiu com codigo {rc}")[:200]
+                    stats.setdefault("engine_errors", []).append({"rc": rc, "erro": msg})
+                    anota_incompleto(stats, "motor_falhou",
+                                     detalhe=f"saiu com codigo {rc}: {msg}")
             except Exception:
                 pass
         try: errf.close()
@@ -324,6 +396,8 @@ def _walk_onerror(stats):
     def cb(err):
         if stats is not None and isinstance(err, PermissionError):
             stats["denied"] = stats.get("denied", 0) + 1
+            anota_incompleto(stats, "sem_permissao",
+                             detalhe="diretórios que negaram leitura")
     return cb
 
 
@@ -525,6 +599,9 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
                                        # vier chunk, e disco silencioso nao vem
         except OSError:
             errf.close()
+            # NÃO é fallback silencioso: o walker Python não é equivalente ao fd
+            anota_incompleto(stats, "motor_ausente",
+                             detalhe="fd não pôde ser executado; usando o walker Python")
             yield from _iter_names_python(q, stats, cancel); return
         try:
             buf = b""
@@ -647,7 +724,12 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
             procs.append(proc)                 # F11 bug1: idem ao fd
     except OSError:
         errf.close()
-        yield from _iter_content_python(q, cancel); return
+        # Aqui a diferença é REAL e não é de desempenho: o fallback Python não
+        # decodifica UTF-16/UTF-32 com BOM, que o rg acha. Avisar é obrigatório.
+        anota_incompleto(stats, "motor_ausente",
+                         detalhe="rg não pôde ser executado; o walker Python não "
+                                 "lê UTF-16/UTF-32 com BOM")
+        yield from _iter_content_python(q, cancel, stats); return
 
     cur = None
     try:
@@ -669,6 +751,11 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
                 except OSError:
                     # arquivo dentro de container (ex algo.zip/interno.pdf): sem stat no FS
                     cur = Match(path, 0, 0) if docs else None
+                    if not docs:
+                        # o rg CASOU o conteudo e a gente esta jogando fora o
+                        # achado — perda de completude, nao detalhe tecnico
+                        anota_incompleto(stats, "sem_stat", onde=path,
+                                         detalhe="o motor casou, mas o arquivo sumiu do FS")
                     continue
                 if not _passes_meta(q, st):
                     cur = None; continue
@@ -773,7 +860,9 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
                 if stats is not None:
                     stats.setdefault("skipped_mounts", []).append(
                         {"path": root, "mount": mp, "fstype": prof.fstype,
-                         "reason": status})   # 'no_response' | 'broken_mount'
+                         "reason": status})
+                    anota_incompleto(stats, "montagem_morta", onde=mp,
+                                     detalhe=f"{prof.fstype}: {status}")   # 'no_response' | 'broken_mount'
                 # linha VERMELHA ao vivo (não popup no fim) — F10a §2
                 on_event("root_skipped",
                          {"path": root, "mount": mp, "fstype": prof.fstype,
@@ -946,6 +1035,8 @@ def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None):
                 fila.put(m)
         except Exception as e:                # um disco quebrar não derruba a busca
             meu.setdefault("erros", []).append({"paths": paths, "erro": repr(e)})
+            anota_incompleto(meu, "disco_caiu", onde=paths[0] if paths else "",
+                             detalhe=repr(e))
         finally:
             fila.put((FIM, paths, meu))
 

@@ -243,7 +243,16 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
         except OSError:
             errf.close()
             if restrict is None:
+                engine.anota_incompleto(stats, "motor_ausente", onde=term,
+                                        detalhe="rg nao pode ser executado; o walker "
+                                                "Python nao le UTF-16/UTF-32 com BOM")
                 return _files_with_term_py(term, q, cancel, stats)
+            # F11c: "segue os outros" e razoavel, mas ATE 400 ARQUIVOS somem do
+            # resultado de um AND aqui. Sem o funil isso era perda muda — e um
+            # AND com um lote perdido devolve MENOS do que deveria, sem sinal.
+            engine.anota_incompleto(stats, "lote_falhou", onde=term,
+                                    detalhe=f"{len(roots)} arquivo(s) nao puderam "
+                                            f"ser lidos neste lote", n=1)
             continue                              # lote isolado falhou; segue os outros
         try:
             for line in proc.stdout:
