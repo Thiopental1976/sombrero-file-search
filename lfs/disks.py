@@ -173,11 +173,13 @@ def _rotational(dev: str):
     base = _sys_disk(dev)
     if not base:
         return None
-    # vd*/xvd*: disco de VM (virtio/xen). Muitos kernels reportam rotational=1
-    # independentemente do que o hospedeiro tem embaixo, e o convidado nao tem
-    # como saber — dizer "nao sei" e mais honesto que dizer "e mecanico".
-    if base.startswith(("vd", "xvd")):
-        return None
+    # NAO ha ramo especial para vd*/xvd* (virtio/xen). Chegou a existir em
+    # 08/09/2026 com o argumento "o convidado nao sabe o que o hospedeiro tem
+    # embaixo", e foi APAGADO no mesmo dia: seguindo o efeito no codigo, quando
+    # o kernel diz "1" o resultado e identico com ou sem a regra, e quando um
+    # QEMU futuro disser "0" (rotation_rate) a regra jogaria fora informacao
+    # correta e rebaixaria um SSD virtual. So podia nao fazer nada ou piorar —
+    # politica sem medicao, exatamente o que este arquivo evita.
     try:
         with open("/sys/block/%s/queue/rotational" % base, encoding="ascii") as f:
             return f.read().strip()
@@ -206,6 +208,10 @@ _NET_FSTYPES = frozenset({
     "glusterfs", "fuse.glusterfs", "lustre", "ceph", "fuse.cephfs", "beegfs",
 })
 _GVFS_FSTYPES = frozenset({"fuse.gvfsd-fuse", "gvfsd-fuse"})
+# MTP: celular montado por jmtpfs/simple-mtpfs. Já estava em _FS_CAPS para a
+# CÓPIA; faltava na política de BUSCA, e um telefone com 24 threads engasga.
+_MTP_FSTYPES = frozenset({"fuse.jmtpfs", "jmtpfs", "fuse.simple-mtpfs",
+                          "simple-mtpfs", "mtpfs", "fuse.mtpfs"})
 
 # Teto de workers concorrentes POR montagem de rede: latência gosta de alguns em
 # voo, mas nenhuma montagem pode sequestrar o pool inteiro (mesmo raciocínio do
@@ -251,9 +257,28 @@ def search_profile(path: str, mounts=None) -> IOProfile:
     if fskey in _NET_FSTYPES:
         return IOProfile("network", mp, fstype, serialize=False, is_network=True,
                          max_workers=NET_WORKERS_PER_MOUNT, enumerate_default=True)
-    # local: reaproveita a lógica SMR/rotacional (None desconhecido => serializa)
+    if fskey in _MTP_FSTYPES:
+        # MTP (celular via jmtpfs/simple-mtpfs): não é bloco nem rede, mas a
+        # latência por arquivo é de rede e o aparelho engasga com pool cheio.
+        return IOProfile("gvfs", mp, fstype, serialize=False, is_network=True,
+                         max_workers=NET_WORKERS_PER_MOUNT, enumerate_default=False)
+    # local. A CLASSE segue o FATO FÍSICO, em qualquer prefixo: disco que se diz
+    # rotacional é rotacional, esteja em /mnt ou em /home. Antes, `rot == "1"`
+    # fora de /mnt|/media|/run/media|/var/mnt caía em "unknown" — e no desktop
+    # mais comum do Linux (SSD na raiz, HDD em /home) o HDD ficava sem política
+    # nenhuma. O prefixo era proxy de "disco do acervo": vale no ServidorCedro,
+    # falha na máquina dos outros. (Achado na 3a revisão do Fable 5.1, 08/09/2026.)
+    #
+    # `serialize` CONTINUA preso ao prefixo, de propósito: ele governa o
+    # `_must_wait` da GUI e o teto do booleano, e alargá-lo passaria a serializar
+    # buscas em /home que hoje correm soltas — mudança de comportamento que não
+    # foi medida e não é o assunto aqui.
     rot = _rotational(dev)
-    if _under_mount(ap) and rot != "0":
+    if rot == "1":
+        return IOProfile("rotational", mp, fstype, serialize=_under_mount(ap),
+                         is_network=False, max_workers=None, enumerate_default=True)
+    if rot is None and _under_mount(ap):
+        # não sei o que é, mas está onde mora o acervo: conservador
         return IOProfile("rotational", mp, fstype, serialize=True, is_network=False,
                          max_workers=None, enumerate_default=True)
     return IOProfile("ssd" if rot == "0" else "unknown", mp, fstype,

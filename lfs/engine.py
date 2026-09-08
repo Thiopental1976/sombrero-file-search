@@ -184,7 +184,12 @@ def _reap(proc, errf=None, stats=None):
                 # aqui dentro e a busca devolvia ZERO RESULTADOS EM SILENCIO,
                 # que e o pior modo de falha possivel numa ferramenta cujo lema
                 # e "honestidade > completude": o usuario conclui que o arquivo
-                # nao existe. Codigo 1 e legitimo (rg: "nada casou").
+                # nao existe.
+                # CUIDADO ao "corrigir" a lista de codigos: 1 nao quer dizer a
+                # mesma coisa nos dois binarios — no rg e "nada casou"
+                # (legitimo), no fd e "houve erro na caminhada", tipicamente
+                # permission denied. Tratar os dois como legitimos funciona
+                # porque o denied ja tem canal proprio, logo acima.
                 rc = proc.returncode if proc is not None else None
                 if rc is not None and rc not in (0, 1, -15, 143):
                     motivo = next((L.strip() for L in linhas
