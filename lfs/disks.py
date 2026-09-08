@@ -155,14 +155,30 @@ def menu_labels(mounts, mounts_table=None):
 
 def _rotational(dev: str):
     """'1'/'0' de /sys/block/<disco>/queue/rotational p/ o disco que sustenta o nó
-    `dev` (sobe da partição p/ o disco inteiro). None se desconhecido."""
-    if not dev:
+    `dev`. None se desconhecido.
+
+    Resolve o nome com `_sys_disk`, que sobe de partição p/ disco E de dm-N p/ o
+    disco físico pelos `slaves`. A versão anterior olhava /sys/class/block/<base>
+    direto e por isso devolvia None para TODO /dev/mapper/* — ou seja, para
+    qualquer LVM ou LUKS, que é a instalação padrão do Mint e do Ubuntu (achado
+    do Fable 5 na revisão de 08/09/2026). O estrago não era só de desempenho:
+      - `search_profile` sob /mnt|/media com rot None classifica "rotational" por
+        padrão, então um NVMe em gaveta USB com LUKS virava disco mecânico e
+        levava 1 thread — 12,5x mais lento, medido;
+      - `path_needs_serial` serializava buscas nesse mesmo disco sem precisar.
+    Casos que continuam None (e devem continuar): rede (o "dev" é
+    servidor:/export), ZFS (pool/dataset), overlay de container, e qualquer
+    sistema sem /sys/block — todos degradam para a política conservadora.
+    """
+    base = _sys_disk(dev)
+    if not base:
         return None
-    name = os.path.basename(dev)                       # sdb1, nvme0n1p1...
+    # vd*/xvd*: disco de VM (virtio/xen). Muitos kernels reportam rotational=1
+    # independentemente do que o hospedeiro tem embaixo, e o convidado nao tem
+    # como saber — dizer "nao sei" e mais honesto que dizer "e mecanico".
+    if base.startswith(("vd", "xvd")):
+        return None
     try:
-        real = os.path.realpath("/sys/class/block/" + name)
-        parent = os.path.basename(os.path.dirname(real))
-        base = name if parent == "block" else parent   # disco inteiro se for partição
         with open("/sys/block/%s/queue/rotational" % base, encoding="ascii") as f:
             return f.read().strip()
     except OSError:

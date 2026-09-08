@@ -202,26 +202,10 @@ def _rg_base(q: engine.Query, matching: bool = True):
     — o universo lista todo arquivo de texto com padrão vazio, e --word-regexp
     quebraria esse padrão.
     Em modo documentos o binário é o rga, que aceita as mesmas flags do rg."""
-    cmd = [_content_binary(q)]
-    if not q.respect_gitignore: cmd.append("--no-ignore")
-    if q.include_hidden:        cmd.append("--hidden")
-    if q.follow_symlinks:       cmd.append("--follow")
-    if q.one_file_system:       cmd.append("--one-file-system")
-    if not q.case_sensitive:    cmd.append("--ignore-case")
-    if matching and q.whole_word: cmd.append("--word-regexp")
-    if not q.recursive:         cmd += ["--max-depth", "1"]
-    elif q.max_depth is not None: cmd += ["--max-depth", str(q.max_depth)]
-    if q.name_patterns and not q.name_is_regex:
-        if not q.case_sensitive:                 # B2: glob insensível
-            cmd.append("--glob-case-insensitive")
-        for p in q.name_patterns: cmd += ["--glob", p]
-    # F11 (achado pelo Fable 5): o booleano montava o próprio rg e ignorava
-    # skip_snapshots — busca simples e booleana pelo mesmo termo devolviam
-    # conjuntos diferentes, e dentro do booleano o rg divergia do fallback
-    # Python (que honra, por usar _iter_names_python). Depois dos globs de nome:
-    # no rg o ÚLTIMO glob que casa vence.
-    if q.skip_snapshots:
-        for g in engine._globs_snapshot(): cmd += ["--glob", "!" + g]
+    # F11b: as flags comuns vivem em engine.rg_flags_comuns — este módulo
+    # montava as suas e por isso ficou sem skip_snapshots (bug 5 do parecer do
+    # Fable 5). Regra nova pro rg entra LÁ, não aqui.
+    cmd = [_content_binary(q)] + engine.rg_flags_comuns(q, matching=matching)
     return cmd
 
 

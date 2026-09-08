@@ -1420,6 +1420,10 @@ class DuplicatesPanel(QWidget):
         self.btn_cancel.setEnabled(False)
         denied = stats.get("denied", 0)
         extra = t("  ·  {d} unreadable", d=denied) if denied else ""
+        # F11b: falha do motor não pode virar "0 resultados" caladamente
+        for f in (stats.get("engine_errors") or [])[:1]:
+            extra += t("  ·  ⚠ engine failed (exit {rc}): {msg} — results INCOMPLETE",
+                       rc=f.get("rc"), msg=str(f.get("erro"))[:120])
         if self._mode == "files":
             names = dupes.name_verdicts(self._files, groups)
             self._fill_names(names)

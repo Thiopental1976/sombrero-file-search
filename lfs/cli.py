@@ -183,12 +183,18 @@ def main():
     # montagem de rede morta pulada e diretórios sem permissão. Parcial anunciado.
     skipped = stats.get("skipped_mounts") or []
     denied = stats.get("denied", 0)
+    # F11b: o motor (fd/rg) pode ter SAÍDO COM ERRO — flag não suportada numa
+    # versão antiga, por exemplo. Sem isto a busca devolvia zero resultados em
+    # silêncio e o usuário concluía que o arquivo não existe.
+    falhas = stats.get("engine_errors") or []
     if args.json:
         for sk in skipped:
             emit_json({"warn": "mount_dead", "path": sk.get("path"),
                        "mount": sk.get("mount"), "fstype": sk.get("fstype")})
         if denied:
             emit_json({"warn": "denied", "count": denied})
+        for f in falhas:
+            emit_json({"error": "engine_failed", "rc": f.get("rc"), "message": f.get("erro")})
     wb.flush()
     for sk in skipped:
         print(f"# warning: mount not responding — skipped: {sk.get('mount')} "
@@ -196,8 +202,16 @@ def main():
     if denied:
         print(f"# warning: {denied} directories without permission — partial results",
               file=sys.stderr)
+    for f in falhas:
+        print(f"# ERROR: search engine failed (exit {f.get('rc')}): {f.get('erro')}\n"
+              f"#        results are INCOMPLETE — this is not 'nothing was found'",
+              file=sys.stderr)
     print(f"\n# {tot} files · {dt:.2f}s", file=sys.stderr)
-    # contrato de exit code estilo grep: 0=achou, 1=nada, 2=erro (F9b §3.1)
+    # contrato de exit code estilo grep: 0=achou, 1=nada, 2=erro (F9b §3.1).
+    # F11b: motor que falhou e devolveu zero NÃO é "nada encontrado" — é erro.
+    # Sair 1 aqui faria um script chamador concluir que o arquivo não existe.
+    if falhas:
+        sys.exit(2)
     sys.exit(0 if tot > 0 else 1)
 
 

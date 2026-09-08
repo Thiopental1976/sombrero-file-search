@@ -82,7 +82,18 @@ try:
     ok(r4 == [os.path.join(raiz, "normal/achado.txt")],
        "com --hidden, .snapshots (snapper) continua excluído")
 
-    # 5) desligável
+    # 5) o auto-desligar (bug3) é POR GRUPO, não pela consulta inteira: buscar
+    #    dentro de um snapshot E na raiz normal ao mesmo tempo não pode reabrir
+    #    os snapshots do lado normal.
+    dentro = os.path.join(raiz, "timeshift/snapshots/2026-09-01")
+    q_mix = E.Query(paths=[dentro, raiz], name_patterns=["achado.txt"])
+    r_mix = busca(q_mix)
+    ok(os.path.join(dentro, "usr/achado.txt") in r_mix,
+       "consulta mista: o root dentro do snapshot acha o que está lá")
+    ok(os.path.join(raiz, "timeshift/snapshots-daily/2026-09-01/usr/achado.txt") not in r_mix,
+       "consulta mista: o root normal NÃO reabre as outras árvores de snapshot")
+
+    # 6) desligável
     q5 = E.Query(paths=[raiz], name_patterns=["achado.txt"],
                  include_hidden=True, skip_snapshots=False)
     ok(len(busca(q5)) == 4, "--snapshots devolve tudo (4 arquivos)")

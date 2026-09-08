@@ -91,7 +91,20 @@ EXCLUSOES_SNAPSHOT = (
     ".snapshots",              # snapper (openSUSE/btrfs)
     ".zfs/snapshot",           # ZFS
     "@GMT-*",                  # Samba/shadow copies (@GMT-2026.01.01-00.00.00)
+    # ostree (Silverblue/Kinoite/Bazzite): /sysroot/ostree/repo/objects sao
+    # centenas de milhares de blobs com nome de sha256, e cada deploy sob
+    # ostree/deploy/<os>/deploy/<hash>/ e uma copia da raiz. Buscar em "/" desce
+    # em /sysroot e vira o mesmo problema do Timeshift. O sistema VIVO nao se
+    # esconde: ele e alcancado por /usr, /etc..., que nao passam por estes
+    # componentes. (Fable 5, revisao de 08/09/2026.)
+    "ostree/repo",
+    "ostree/deploy",
 )
+
+# NAO entram aqui, e a distincao e a regra que impede a lista de virar lixeira:
+# so e excluido por padrao o que e COPIA DO SISTEMA. "Ruido" (node_modules,
+# .git, /nix/store) nunca entra — no NixOS o /nix/store E o sistema vivo, e
+# quem busca la esta procurando de proposito.
 
 
 def eh_snapshot(path: str) -> bool:
@@ -108,14 +121,27 @@ def eh_snapshot(path: str) -> bool:
 
 
 def tem_snapshot(root: str) -> bool:
-    """Este root hospeda arvore de snapshot? Um punhado de stat, sem caminhada —
-    serve pro motor AVISAR que escondeu algo (esconder em silencio e que nao)."""
-    for m in ("timeshift/snapshots", "timeshift-btrfs", ".snapshots", ".zfs/snapshot"):
-        try:
-            if os.path.isdir(os.path.join(root, m)):
-                return True
-        except OSError:
-            pass
+    """Este root hospeda arvore de snapshot? Um punhado de glob, sem caminhada —
+    serve pro motor AVISAR que escondeu algo (esconder em silencio e que nao).
+
+    Deriva de EXCLUSOES_SNAPSHOT em vez de repetir a lista: a copia manual ja
+    tinha divergido (faltavam '@GMT-*' e o '*' de 'snapshots*'), e uma lista que
+    diverge da outra faz o aviso mentir. Olha tambem as MONTAGENS sob o root:
+    buscar em "/" com o Timeshift em /media/x podava sem avisar."""
+    import glob as _glob
+    alvos = [root]
+    try:
+        base = os.path.abspath(root).rstrip("/") + "/"
+        alvos += [m for m in user_mounts() if m.startswith(base)]
+    except Exception:
+        pass
+    for a in alvos:
+        for m in EXCLUSOES_SNAPSHOT:
+            try:
+                if _glob.glob(os.path.join(a, m)):
+                    return True
+            except OSError:
+                pass
     return False
 
 
@@ -149,8 +175,22 @@ def _reap(proc, errf=None, stats=None):
         if stats is not None:
             try:
                 errf.seek(0)
-                d = sum(1 for L in errf if "ermission denied" in L)
-                stats["denied"] = stats.get("denied", 0) + d
+                linhas = errf.readlines()
+                stats["denied"] = stats.get("denied", 0) + sum(
+                    1 for L in linhas if "ermission denied" in L)
+                # F11b (Fable 5): o rg sai com codigo 2 quando NAO ENTENDE uma
+                # flag — p.ex. --glob-case-insensitive, que so existe do rg 12
+                # pra cima e falta no Ubuntu 20.04. Antes disso o erro morria
+                # aqui dentro e a busca devolvia ZERO RESULTADOS EM SILENCIO,
+                # que e o pior modo de falha possivel numa ferramenta cujo lema
+                # e "honestidade > completude": o usuario conclui que o arquivo
+                # nao existe. Codigo 1 e legitimo (rg: "nada casou").
+                rc = proc.returncode if proc is not None else None
+                if rc is not None and rc not in (0, 1, -15, 143):
+                    motivo = next((L.strip() for L in linhas
+                                   if L.strip() and "ermission denied" not in L), "")
+                    stats.setdefault("engine_errors", []).append(
+                        {"rc": rc, "erro": (motivo or f"o motor saiu com codigo {rc}")[:200]})
             except Exception:
                 pass
         try: errf.close()
@@ -526,6 +566,50 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
 
 
 # ---------------------------------------------------------------- busca por CONTEÚDO
+def rg_flags_comuns(q: Query, matching: bool = True):
+    """Flags do rg compartilhadas pela busca de conteúdo e pelo motor BOOLEANO.
+
+    Fonte única de propósito (F11b): o boolean.py montava o seu próprio rg e por
+    isso ficou sem `skip_snapshots` — busca simples e booleana pelo mesmo termo
+    devolviam conjuntos diferentes, e dentro do booleano o rg divergia do
+    fallback Python. Toda regra que vale pro rg entra AQUI.
+
+    `matching=False` (universo do NOT, no booleano) omite as flags de CASAMENTO
+    de conteúdo: o universo lista todo arquivo de texto com padrão vazio, e
+    --word-regexp quebraria isso.
+
+    ORDEM IMPORTA: no rg o ÚLTIMO glob que casa vence, então os negativos de
+    snapshot têm de vir DEPOIS dos globs de nome — senão um padrão como '*shot*'
+    reabre a árvore que a gente acabou de excluir.
+    """
+    cmd = []
+    if not q.respect_gitignore:
+        cmd.append("--no-ignore")
+    if q.include_hidden:
+        cmd.append("--hidden")
+    if q.follow_symlinks:
+        cmd.append("--follow")
+    if q.one_file_system:
+        cmd.append("--one-file-system")
+    if not q.case_sensitive:
+        cmd.append("--ignore-case")
+    if matching and q.whole_word:
+        cmd.append("--word-regexp")
+    if not q.recursive:
+        cmd += ["--max-depth", "1"]
+    elif q.max_depth is not None:
+        cmd += ["--max-depth", str(q.max_depth)]
+    if q.name_patterns and not q.name_is_regex:
+        if not q.case_sensitive:
+            cmd.append("--glob-case-insensitive")   # B2: glob insensível como o fd
+        for p in q.name_patterns:
+            cmd += ["--glob", p]
+    if q.skip_snapshots:                            # depois dos globs de nome
+        for g in _globs_snapshot():
+            cmd += ["--glob", "!" + g]
+    return cmd
+
+
 def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
     """ripgrep --json (ou rga p/ documentos): filtra por nome (glob) E casa conteúdo, streaming.
 
@@ -538,39 +622,11 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
     cmd = [binary, "--json"]
     if jobs and not docs:
         cmd += ["--threads", str(jobs)]        # F11: idem ao fd, ver _grupos_por_disco
-    if not docs:                                   # --encoding é do rg; rga extrai já em UTF-8
+    if not docs:                               # --encoding é do rg; rga já extrai UTF-8
         cmd += ["--encoding", "auto"]
-    if not q.respect_gitignore:
-        cmd.append("--no-ignore")
-    if q.include_hidden:
-        cmd.append("--hidden")
-    if q.follow_symlinks:
-        cmd.append("--follow")
-    if q.one_file_system:
-        cmd.append("--one-file-system")
-    if not q.case_sensitive:
-        cmd.append("--ignore-case")
     if not q.content_is_regex:
         cmd.append("--fixed-strings")
-    if q.whole_word:
-        cmd.append("--word-regexp")
-    if not q.recursive:
-        cmd += ["--max-depth", "1"]
-    elif q.max_depth is not None:
-        cmd += ["--max-depth", str(q.max_depth)]
-    # filtro de nome via glob (rg aplica no arquivo)
-    if q.name_patterns and not q.name_is_regex:
-        if not q.case_sensitive:
-            cmd.append("--glob-case-insensitive")   # B2: glob insensível como o fd/Agent Ransack
-        for p in q.name_patterns:
-            cmd += ["--glob", p]
-    # F11 bug2: no rg o ULTIMO glob que casa vence. Se os negativos de snapshot
-    # entrassem antes dos globs de nome, um padrao como '*shot*' (ou '*' da CLI)
-    # casaria o proprio diretorio 'snapshots' DEPOIS e reabriria a arvore — a
-    # busca ficava 10x mais lenta sem o usuario saber por que. Aqui e o fim.
-    if q.skip_snapshots:
-        for g in _globs_snapshot():
-            cmd += ["--glob", "!" + g]
+    cmd += rg_flags_comuns(q)                  # fonte única — ver rg_flags_comuns
     cmd += ["-e", q.content, "--"]
     cmd += q.paths
 
@@ -740,57 +796,63 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
 # um pool enxuto (_JOBS_POR_DISCO) em vez do padrão do fd, que é nº de CPUs.
 _FILA_MAX = 4096             # contrapressão: o produtor espera se a GUI não drena
 
-# F11b — quantas threads DENTRO de cada fd/rg, por classe de disco. O 3 fixo da
-# primeira versão era chute, e chute caro nos DOIS sentidos. Medido em 08/09/2026
-# (cache frio via drop_caches, máquina quiescida), busca por nome:
-#
-#   NVMe (/usr)                     threads=1  5,0 s   padrão do fd  0,4 s   -> 12,5x PIOR
-#   SMR grande (1,15 M de inodes)   threads=1 38,4 s   padrão do fd 48,4 s   ->   21% MELHOR
-#   SMR pequeno (175 k de inodes)   9,3 a 11,4 s em qualquer configuração (ruído)
-#
-# Ou seja: estrangular o SSD é caro, e não estrangular o disco mecânico também.
-# A árvore pequena não distingue as políticas — é preciso volume de inodes pro
-# cabeçote começar a passear. As duas pontas medidas, a política se escreve só.
+# F11b — quantas threads DENTRO de cada fd/rg, por classe de disco. Medido em
+# 08/09/2026 (drop_caches antes de cada passada, máquina quiescida): no NVMe,
+# `--threads 1` custa 12,5x contra o padrão do fd; num SMR de 1,15 milhão de
+# inodes, `--threads 1` GANHA 21%. Os números estão no commit — aqui fica só a
+# regra. Assimetria que manda no desenho: errar para menos (estrangular um SSD)
+# é ordens de grandeza mais caro que errar para mais (soltar um disco mecânico).
+# Por isso "não sei" NÃO estrangula: quem cai em 'unknown' é container, ZFS e
+# não-Linux, hoje majoritariamente SSD. A regra da casa segue protegida porque
+# `search_profile` já classifica rotacional-por-padrão sob /mnt|/media quando
+# não consegue medir.
 _JOBS_POR_CLASSE = {
     "ssd": None,             # None = padrão do fd (nº de CPUs): SSD quer fila funda
     "rotational": 1,         # um cabeçote, uma thread — a regra da casa, confirmada
-    "unknown": 2,            # não sei o que é: nem estrangula, nem martela
+    "unknown": None,         # não sei: solta. O conservadorismo mora no search_profile
 }
 
 
-def _classe_efetiva(root, klass):
-    """Corrige o 'unknown' que o `disks` devolve quando o root está sobre LVM ou
-    LUKS — o /dev/mapper/* não tem 'rotational', e LVM é o padrão de instalação
-    do Mint e do Ubuntu. Sem isto o disco de SISTEMA da maioria dos usuários
-    cairia na política conservadora e a busca em / ficaria lenta à toa."""
-    if klass != "unknown":
-        return klass
+def _pula_snapshot(paths, base):
+    """Decide `skip_snapshots` PARA ESTE CONJUNTO de roots.
+
+    F11 bug3: quem navega ate .../timeshift/snapshots/<data>/home/rodrigo esta
+    procurando justamente ali, e os tres backends divergiam (o fd achava; o rg e
+    o fallback devolviam vazio EM SILENCIO). A 1a correcao desligava a exclusao
+    na CONSULTA INTEIRA — entao buscar em ["/.snapshots/5/snapshot/home", "/"]
+    reabria os snapshots tambem no "/". Agora e por grupo: so o disco que contem
+    o root-dentro-do-snapshot enxerga snapshots.
+    """
+    if not base:
+        return False
+    for r in paths:
+        if eh_snapshot(os.path.abspath(os.path.expanduser(r)) + "/"):
+            return False
+    return True
+
+
+def _jobs_de_rede():
+    """Teto por montagem de rede — o `disks` é o dono desse número, não o motor."""
     try:
         from . import disks
     except Exception:
         try:
             import disks  # type: ignore
         except Exception:
-            return klass
-    try:
-        base = disks._sys_disk(disks._dev_for_path(root))
-        if base:
-            with open("/sys/block/%s/queue/rotational" % base, encoding="ascii") as f:
-                return "rotational" if f.read().strip() == "1" else "ssd"
-    except Exception:
-        pass
-    return klass
+            return 4
+    return getattr(disks, "NET_WORKERS_PER_MOUNT", 4)
 
 
 def _jobs_para_classe(classes_do_grupo):
     """Pool de um processo particionado. Grupo com classes mistas (roots do mesmo
-    disco não deveriam divergir, mas pode acontecer com bind mount) leva a
-    política MAIS conservadora — errar para menos só custa tempo; errar para
-    mais faz o cabeçote de um SMR passear."""
-    valores = [_JOBS_POR_CLASSE.get(k, 2) for k in classes_do_grupo] or [2]
-    if any(v is not None for v in valores):
-        return min(v for v in valores if v is not None)
-    return None
+    disco não deveriam divergir, mas acontece com bind mount) leva a política
+    MAIS conservadora — errar para menos só custa tempo; errar para mais faz o
+    cabeçote de um disco mecânico passear."""
+    rede = _jobs_de_rede()
+    valores = [rede if k in ("network", "gvfs", "autofs") else _JOBS_POR_CLASSE.get(k)
+               for k in classes_do_grupo] or [None]
+    concretos = [v for v in valores if v is not None]
+    return min(concretos) if concretos else None
 
 
 def _chave_de_disco(root):
@@ -809,7 +871,11 @@ def _chave_de_disco(root):
             disks = None
     if disks is not None:
         try:
-            dev = disks._dev_for_path(root)
+            dev, _mp, fstype = disks._mount_entry(os.path.abspath(root))
+            # ZFS: o "dev" é pool/dataset, não um nó de bloco. Sem isto cada
+            # dataset viraria um grupo e abriríamos N processos no MESMO pool.
+            if (fstype or "").lower() == "zfs" and dev:
+                return ("zpool", dev.split("/")[0])
             pai = disks._sys_disk(dev) if dev else None
             if pai:
                 return ("disco", pai)
@@ -986,26 +1052,29 @@ def search(q: Query, on_result: Callable[[Match], None],
             return _iter_names_fd(qq, cc, ss, jobs=jobs, procs=procs)
         return _iter_names_python(qq, ss, cc)
 
-    # F11 bug3: root apontado PRA DENTRO de um snapshot. Quem navega ate
-    # .../timeshift/snapshots/2026-09-01/home/rodrigo esta procurando justamente
-    # ali — e os tres backends divergiam (fd achava, rg e o fallback devolviam
-    # vazio EM SILENCIO), quebrando o contrato de paridade do projeto.
-    if q.skip_snapshots and any(
-            eh_snapshot(os.path.abspath(os.path.expanduser(r)) + "/") for r in roots):
-        q = replace(q, skip_snapshots=False)
-
     if q.skip_snapshots:
         for r in roots:
-            if tem_snapshot(r):
+            if _pula_snapshot([r], True) and tem_snapshot(r):
                 # o painel de narrativa avisa; nada de esconder calado
                 on_event("snapshots_skipped", {"path": r})
 
     grupos = _grupos_por_disco(roots)
+    # Root apontado PARA DENTRO de um snapshot ganha grupo PROPRIO, senao a
+    # decisao dele contaminaria os vizinhos do mesmo disco: buscar em
+    # ["/.snapshots/5/snapshot/home", "/"] reabriria os snapshots tambem no "/".
+    # Custo aceito: dois processos no mesmo prato nesse caso raro — cada um com
+    # o pool de 1 thread da classe, entao o disco ve 2, nao 24.
+    if q.skip_snapshots:
+        separados = []
+        for g in grupos:
+            dentro = [r for r in g
+                      if eh_snapshot(os.path.abspath(os.path.expanduser(r)) + "/")]
+            fora = [r for r in g if r not in dentro]
+            separados += [x for x in (fora, dentro) if x]
+        grupos = separados
     # F11b: a classe do disco escolhe o pool de cada processo (SSD solto, SMR
     # numa thread só). Vale TAMBÉM no caminho serial: um único SMR ganhava o
     # padrão do fd, nº de CPUs, que era a maior violação da regra da casa aqui.
-    efetivas = {r: _classe_efetiva(r, classes.get(r, "unknown")) for r in roots}
-
     # 1 disco só (ou fallback Python, que já é os.walk por root) → nada a ganhar
     # abrindo threads: mantém o caminho serial de sempre.
     paralelo = len(grupos) > 1 and (FD or (q.content and (RG or (q.documents and RGA))))
@@ -1032,13 +1101,15 @@ def search(q: Query, on_result: Callable[[Match], None],
         it = _iter_particionado(
             q, cancel, stats, grupos,
             lambda qq, cc, ss, procs: _fabrica(
-                qq, cc, ss, procs=procs,
-                jobs=_jobs_para_classe([efetivas.get(r, "unknown") for r in qq.paths])),
+                replace(qq, skip_snapshots=_pula_snapshot(qq.paths, q.skip_snapshots)),
+                cc, ss, procs=procs,
+                jobs=_jobs_para_classe([classes.get(r, "unknown") for r in qq.paths])),
             ao_fim=_grupo_terminou)
     else:
         pendentes = set(roots)
-        it = _fabrica(q, cancel, stats,
-                      jobs=_jobs_para_classe([efetivas.get(r, "unknown") for r in roots]))
+        it = _fabrica(replace(q, skip_snapshots=_pula_snapshot(roots, q.skip_snapshots)),
+                      cancel, stats,
+                      jobs=_jobs_para_classe([classes.get(r, "unknown") for r in roots]))
     for m in it:
         if cancel():
             break
