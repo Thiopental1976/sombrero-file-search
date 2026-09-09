@@ -1407,17 +1407,27 @@ def _jobs_de_rede():
     return getattr(disks, "NET_WORKERS_PER_MOUNT", 4)
 
 
-def _jobs_para_classe(classes_do_grupo):
+def _jobs_para_classe(classes_do_grupo, conteudo: bool = False):
     """Pool de um processo particionado. Grupo com classes mistas (roots do mesmo
     disco não deveriam divergir, mas acontece com bind mount) leva a política
     MAIS conservadora — errar para menos só custa tempo; errar para mais faz o
-    cabeçote de um disco mecânico passear."""
+    cabeçote de um disco mecânico passear.
+
+    `conteudo` (medido em 09/09/2026, SMR de 8 TB, cache frio): a regra "um
+    cabeçote, uma thread" vale para a busca por NOME (metadados, sequenciais no
+    disco: 1 thread 38 s vs pool cheio 48 s). Busca por CONTEÚDO abre cada
+    arquivo, e aí é o contrário — o disco reordena leituras quando há vários
+    pedidos em voo: pool cheio 35 s (duas rodadas), 4 threads 38 s, 1 thread
+    52 s e 657 s. Estrangular o rg em disco mecânico só custava. Rede continua
+    com o teto por montagem: lá o limite é a latência, não o cabeçote."""
     rede = _jobs_de_rede()
     valores = []
     for c in classes_do_grupo:          # str (classe) ou IOProfile (classe + serialize)
         k = getattr(c, "klass", c)
         if k in ("network", "gvfs", "autofs"):
             valores.append(rede)
+        elif conteudo:
+            valores.append(None)        # conteúdo: fila funda ajuda até no SMR
         elif getattr(c, "serialize", False):
             valores.append(1)           # o perfil pediu um de cada vez: um cabeçote
         else:                           # (ou algo que não sei medir, sob /mnt)
@@ -1690,13 +1700,15 @@ def search(q: Query, on_result: Callable[[Match], None],
             lambda qq, cc, ss, procs: _fabrica(
                 replace(qq, skip_snapshots=_pula_snapshot(qq.paths, q.skip_snapshots)),
                 cc, ss, procs=procs,
-                jobs=_jobs_para_classe([classes.get(r, "unknown") for r in qq.paths])),
+                jobs=_jobs_para_classe([classes.get(r, "unknown") for r in qq.paths],
+                                       conteudo=bool(q.content))),
             ao_fim=_grupo_terminou)
     else:
         pendentes = set(roots)
         it = _fabrica(replace(q, skip_snapshots=_pula_snapshot(roots, q.skip_snapshots)),
                       cancel, stats,
-                      jobs=_jobs_para_classe([classes.get(r, "unknown") for r in roots]))
+                      jobs=_jobs_para_classe([classes.get(r, "unknown") for r in roots],
+                                             conteudo=bool(q.content)))
     for m in it:
         if cancel():
             break

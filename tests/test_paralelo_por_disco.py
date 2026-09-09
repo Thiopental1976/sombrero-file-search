@@ -74,6 +74,11 @@ def test_jobs_por_classe():
     ok(E._jobs_para_classe(["ssd", "rotational"]) == 1,
        "grupo misto leva a politica MAIS conservadora")
     ok(E._jobs_para_classe([]) is None, "grupo sem classe nao estrangula")
+    # medido 09/09/2026: CONTEÚDO em disco mecânico quer fila funda (35 s vs 52+ s)
+    ok(E._jobs_para_classe(["rotational"], conteudo=True) is None,
+       "conteudo em rotacional NAO estrangula (medido: pool cheio 35 s, 1 thread 52-657 s)")
+    ok(E._jobs_para_classe(["network", "rotational"], conteudo=True) == E._jobs_de_rede(),
+       "conteudo: rede mantem o teto por montagem")
     ok(E._jobs_para_classe(["klass_que_nao_existe"]) is None,
        "classe desconhecida NAO estrangula: errar pra menos custa 12,5x, pra mais 21%")
 
