@@ -66,7 +66,11 @@ class Arvore:
     def fecha_arq(self):  os.chmod(self.arq_negado, 0o000)
     def abre_arq(self):   os.chmod(self.arq_negado, 0o644)
     def limpa(self):
-        self.abre_dir(); self.abre_arq()
+        for abre in (self.abre_dir, self.abre_arq):
+            try:
+                abre()
+            except FileNotFoundError:     # a coluna 'snapshot fallback' apaga o vivo
+                pass
         shutil.rmtree(self.raiz, ignore_errors=True)
 
 
@@ -199,6 +203,17 @@ def p_snapshots(a, bk, stats):
     open(os.path.join(d, "so_no_snapshot.txt"), "w").write("laudo\n")
     bk(a, [a.raiz], stats)
 
+def p_snapshot_fallback(a, bk, stats):
+    # 09/09/2026 (decisão do Rodrigo): vivo ZERO -> a busca é estendida à árvore
+    # podada, e o funil diz que foi (snapshots_searched). Some com todo achado
+    # vivo (o *.txt do fd, o "laudo" do rg/booleano) e deixa um só no snapshot.
+    for f in (a.ok, a.arq_negado, os.path.join(a.dir_negado, "b.txt")):
+        os.unlink(f)
+    d = os.path.join(a.raiz, "timeshift", "snapshots", "2026-09-01", "localhost", "home")
+    os.makedirs(d)
+    open(os.path.join(d, "so_no_snapshot.txt"), "w").write("laudo\n")
+    bk(a, [a.raiz], stats)
+
 PERDAS = [
     ("pasta negada",     "permission_denied",  False, p_dir_negado,      None),
     ("arquivo negado",   "permission_denied",  False, p_arq_negado,
@@ -213,6 +228,7 @@ PERDAS = [
     ("mountpoint vazio", "empty_mountpoint", False, p_mountpoint_vazio, None),
     ("max_results",      "truncated",       False, p_max_results,     None),
     ("snapshots",        "snapshots_skipped", False, p_snapshots,     None),
+    ("snapshot fallback", "snapshots_searched", False, p_snapshot_fallback, None),
     ("erro de leitura",  "read_error",   False, p_erro_leitura,
      {"py/conteudo", "booleano/py"}),                      # rg: sem como induzir
 ]

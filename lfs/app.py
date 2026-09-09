@@ -330,7 +330,13 @@ class ResultModel(QAbstractTableModel):
         m = self.rows[idx.row()]
         c = idx.column()
         if role == Qt.DisplayRole:
-            if c == 0: return os.path.basename(m.path) + ("/" if m.is_dir else "")
+            if c == 0:
+                nome = os.path.basename(m.path) + ("/" if m.is_dir else "")
+                # 09/09/2026: o dedup do motor colapsou cópias idênticas neste
+                # resultado — a lista delas mora no tooltip (expansível sem
+                # coluna nova); o filtro e a ordenação seguem lendo m.path
+                cp = len(m.copies)
+                return f"{nome}   {t('+{n} copies', n=cp)}" if cp else nome
             if c == 1: return os.path.dirname(m.path)
             if c == 2: return str(m.nmatch) if m.nmatch else ""
             if c == 3: return "" if m.is_dir else human_size(m.size)
@@ -338,7 +344,15 @@ class ResultModel(QAbstractTableModel):
         elif role == Qt.TextAlignmentRole and c in (2, 3):
             return int(Qt.AlignRight | Qt.AlignVCenter)
         elif role == Qt.ToolTipRole:
-            return m.path
+            tip = m.path
+            if m.snapshot:
+                tip += "\n" + t("found in snapshot tree: {tree}", tree=m.snapshot)
+            if m.copies:
+                tip += ("\n" + t("identical copies (same file, or same path + size + mtime):")
+                        + "".join("\n  " + c for c in m.copies[:40]))
+                if len(m.copies) > 40:
+                    tip += "\n  …"
+            return tip
         elif role == Qt.UserRole:
             return m
         elif role == ResultModel.SORT_ROLE:      # B14: chave numérica p/ ordenar
@@ -363,6 +377,14 @@ class ResultModel(QAbstractTableModel):
         self.beginResetModel()
         self.rows = []
         self.endResetModel()
+
+    def refresh_copies(self):
+        """Repinta a coluna Arquivo: o "+N cópias" cresce DEPOIS de a linha ter
+        sido inserida (o dedup absorve cópias que chegam mais tarde, inclusive
+        as da extensão aos snapshots). Chamado uma vez, ao fim da busca."""
+        if self.rows:
+            self.dataChanged.emit(self.index(0, 0), self.index(len(self.rows) - 1, 0),
+                                  [Qt.DisplayRole, Qt.ToolTipRole])
 
     def match_at(self, row):
         return self.rows[row] if 0 <= row < len(self.rows) else None
@@ -1784,10 +1806,14 @@ class MainWindow(QMainWindow):
             "--one-file-system: don't cross into other mount points"))
         # F11: esconder resultado por padrão só é aceitável se for VISÍVEL que
         # está sendo escondido — daí a caixa aqui e o aviso no painel narrativo.
+        # 09/09/2026 (decisão do Rodrigo): a caixa passou a significar "sempre,
+        # sem esperar zero" — desmarcada, o motor estende aos snapshots sozinho
+        # quando a árvore viva não dá nada para o caminho pedido.
         self.ck_snap = QCheckBox(t("snapshots")); self.ck_snap.setToolTip(t(
-            "Also search inside system snapshot trees (Timeshift, snapper, ZFS). "
-            "Off by default: they are copies of the OS and can multiply the walk "
-            "tenfold on the disk that hosts them."))
+            "ALWAYS search system snapshot trees too (Timeshift, snapper, ZFS, ostree "
+            "deployments). By default they are searched only when the live tree gives "
+            "nothing for that path — they are copies of the OS and can multiply the walk "
+            "tenfold. Results from them are marked."))
         for w in (self.ck_case, self.ck_word, self.ck_bool, self.ck_doc, self.ck_crx,
                   self.ck_nrx, self.ck_rec, self.ck_hid, self.ck_git, self.ck_ofs,
                   self.ck_snap):
@@ -2382,6 +2408,11 @@ class MainWindow(QMainWindow):
         """Recebe root_scanning / root_skipped / root_done do motor e atualiza o
         estado da aba. O nome amigável (label do volume) é resolvido UMA vez aqui,
         no momento do evento, e guardado — render não toca disco."""
+        if ev == "copy":
+            # 09/09/2026: cópia absorvida pelo dedup do motor — não é raiz. A
+            # linha do dono relê o Match (data() lê m.copies ao vivo); o "+N"
+            # fecha certo no on_done, que repinta a coluna.
+            return
         path = info.get("path") or info.get("mount") or ""
         if not path:
             return
@@ -2399,7 +2430,13 @@ class MainWindow(QMainWindow):
             tab.roots[path] = rec
             tab.root_order.append(path)
         if ev == "snapshots_skipped":
-            rec["snap"] = True          # F11: houve poda; o usuário precisa saber
+            # F11: houve poda; o usuário precisa saber. 09/09/2026: em ostree o
+            # que ficou de fora é o acervo do próprio sistema — só o rótulo muda
+            rec["snap"] = "ostree" if info.get("ostree") else True
+        elif ev == "snapshots_searched":
+            # 09/09/2026 (decisão do Rodrigo): zero no vivo (ou caixa marcada) —
+            # a busca foi ESTENDIDA à árvore podada; o rótulo diz que foi
+            rec["snap"] = "searched_ostree" if info.get("ostree") else "searched"
         elif ev == "root_scanning":
             rec["state"] = "scanning"
             rec["klass"] = info.get("klass", rec["klass"])
@@ -2455,8 +2492,12 @@ class MainWindow(QMainWindow):
                 line = (f'{dot} {badge}<span style="color:{pal["txt"]}">{name}</span>'
                         f' <span style="color:{pal["muted"]}">— {_esc(t("scanning…"))}</span>')
             if r.get("snap"):
+                rotulo = {"ostree": t("ostree deployments skipped"),
+                          "searched": t("snapshots searched too"),
+                          "searched_ostree": t("ostree deployments searched too")
+                          }.get(r["snap"], t("snapshots skipped"))
                 line += (f' <span style="color:{pal["muted"]}">'
-                         f'({_esc(t("snapshots skipped"))})</span>')
+                         f'({_esc(rotulo)})</span>')
             lines.append(line)
         self.narr_body.setText("<br>".join(lines))
         self.narr.setVisible(True)
@@ -2628,8 +2669,8 @@ class MainWindow(QMainWindow):
     # barra seria dizer a mesma coisa duas vezes em cada busca do disco com
     # Timeshift. Só some da barra se o painel de FATO tem aquela raiz — no
     # booleano, que não emite eventos, tudo continua indo pra barra.
-    _MOTIVOS_NO_PAINEL = {"snapshots_skipped", "dead_mount", "invalid_root", "not_mounted",
-                          "mount_not_entered"}
+    _MOTIVOS_NO_PAINEL = {"snapshots_skipped", "snapshots_searched", "dead_mount", "invalid_root",
+                          "not_mounted", "mount_not_entered"}
 
     def _funil_para_barra(self, tab, stats):
         """(grave, linhas) do funil, menos o que o painel já mostra. `grave` é
@@ -2712,6 +2753,7 @@ class MainWindow(QMainWindow):
         # clicar num cabeçalho continua ordenando normalmente.
         tab.table.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
         tab.table.setSortingEnabled(True)         # B14: colunas ordenáveis ao fim
+        tab.model.refresh_copies()                # 09/09/2026: "+N cópias" fecha certo
         cancelled = tab.worker and tab.worker._cancel
         # H10: a barra DERIVA do funil único. Até aqui a aba de busca mostrava só
         # o 'denied' — motor_falhou, raiz_invalida, truncado nunca chegavam ao

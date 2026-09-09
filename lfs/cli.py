@@ -55,16 +55,19 @@ def main():
     ap.add_argument("--gitignore", action="store_true", help="respect .gitignore")
     ap.add_argument("--one-fs", action="store_true", help="do not cross mounts")
     ap.add_argument("--snapshots", action="store_true",
-                    help="also search inside system snapshot trees (Timeshift, snapper, "
-                         "ZFS). Skipped by default: they are copies of the OS and can "
-                         "multiply the walk by 10x on the disk that hosts them")
+                    help="ALWAYS search system snapshot trees too (Timeshift, snapper, ZFS, "
+                         "ostree deployments). By default they are searched only when the "
+                         "live tree gives nothing for that path (they are copies of the OS "
+                         "and can multiply the walk by 10x); results from them are marked")
     ap.add_argument("--min-size", type=str, default=None, help="e.g. 10M, 1G")
     ap.add_argument("--days", type=int, default=0, help="modified within the last N days")
     ap.add_argument("-0", "--print0", action="store_true", help="separate paths with NUL (for xargs -0)")
     ap.add_argument("-l", "--files-only", action="store_true", help="path only (no match lines)")
     ap.add_argument("--json", action="store_true",
-                    help="NDJSON: one object per match (path,size,mtime,nmatch,lines[]) plus "
-                         "warn events; exit code grep-style (0=found, 1=none, 2=error). For automation.")
+                    help="NDJSON: one object per match (path,size,mtime,nmatch,lines[],snapshot,"
+                         "copies[]) plus warn events and {copy,of,snapshot} for a duplicate "
+                         "absorbed after its owner was printed; exit code grep-style "
+                         "(0=found, 1=none, 2=error). For automation.")
     ap.add_argument("--nice-io", action="store_true",
                     help="lower CPU + I/O priority (nice 19 + ionice idle) so cron/background "
                          "searches don't fight the server's foreground work")
@@ -125,9 +128,18 @@ def main():
         wb.write(b"\n")
     def out_json(m):
         n[0] += 1
+        # 09/09/2026: `snapshot` = árvore podada de origem (null = árvore viva);
+        # `copies` = caminhos que o dedup colapsou neste ATÉ AQUI. NDJSON é
+        # streaming: cópia absorvida DEPOIS de o dono ter sido impresso sai
+        # como {"copy": ..., "of": dono, "snapshot": ...} (ver on_copy).
         emit_json({"path": m.path, "size": m.size, "mtime": m.mtime,
                    "is_dir": m.is_dir, "nmatch": m.nmatch,
-                   "lines": [[ln, txt] for ln, txt in m.lines]})
+                   "lines": [[ln, txt] for ln, txt in m.lines],
+                   "snapshot": m.snapshot, "copies": list(m.copies)})
+    def on_copy(ev, info):
+        if ev == "copy" and args.json:
+            emit_json({"copy": info.get("path"), "of": info.get("of"),
+                       "snapshot": info.get("snapshot")})
     def out_text(m):
         n[0] += 1
         if args.files_only or not m.lines:
@@ -171,14 +183,15 @@ def main():
     if args.boolexpr:
         import boolean
         try:
-            tot, dt = boolean.search_boolean(q, args.boolexpr, out, stats=stats)
+            tot, dt = boolean.search_boolean(q, args.boolexpr, out, stats=stats,
+                                             on_event=on_copy)
         except boolean.BooleanError as e:
             if args.json:
                 emit_json({"error": "boolean_expression", "detail": str(e)}); wb.flush()
             print(f"boolean expression error: {e}", file=sys.stderr)
             sys.exit(2)
     else:
-        tot, dt = engine.search(q, out, stats=stats)
+        tot, dt = engine.search(q, out, stats=stats, on_event=on_copy)
     # F9a §2.2 + F9b §3.4: avisos NO MESMO stream (json) e no stderr (texto) —
     # montagem de rede morta pulada e diretórios sem permissão. Parcial anunciado.
     skipped = stats.get("skipped_mounts") or []

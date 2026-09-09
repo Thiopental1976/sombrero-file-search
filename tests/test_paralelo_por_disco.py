@@ -88,19 +88,216 @@ def test_lvm_nao_vira_desconhecido():
     'rotational' proprio. Antes o disks devolvia None pros dois, e sob /mnt|/media
     isso virava "rotational" por padrao — um NVMe em gaveta USB com LUKS levava
     1 thread, 12,5x mais lento. O conserto e no disks._rotational (nao no motor)
-    porque path_needs_serial e search_profile bebem da mesma fonte."""
+    porque path_needs_serial e search_profile bebem da mesma fonte.
+
+    Bazzite/composefs (09/09/2026): "/" e overlay sem no de bloco, mas com
+    `datadir+=` — o disks herda o disco de /sysroot, entao AQUI NAO PULA: e
+    testado de verdade (se a heranca quebrar, este teste fica vermelho no
+    Bazzite). So pula onde "/" nao tem bloco NEM datadir (live-USB, container):
+    ai nao ha LVM pra testar e o "unknown" e a resposta honesta."""
     try:
         from lfs import disks
     except Exception:
         print("~pula lvm (sem pacote disks)"); return
     if not os.path.isdir("/sys/block"):
         print("~pula lvm (sem /sys/block)"); return
+    ent = disks._mount_entry("/")
+    if (not ent[0].startswith("/dev/")
+            and not disks._overlay_datadirs(getattr(ent, "opts", ""))):
+        print(f"~pula lvm (/ sem no de bloco nem datadir: {ent[0]} {ent[2]})"); return
     k = disks.search_profile("/").klass
     ok(k in ("ssd", "rotational"), f"/ (LVM) e classificado de verdade (deu {k!r})")
     ok(disks._rotational("/dev/mapper/vgmint-root") in ("0", "1", None),
        "dm nao quebra o _rotational")
     ok(E._jobs_para_classe([k]) == E._JOBS_POR_CLASSE.get(k),
        "a classe resolvida escolhe o pool")
+
+
+# /proc/mounts REAL da VM Bazzite (bootc, composefs), 09/09/2026, sem pseudo-fs.
+# "/" nao tem no de bloco; o kernel declara datadir+=/sysroot/ostree/repo/objects.
+_MOUNTS_BAZZITE = [
+    "composefs / overlay ro,seclabel,relatime,lowerdir+=/run/ostree/.private/cfsroot-lower,"
+    "datadir+=/sysroot/ostree/repo/objects,redirect_dir=on,metacopy=on 0 0\n",
+    "/dev/vda3 /etc btrfs rw,seclabel,relatime,subvolid=5,subvol=/ 0 0\n",
+    "/dev/vda3 /sysroot btrfs ro,seclabel,relatime,subvolid=5,subvol=/ 0 0\n",
+    "/dev/vda3 /sysroot/ostree/deploy/default/var btrfs rw,seclabel,relatime,subvolid=5,subvol=/ 0 0\n",
+    "/dev/vda3 /boot btrfs ro,seclabel,relatime,subvolid=5,subvol=/ 0 0\n",
+    "/dev/vda3 /var btrfs rw,seclabel,relatime,subvolid=5,subvol=/ 0 0\n",
+    "portal /run/user/968/doc fuse.portal rw,nosuid,nodev,relatime 0 0\n",
+]
+
+
+def test_composefs_herda_disco_do_datadir():
+    """Bazzite/composefs (09/09/2026): "/" e overlay com `datadir+=`, e o SFS
+    herda o disco desse caminho — le o fato que o kernel publica, nao inventa.
+    Overlay COMUM (Docker/live-USB: lowerdir/upperdir, sem datadir) e datadir
+    espalhado em dois discos continuam "unknown". Puro: tabela sintetica,
+    _rotational/_sys_disk fingidos (o /dev/vda3 nao existe aqui)."""
+    try:
+        from lfs import disks
+    except Exception:
+        print("~pula composefs (sem pacote disks)"); return
+    M = disks._read_mounts(_MOUNTS_BAZZITE)
+    orig_rot, orig_sys, orig_me, orig_rm = (disks._rotational, disks._sys_disk,
+                                            disks._mount_entry, disks._read_mounts)
+    disks._rotational = lambda dev: {"/dev/vda3": "1"}.get(dev)
+    disks._sys_disk = lambda dev: "vda" if dev == "/dev/vda3" else ""
+    try:
+        p = disks.search_profile("/", M)
+        ok(p.klass == "rotational" and p.mountpoint == "/" and p.fstype == "overlay"
+           and not p.serialize,
+           f"/ composefs herda o disco do datadir+= (rotacional na VM) — deu {p}")
+        ok(disks.search_profile("/usr/bin", M).klass == "rotational",
+           "/usr (dentro do composefs) herda igual")
+        ok(disks._dev_for_path("/", M) == "/dev/vda3",
+           "_dev_for_path resolve composefs -> /dev/vda3 (path_needs_serial bebe daqui)")
+        disks._rotational = lambda dev: {"/dev/vda3": "0"}.get(dev)
+        ok(disks.search_profile("/", M).klass == "ssd",
+           "no metal com SSD vira 'ssd': segue o fato, nao o nome da distro")
+        G = disks._read_mounts([
+            "overlay / overlay rw,lowerdir=/l1:/l2,upperdir=/u,workdir=/w 0 0\n",
+            "/dev/sda1 /l1 ext4 rw 0 0\n"])
+        ok(disks.search_profile("/", G).klass == "unknown",
+           "overlay comum (Docker/live-USB, sem datadir) NAO herda: continua unknown")
+        Dd = disks._read_mounts([
+            "composefs / overlay ro,datadir+=/a/objs,datadir+=/b/objs,metacopy=on 0 0\n",
+            "/dev/sda1 /a ext4 rw 0 0\n", "/dev/sdb1 /b ext4 rw 0 0\n"])
+        ok(disks.search_profile("/", Dd).klass == "unknown",
+           "datadir em dois discos: nao escolhe um, fica unknown")
+        # agrupamento: "/" cai no grupo do /sysroot (1 processo no prato), nao em
+        # grupo proprio por st_dev (37 x 35 na VM). _chave_de_disco nao recebe
+        # tabela, entao a tabela do Bazzite entra pelos dois leitores.
+        disks._mount_entry = lambda ap, mounts=None: orig_me(ap, M if mounts is None else mounts)
+        disks._read_mounts = lambda src="/proc/mounts": M if src == "/proc/mounts" else orig_rm(src)
+        g = E._grupos_por_disco(["/", "/etc", "/sysroot", "/var", "/boot"])
+        ok(g == [["/", "/etc", "/sysroot", "/var", "/boot"]],
+           f"composefs / vai pro grupo do /sysroot (1 processo, 1 prato) — deu {g}")
+    finally:
+        disks._rotational, disks._sys_disk = orig_rot, orig_sys
+        disks._mount_entry, disks._read_mounts = orig_me, orig_rm
+
+
+def test_bind_do_mesmo_diretorio_entra_uma_vez():
+    """Bazzite/ostree (09/09/2026): /var e bind de /sysroot/ostree/deploy/default/var
+    — MESMO diretorio, duas montagens. planejar_raizes so deduplicava bind contra
+    a raiz-mae (st_dev de "/"), nao contra irmas: as duas viravam raiz, a de
+    dentro de ostree/deploy ganhava grupo proprio com snapshots LIGADOS, e o /var
+    era varrido 2x. Agora dedup por identidade do diretorio ((st_dev, st_ino) do
+    ponto de montagem) — fato do kernel, nao nome de distro. Puro: tabela
+    sintetica, stat fingido, disco fingido."""
+    try:
+        from lfs import disks
+    except Exception:
+        print("~pula bind (sem pacote disks)"); return
+    M = disks._read_mounts(_MOUNTS_BAZZITE)
+    DEPLOY_VAR = "/sysroot/ostree/deploy/default/var"
+    # st_dev: "/" e overlay (37); tudo do vda3 e 35. st_ino: /var == deploy/var.
+    dev = {"/": 37, "/etc": 35, "/sysroot": 35, DEPLOY_VAR: 35, "/var": 35, "/boot": 35}
+    ino = {"/": 2, "/etc": 300, "/sysroot": 256, DEPLOY_VAR: 400, "/var": 400, "/boot": 270}
+    def _ident(p):
+        if p not in ino: raise OSError(2, "sem stat fingido", p)
+        return (dev[p], ino[p])
+    orig = (E._st_dev, E._ident, disks._rotational, disks._sys_disk)
+    E._st_dev = lambda p: dev[p]
+    E._ident = _ident
+    disks._rotational = lambda d: {"/dev/vda3": "1"}.get(d)
+    disks._sys_disk = lambda d: "vda" if d == "/dev/vda3" else ""
+    try:
+        st = {}
+        roots, exp, forca = E.planejar_raizes(["/"], False, st, mounts=M)
+        btrfs = [r for r in roots if r in dev]
+        ok(btrfs == ["/", "/boot", "/etc", "/sysroot", "/var"],
+           f"/var entra UMA vez, pelo nome curto; deploy/var some — deu {btrfs}")
+        ok(DEPLOY_VAR not in exp and "/var" in exp and forca,
+           "a expandida que ficou e /var; a duplicata nao vira raiz nem expandida")
+        ok(not any(e["motivo"] for e in st.get("incompleto", []) if e["onde"] == DEPLOY_VAR),
+           "dedup nao e perda: o diretorio e varrido sob o outro nome, nada no funil")
+        # com o dedup, nenhum root cai dentro de ostree/deploy: nao ha grupo com
+        # a poda de snapshots desligada (era ele que varria /var de novo)
+        ok(not any(E.eh_snapshot(r + "/") for r in roots),
+           "nenhuma raiz dentro de ostree/deploy sobrou (nao ha grupo com snapshots ligados)")
+        # o que o usuario DIGITOU manda: pediu o caminho longo, o /var expandido cede
+        roots2, exp2, _ = E.planejar_raizes(["/", DEPLOY_VAR], False, {}, mounts=M)
+        ok(DEPLOY_VAR in roots2 and "/var" not in roots2 and "/var" not in exp2,
+           f"raiz digitada tem precedencia sobre a expandida do mesmo diretorio — deu {roots2}")
+        # Mint/Ubuntu (sem bind): identidades todas distintas, nada muda
+        Mint = disks._read_mounts([
+            "/dev/mapper/vgmint-root / ext4 rw 0 0\n",
+            "/dev/sda1 /mnt/DiscoQ ext4 rw 0 0\n",
+            "/dev/sdb1 /media/rodrigo/4TB btrfs rw,subvol=/@ 0 0\n"])
+        dev.update({"/mnt/DiscoQ": 10, "/media/rodrigo/4TB": 11})
+        ino.update({"/mnt/DiscoQ": 2, "/media/rodrigo/4TB": 256})
+        disks._rotational = lambda d: "0"
+        disks._sys_disk = lambda d: d.split("/")[-1][:3]
+        roots3, exp3, _ = E.planejar_raizes(["/"], False, {}, mounts=Mint)
+        ok(roots3 == ["/", "/media/rodrigo/4TB", "/mnt/DiscoQ"] and exp3 == {"/media/rodrigo/4TB", "/mnt/DiscoQ"},
+           f"Mint sem bind: expansao inalterada — deu {roots3}")
+        # stat que falha (disco que nao existe aqui) nao derruba a expansao
+        ino.pop("/mnt/DiscoQ")
+        roots4, _, _ = E.planejar_raizes(["/"], False, {}, mounts=Mint)
+        ok("/mnt/DiscoQ" in roots4, "sem identidade (stat falhou) a montagem entra como sempre")
+    finally:
+        E._st_dev, E._ident, disks._rotational, disks._sys_disk = orig
+
+
+def test_nota_ostree_mesma_mecanica():
+    """Bazzite/ostree (09/09/2026, decisao do Rodrigo): ostree/deploy e ostree/repo
+    NAO tem mecanica propria — passam pelo MESMO "vivo primeiro, podadas so se
+    faltar" do Timeshift (_plano_extensao), com o mesmo motivo no funil. So o
+    TEXTO da nota muda (acervo do sistema, nao snapshot), decidido pelo padrao
+    que casou, nao por /run/ostree-booted. UMA nota ("/ostree" e symlink de
+    "/sysroot/ostree": mesmo acervo, atribuido a raiz mais especifica). O repo
+    (content-addressed) nunca e estendido, e a nota diz isso."""
+    import tempfile, shutil
+    d = tempfile.mkdtemp(prefix="lfs_ostree_")
+    os.makedirs(os.path.join(d, "sysroot", "ostree", "repo"))
+    os.makedirs(os.path.join(d, "sysroot", "ostree", "deploy"))
+    os.symlink("sysroot/ostree", os.path.join(d, "ostree"))
+    sysroot = os.path.join(d, "sysroot")
+    deploy = os.path.join(sysroot, "ostree", "deploy")
+    def plano(roots, counts, digitadas=None, skip=True):
+        st, evs = {}, []
+        q = E.Query(paths=digitadas or roots, skip_snapshots=skip)
+        pl = E._plano_extensao(q, roots, counts, False, st,
+                               lambda ev, i: evs.append((ev, i["path"], i["ostree"], i["trees"])))
+        return [a["arvore"] for a in pl], [(e["motivo"], e["onde"]) for e in st.get("incompleto", [])], evs, st
+    try:
+        # zero no vivo: estende SO o deploy (repo fica de fora), nota 'searched', texto ostree
+        ext, fila, evs, st = plano([d, sysroot], {d: 0, sysroot: 0}, [d])
+        ok(ext == [deploy], f"zero no vivo: estende ostree/deploy e NAO ostree/repo — deu {ext}")
+        ok(fila == [("snapshots_searched", sysroot)],
+           f"UMA nota, mesmo motivo do Timeshift (snapshots_searched), na raiz mais especifica — deu {fila}")
+        ok(evs == [("snapshots_searched", sysroot, True, [deploy])],
+           f"painel recebe o evento comum com a marca ostree e a arvore estendida — deu {evs}")
+        _, linhas = E.resumo_incompleto(st)
+        ok(linhas == [f"snapshots searched in {sysroot}: " + E._TEXTO_PODA[("ostree", "searched")]],
+           f"texto honesto em EN-US (acervo do sistema; repo nunca varrido) — deu {linhas}")
+        # achado vivo na raiz DIGITADA (mesmo com /sysroot em zero): nada estendido
+        ext, fila, evs, _ = plano([d, sysroot], {d: 3, sysroot: 0}, [d])
+        ok(ext == [] and fila == [("snapshots_skipped", sysroot)] and evs[0][2] is True,
+           f"'zero' e por raiz DIGITADA: /sysroot em zero nao estende se '/' achou — deu {ext}, {fila}")
+        # --snapshots: estende sem esperar zero
+        ext, fila, _, _ = plano([d, sysroot], {d: 3, sysroot: 0}, [d], skip=False)
+        ok(ext == [deploy] and fila == [("snapshots_searched", sysroot)],
+           f"--snapshots estende mesmo com achado vivo — deu {ext}, {fila}")
+        # so a raiz-mae (--one-fs): a nota vai pra ela
+        ext, fila, _, _ = plano([d], {d: 0})
+        ok(fila == [("snapshots_searched", d)], f"so a raiz-mae: a nota vai pra ela — deu {fila}")
+        # Timeshift no mesmo root: mesma mecanica, texto de snapshot, ao lado
+        os.makedirs(os.path.join(d, "timeshift", "snapshots", "2026-09-09"))
+        ext, fila, evs, st = plano([d, sysroot], {d: 0, sysroot: 0}, [d])
+        ok(sorted(ext) == sorted([deploy, os.path.join(d, "timeshift", "snapshots")]),
+           f"Timeshift e ostree/deploy entram pela MESMA extensao — deu {ext}")
+        ok(fila == [("snapshots_searched", sysroot), ("snapshots_searched", d)]
+           or fila == [("snapshots_searched", d), ("snapshots_searched", sysroot)],
+           f"duas notas, mesmo motivo, textos distintos — deu {fila}")
+        textos = {e["onde"]: e["detalhe"] for e in st["incompleto"]}
+        ok(textos[sysroot] == E._TEXTO_PODA[("ostree", "searched")]
+           and textos[d] == E._TEXTO_PODA[("snapshot", "searched")], "texto por tipo de arvore")
+        ok("snapshots_searched" not in E.MOTIVOS_GRAVES and "snapshots_skipped" not in E.MOTIVOS_GRAVES,
+           "poda e extensao continuam nao-graves (exit code 0/1 intacto)")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def test_jobs_de_rede():
@@ -203,7 +400,8 @@ def test_cancel_mata_processo():
 
 for fn in (test_grupos, test_grupos_discos_reais, test_grupo_inacessivel,
            test_eh_snapshot, test_jobs_por_classe, test_lvm_nao_vira_desconhecido,
-           test_jobs_de_rede,
+           test_composefs_herda_disco_do_datadir, test_bind_do_mesmo_diretorio_entra_uma_vez,
+           test_nota_ostree_mesma_mecanica, test_jobs_de_rede,
            test_streaming,
            test_saida_antecipada, test_erro_de_um_disco, test_cancel_mata_processo):
     fn()

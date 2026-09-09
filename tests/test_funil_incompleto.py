@@ -95,23 +95,25 @@ finally:
     E._fstab_alvos, E._eh_mountpoint, E._eh_vaga_de_montagem = _orig
     shutil.rmtree(_d, ignore_errors=True)
 
-# ---- 1c) o booleano só avisa 'snapshots_skipped' onde a poda está em vigor —
-# raiz apontada para DENTRO de um snapshot não pula snapshot nenhum
-_orig_tem = E.tem_snapshot
-try:
-    E.tem_snapshot = lambda r: True
-    from lfs import boolean as B
-    _d = tempfile.mkdtemp(prefix="lfs_snap_")
-    _snap = os.path.join(_d, "timeshift", "snapshots", "2026-09-09", "home")
-    os.makedirs(_snap); open(os.path.join(_snap, "a.txt"), "w").write("laudo\n")
-    for raiz_b, espera, nome in ((_snap, False, "raiz dentro do snapshot: booleano NÃO avisa poda"),
-                                 (_d, True, "raiz que hospeda snapshot: booleano avisa poda")):
-        stb = {}
-        B.search_boolean(E.Query(paths=[raiz_b], content="laudo"), "laudo", lambda m: None, stats=stb)
-        ok(("snapshots_skipped" in motivos(stb)) is espera, nome)
-    shutil.rmtree(_d, ignore_errors=True)
-finally:
-    E.tem_snapshot = _orig_tem
+# ---- 1c) o booleano só anota a poda onde ela está em vigor — raiz apontada
+# para DENTRO de um snapshot não pula snapshot nenhum. 09/09/2026: a raiz que
+# hospeda o snapshot e dá ZERO no vivo é ESTENDIDA (snapshots_searched), com
+# achado vivo fica podada (snapshots_skipped) — as duas são "a poda anotada".
+from lfs import boolean as B
+_d = tempfile.mkdtemp(prefix="lfs_snap_")
+_snap = os.path.join(_d, "timeshift", "snapshots", "2026-09-09", "localhost", "home")
+os.makedirs(_snap); open(os.path.join(_snap, "a.txt"), "w").write("laudo\n")
+_PODA = {"snapshots_skipped", "snapshots_searched"}
+for raiz_b, espera, nome in ((_snap, set(), "raiz dentro do snapshot: booleano NÃO anota poda"),
+                             (_d, {"snapshots_searched"}, "raiz que hospeda snapshot, vivo zero: booleano estende e anota")):
+    stb = {}
+    B.search_boolean(E.Query(paths=[raiz_b], content="laudo"), "laudo", lambda m: None, stats=stb)
+    ok((motivos(stb) & _PODA) == espera, nome)
+open(os.path.join(_d, "vivo.txt"), "w").write("laudo\n")
+stb = {}
+B.search_boolean(E.Query(paths=[_d], content="laudo"), "laudo", lambda m: None, stats=stb)
+ok((motivos(stb) & _PODA) == {"snapshots_skipped"}, "raiz que hospeda snapshot, achado vivo: booleano anota poda")
+shutil.rmtree(_d, ignore_errors=True)
 
 
 # ---- 2) perdas reais chegam ao funil

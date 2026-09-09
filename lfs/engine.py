@@ -143,9 +143,28 @@ def eh_snapshot(path: str) -> bool:
     return False
 
 
-def tem_snapshot(root: str) -> bool:
-    """Este root hospeda arvore de snapshot? Um punhado de glob, sem caminhada —
-    serve pro motor AVISAR que escondeu algo (esconder em silencio e que nao).
+# Bazzite/ostree (09/09/2026, decisao do Rodrigo): ostree/repo e ostree/deploy
+# NAO ganham mecanica propria. Sao "arvore podada" como o Timeshift — a mesma
+# poda, o MESMO fallback (vivo primeiro, podadas so se faltar) e o mesmo dedup.
+# O que muda e so o TEXTO da nota: a nota nao chama de snapshot o que e o
+# acervo do proprio sistema. Decidido pelo PADRAO que casou, nao por nome de
+# distro nem por /run/ostree-booted: um ostree/deploy e um ostree/deploy onde
+# quer que esteja.
+_PADROES_OSTREE = frozenset({"ostree/repo", "ostree/deploy"})
+
+# Podadas que o fallback NAO estende: o repositorio de objetos do ostree e
+# content-addressed — ostree/repo/objects/ab/cdef...file, centenas de milhares
+# de blobs cujo nome e um sha256. Busca por NOME nunca casaria o que o usuario
+# digitou; por CONTEUDO acharia bytes com um caminho que nao diz nada, e os
+# mesmos bytes estao na implantacao (ostree/deploy), que E estendida. A nota
+# diz que o repo nunca e varrido.
+EXCLUSOES_SEM_FALLBACK = frozenset({"ostree/repo"})
+
+
+def _achados_snapshot(root: str):
+    """(padrao, caminho) de cada arvore de snapshot que `root` hospeda — a base
+    de tem_snapshot, separada porque em ostree a nota precisa saber QUAL padrao
+    casou. Um punhado de glob, sem caminhada.
 
     Deriva de EXCLUSOES_SNAPSHOT em vez de repetir a lista: a copia manual ja
     tinha divergido (faltavam '@GMT-*' e o '*' de 'snapshots*'), e uma lista que
@@ -158,14 +177,20 @@ def tem_snapshot(root: str) -> bool:
         alvos += [m for m in user_mounts() if m.startswith(base)]
     except Exception:
         pass
+    out = []
     for a in alvos:
         for m in EXCLUSOES_SNAPSHOT:
             try:
-                if _glob.glob(os.path.join(a, m)):
-                    return True
+                out += [(m, p) for p in _glob.glob(os.path.join(a, m))]
             except OSError:
                 pass
-    return False
+    return out
+
+
+def tem_snapshot(root: str) -> bool:
+    """Este root hospeda arvore de snapshot? Serve pro motor AVISAR que escondeu
+    algo (esconder em silencio e que nao). Ver _achados_snapshot."""
+    return bool(_achados_snapshot(root))
 
 
 def _globs_snapshot():
@@ -194,6 +219,8 @@ def _globs_snapshot():
 # Os canais antigos continuam sendo preenchidos (a GUI e os testes os leem), mas
 # são vista, não fonte.
 _INCOMPLETO_MAX = 200        # teto: um disco negando 50 mil pastas não vira 50 mil linhas
+_DETALHE_MAX = 300           # teto do detalhe (repr de exceção); os textos de _TEXTO_PODA
+                             # cabem inteiros — cortar uma chave de i18n a faria não casar
 
 # Motivos que significam "o resultado pode estar ERRADO", não só "faltou um
 # pedaço" — só estes mudam o código de saída da CLI, porque um script que checa
@@ -223,6 +250,7 @@ MOTIVO_TEXTO = {
     "batch_failed":      "batch failed",
     "truncated":         "truncated",
     "snapshots_skipped": "snapshots skipped",
+    "snapshots_searched": "snapshots searched",
     "read_error":        "read error",
     "interrupted":       "interrupted",
     "mount_not_entered": "mount not entered",
@@ -238,11 +266,38 @@ REASON_TEXTO = {
     "error":        "disk error",
 }
 
+# Detalhe da nota de poda (09/09/2026, decisão do Rodrigo: "vivo primeiro,
+# snapshots só se faltar"). Chave = (tipo da árvore, o que aconteceu):
+#   skipped   — a raiz teve resultado vivo, a podada ficou de fora
+#   searched  — zero no vivo, a busca foi ESTENDIDA à podada (fallback)
+#   requested — --snapshots / caixa da GUI: estendida sem esperar zero
+# O tipo "ostree" só muda o texto; a mecânica é a mesma do "snapshot".
+_TEXTO_PODA = {
+    ("snapshot", "skipped"):
+        "snapshot tree not searched: this location had live results (--snapshots / 'include snapshots' to always search it)",
+    ("snapshot", "searched"):
+        "nothing in the live tree, so the snapshot tree was searched too; results from it are marked",
+    ("snapshot", "requested"):
+        "snapshot tree searched as requested; results from it are marked",
+    ("ostree", "skipped"):
+        "ostree deployments (the system's own image store, not a snapshot) not searched: this location had live results (--snapshots / 'include snapshots' to always search them); the object store ostree/repo is never searched, its files are named by hash",
+    ("ostree", "searched"):
+        "nothing in the live tree, so the ostree deployments were searched too; results from them are marked (the object store ostree/repo is never searched, its files are named by hash)",
+    ("ostree", "requested"):
+        "ostree deployments searched as requested; results from them are marked (the object store ostree/repo is never searched, its files are named by hash)",
+    # a rodada viva parou (teto/cancel) antes de decidir: não é "teve resultado"
+    ("snapshot", "stopped"):
+        "snapshot tree not searched: the search stopped (cap or cancel) before reaching it",
+    ("ostree", "stopped"):
+        "ostree deployments not searched: the search stopped (cap or cancel) before reaching them",
+}
+
 # Strings-fonte (EN-US) que este módulo entrega a t() por VARIÁVEL — a guarda
 # de i18n (test_i18n_no_stale_keys) consome isto, como faz com humane. Os
 # `detalhe="..."` das chamadas de anota_incompleto ficam em UMA linha, literal:
 # a guarda os varre no fonte, e concatenação implícita a cegaria.
 SOURCE_STRINGS = (frozenset(MOTIVO_TEXTO.values()) | frozenset(REASON_TEXTO.values())
+                  | frozenset(_TEXTO_PODA.values())
                   | {" in {where}", "and {n} more occurrence(s) not listed"})
 
 
@@ -261,14 +316,14 @@ def anota_incompleto(stats, motivo, onde="", detalhe="", n=1, args=None):
         if e["motivo"] == motivo and e["onde"] == onde:
             e["n"] += n
             if detalhe and not e.get("detalhe"):
-                e["detalhe"] = detalhe[:200]
+                e["detalhe"] = detalhe[:_DETALHE_MAX]
                 if args:
                     e["args"] = dict(args)
             return
     if len(fila) >= _INCOMPLETO_MAX:
         stats["incompleto_omitidos"] = stats.get("incompleto_omitidos", 0) + n
         return
-    e = {"motivo": motivo, "onde": onde, "detalhe": (detalhe or "")[:200], "n": n}
+    e = {"motivo": motivo, "onde": onde, "detalhe": (detalhe or "")[:_DETALHE_MAX], "n": n}
     if args:
         e["args"] = dict(args)
     fila.append(e)
@@ -483,6 +538,37 @@ class Match:
     # via `_logical_line`; a suíte de paridade trava o invariante com sentinela.
     lines: list[tuple[int, str]] = field(default_factory=list)
     nmatch: int = 0
+    # Dedup de resultados (decisão do Rodrigo, 09/09/2026): o mesmo arquivo
+    # aparece UMA vez. `ident` = (st_dev, st_ino) de quem fez o stat (hardlink,
+    # bind, rsync entre snapshots do Timeshift); `copies` = os outros caminhos
+    # que colapsaram neste ("+N cópias" na GUI, lista no --json); `snapshot` =
+    # árvore podada de onde o achado veio quando a busca foi ESTENDIDA a ela
+    # (None = árvore viva). O caminho vivo tem precedência sobre o do snapshot.
+    snapshot: Optional[str] = None
+    copies: list[str] = field(default_factory=list)
+    ident: Optional[tuple] = None
+
+
+def _ident_de(st) -> tuple:
+    """Identidade do inode por trás de um stat — chave do dedup por identidade."""
+    return (st.st_dev, st.st_ino)
+
+
+def _stat_e_ident(fp):
+    """(stat efetivo, identidade) de um caminho listado pelo motor. O stat
+    SEGUE symlink (tamanho/mtime do alvo, como sempre foi); a identidade é a do
+    PRÓPRIO nó (lstat). Medido na VM Bazzite (09/09/2026): /etc/os-release é
+    symlink de /usr/lib/os-release e, com a identidade do alvo, o dedup
+    colapsava um no outro — um link é outro objeto, não cópia do alvo. Symlink
+    quebrado: o lstat vale pelos dois (E5: casa por nome, mostra o link)."""
+    lst = os.lstat(fp)
+    if stat.S_ISLNK(lst.st_mode):
+        try:
+            st = os.stat(fp)
+        except OSError:
+            st = lst
+        return st, _ident_de(lst)
+    return lst, _ident_de(lst)
 
 
 def _logical_line(text: str) -> str:
@@ -601,16 +687,13 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                         continue
                     dpp = os.path.join(dp, d)
                     try:
-                        st = os.stat(dpp)
+                        st, ident = _stat_e_ident(dpp)   # E5: symlink quebrado -> lstat
                     except OSError:
-                        try:
-                            st = os.lstat(dpp)      # E5: symlink de dir quebrado
-                        except OSError:
-                            anota_incompleto(stats, "stat_failed", onde=dpp)   # H5
-                            continue
+                        anota_incompleto(stats, "stat_failed", onde=dpp)   # H5
+                        continue
                     if not _passes_meta(q, st):
                         continue
-                    yield Match(dpp, st.st_size, st.st_mtime, is_dir=True)
+                    yield Match(dpp, st.st_size, st.st_mtime, is_dir=True, ident=ident)
             if not q.recursive:
                 dns[:] = []
             elif q.max_depth is not None and depth >= q.max_depth:
@@ -623,16 +706,13 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                         continue
                     fp = os.path.join(dp, f)
                     try:
-                        st = os.stat(fp)
+                        st, ident = _stat_e_ident(fp)    # E5: symlink quebrado -> lstat
                     except OSError:
-                        try:
-                            st = os.lstat(fp)       # E5: symlink quebrado casa por nome
-                        except OSError:
-                            anota_incompleto(stats, "stat_failed", onde=fp)    # H5
-                            continue
+                        anota_incompleto(stats, "stat_failed", onde=fp)    # H5
+                        continue
                     if not _passes_meta(q, st):
                         continue
-                    yield Match(fp, st.st_size, st.st_mtime)
+                    yield Match(fp, st.st_size, st.st_mtime, ident=ident)
 
 
 _MERGE_GLOBS_MIN = 4                      # opt#3: >3 globs -> funde numa regex só
@@ -774,21 +854,17 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
                     if seen is not None:
                         seen.add(fp)
                     try:
-                        st = os.stat(fp)
+                        st, ident = _stat_e_ident(fp)   # E5: symlink quebrado — mostra o link
                         is_dir = stat.S_ISDIR(st.st_mode)
                     except OSError:
-                        try:
-                            st = os.lstat(fp)    # E5: symlink quebrado — mostra o link
-                        except OSError:
-                            # H5: o fd listou e nós descartamos — mesma regra
-                            # que o rg já seguia em _iter_content_rg
-                            anota_incompleto(stats, "stat_failed", onde=fp,
-                                             detalhe="the engine listed it, but the file vanished")
-                            continue
-                        is_dir = False
+                        # H5: o fd listou e nós descartamos — mesma regra
+                        # que o rg já seguia em _iter_content_rg
+                        anota_incompleto(stats, "stat_failed", onde=fp,
+                                         detalhe="the engine listed it, but the file vanished")
+                        continue
                     if not _passes_meta(q, st):
                         continue
-                    yield Match(fp, st.st_size, st.st_mtime, is_dir=is_dir)
+                    yield Match(fp, st.st_size, st.st_mtime, is_dir=is_dir, ident=ident)
                 if not chunk:
                     break
         finally:
@@ -899,7 +975,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
                     cur = None
                     continue
                 try:
-                    st = os.stat(path)
+                    st, ident = _stat_e_ident(path)
                 except OSError:
                     # arquivo dentro de container (ex algo.zip/interno.pdf): sem stat no FS
                     cur = Match(path, 0, 0) if docs else None
@@ -911,7 +987,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
                     continue
                 if not _passes_meta(q, st):
                     cur = None; continue
-                cur = Match(path, st.st_size, st.st_mtime)
+                cur = Match(path, st.st_size, st.st_mtime, ident=ident)
             elif t == "match" and cur is not None:
                 ln = ev["data"].get("line_number")
                 txt = ev["data"]["lines"].get("text", "")
@@ -1067,18 +1143,284 @@ def _raiz_montada(root, stats, on_event=lambda ev, info: None) -> bool:
     return True
 
 
-def _avisa_snapshots(roots, stats, on_event=lambda ev, info: None):
-    """H6: a poda de snapshots (F11) avisava só por on_event — que a CLI não
-    passa. `sfs /media/4TB -n laudo` calava que o Timeshift daquele disco foi
-    pulado, e um arquivo que só sobreviveu no snapshot virava "0 resultados".
-    A poda é política deliberada, mas o lema não abre exceção: perda de
-    cobertura passa pelo funil (não-grave; o remédio é --snapshots / a caixa
-    da GUI). `roots` = só os em que a poda está de fato em vigor."""
+# ------------------------------------------ vivo primeiro, podadas só se faltar
+# Decisão do Rodrigo (09/09/2026): "não incluir snapshots é bom para a
+# performance mas não é bom para o projeto — o SFS é um buscador de arquivos.
+# Se o alvo do usuário estiver nas pastas de snapshot ele vai receber nada."
+# A busca varre a árvore viva como sempre (poda em vigor); se a raiz DIGITADA
+# devolver ZERO, a MESMA consulta é estendida às árvores podadas que ela
+# hospeda, e a nota diz que foi. Com --snapshots / caixa da GUI a extensão é
+# incondicional. Timeshift, snapper, ZFS, Samba e ostree/deploy passam pelo
+# mesmo caminho; a única diferença é o texto da nota (ver _TEXTO_PODA).
+#
+# "Zero" é por raiz DIGITADA, não por raiz expandida: buscar em "/" no Bazzite
+# vira [/, /boot, /etc, /sysroot, /var], e o /sysroot (só ostree) daria zero em
+# toda consulta — estenderia às implantações mesmo com /etc/os-release achado.
+# A unidade de decisão é o que o usuário pediu.
+
+def _arvores_podadas(roots, q_paths, excluidos=()):
+    """Árvores podadas hospedadas pelas raízes vivas, uma vez cada (por caminho
+    real — "/ostree" é symlink de "/sysroot/ostree"), com o dono da nota.
+
+    Devolve lista de dicts {arvore, padrao, dono, digitada, fallback}:
+      arvore    — caminho REAL da árvore podada (raiz da extensão)
+      padrao    — qual padrão de EXCLUSOES_SNAPSHOT casou (dita o texto e o
+                  cálculo do caminho vivo, ver _caminho_vivo)
+      dono      — raiz viva mais específica que a contém (onde da nota)
+      digitada  — raiz que o usuário digitou e que contém o dono (unidade do
+                  "zero")
+      fallback  — False para EXCLUSOES_SEM_FALLBACK (ostree/repo): só nota
+    Fora: árvore cuja montagem mais específica não é raiz viva nem a montagem
+    de uma (disco que o gate não entrou, ou --one-fs do usuário — não cruza
+    montagem para estender o que a busca viva não cruzou) e árvore sob uma
+    montagem morta/condenada."""
+    disks = _mod_disks()
+    def montagem(p):
+        if disks is None:
+            return None
+        try:
+            return disks._mount_entry(p)[1]
+        except Exception:
+            return None
+    vivas = [os.path.abspath(os.path.expanduser(r)) for r in roots]
+    monts_vivas = {montagem(r) for r in vivas} | set(vivas)
+    vistos, out = set(), []
     for r in roots:
-        if tem_snapshot(r):
-            anota_incompleto(stats, "snapshots_skipped", onde=r,
-                             detalhe="system snapshot tree was not searched (--snapshots / 'include snapshots' to include it)")
-            on_event("snapshots_skipped", {"path": r})
+        if not _pula_snapshot([r], True):        # raiz DENTRO de um snapshot: a
+            continue                             # poda não está em vigor nela
+        for padrao, p in _achados_snapshot(r):
+            rp = os.path.realpath(p)
+            if rp in vistos:
+                continue
+            vistos.add(rp)
+            dono = _raiz_mais_especifica(rp, roots)
+            if dono is None:
+                continue
+            if any(rp == e or _sob(rp, e) for e in excluidos):
+                continue
+            m = montagem(rp)
+            if m is not None and m not in monts_vivas:
+                continue
+            digitada = _raiz_mais_especifica(os.path.abspath(os.path.expanduser(dono)),
+                                             q_paths) or dono
+            out.append({"arvore": rp, "padrao": padrao, "dono": dono,
+                        "digitada": digitada,
+                        "fallback": padrao not in EXCLUSOES_SEM_FALLBACK})
+    return out
+
+
+def _caminho_vivo(path, arvore, padrao):
+    """Onde este arquivo do snapshot ESTARIA na árvore viva — a chave do dedup
+    por cópia idêntica (caminho vivo + tamanho + mtime). None quando o layout
+    não é o esperado: então o achado fica só com o dedup por inode.
+    Layouts (09/09/2026), `arvore` = caminho real da árvore podada:
+      timeshift/snapshots*  <arvore>/<data>/localhost/<rel>        -> /<rel>
+      timeshift-btrfs       <arvore>/snapshots/<data>/@|@x/<rel>   -> /<rel> | /x/<rel>
+      .snapshots (snapper)  <arvore>/<n>/snapshot/<rel>            -> <pai da arvore>/<rel>
+      .zfs/snapshot         <arvore>/<nome>/<rel>                  -> <dataset>/<rel>
+      @GMT-*  (Samba)       <arvore>/<rel>                         -> <pai da arvore>/<rel>
+      ostree/deploy         <arvore>/<os>/deploy/<hash>.N/<rel>    -> /<rel>"""
+    base = arvore.rstrip("/")
+    if not path.startswith(base + "/"):
+        return None
+    comps = path[len(base) + 1:].split("/")
+    if padrao == "timeshift/snapshots*":
+        if len(comps) >= 3 and comps[1] == "localhost":
+            return "/" + "/".join(comps[2:])
+    elif padrao == "timeshift-btrfs":
+        if len(comps) >= 4 and comps[0] == "snapshots":
+            sub = comps[2]
+            raiz = "/" if sub == "@" else "/" + sub.lstrip("@")
+            return os.path.join(raiz, *comps[3:])
+    elif padrao == ".snapshots":
+        if len(comps) >= 3 and comps[1] == "snapshot":
+            return os.path.join(os.path.dirname(base), *comps[2:])
+    elif padrao == ".zfs/snapshot":
+        if len(comps) >= 2:
+            return os.path.join(os.path.dirname(os.path.dirname(base)), *comps[1:])
+    elif padrao == "@GMT-*":
+        if comps and comps[0]:
+            return os.path.join(os.path.dirname(base), *comps)
+    elif padrao == "ostree/deploy":
+        if len(comps) >= 4 and comps[1] == "deploy":
+            return "/" + "/".join(comps[3:])
+    return None
+
+
+class _Colapso:
+    """Dedup de resultados (decisão do Rodrigo, 09/09/2026): o mesmo arquivo
+    vira UM resultado. Mesmo arquivo =
+      - mesma identidade (st_dev, st_ino): hardlink, bind, rsync do Timeshift
+        entre snapshots; ou
+      - cópia idêntica: mesmo caminho vivo (o próprio, ou o reconstruído por
+        _caminho_vivo para achado de snapshot) + tamanho + mtime em segundos
+        inteiros (btrfs/snapper e ostree têm inodes distintos; o mtime em
+        segundos é o que sobrevive a rsync/protocolos antigos).
+    Sem ler conteúdo. Quem chega primeiro fica; como a árvore viva é varrida
+    ANTES das podadas, o caminho vivo tem precedência por construção. Só
+    snapshot (arquivo já apagado do vivo) aparece com o caminho do snapshot.
+    O lado ruim, declarado: dois arquivos DIFERENTES no mesmo caminho vivo com
+    o mesmo tamanho e o mesmo segundo de mtime colapsariam — na prática é o
+    mesmo arquivo."""
+
+    def __init__(self):
+        self.por_ident = {}
+        self.por_copia = {}
+
+    def absorve(self, m, vivo=None):
+        """Registra `m`. Devolve o Match DONO se `m` é cópia de um já entregue
+        (e anexa o caminho em dono.copies); None se `m` é novo."""
+        k_id = m.ident
+        k_cp = (vivo or m.path, m.size, int(m.mtime or 0))
+        dono = self.por_ident.get(k_id) if k_id is not None else None
+        if dono is None:
+            dono = self.por_copia.get(k_cp)
+        if dono is None:
+            if k_id is not None:
+                self.por_ident[k_id] = m
+            self.por_copia[k_cp] = m
+            return None
+        if k_id is not None:
+            self.por_ident.setdefault(k_id, dono)
+        self.por_copia.setdefault(k_cp, dono)
+        # mesma raiz digitada duas vezes ("/" e "/home") listava o arquivo 2x:
+        # não é cópia, é o mesmo caminho — colapsa sem anotar
+        if m.path != dono.path and m.path not in dono.copies:
+            dono.copies.append(m.path)
+        return dono
+
+
+class _Entrega:
+    """Funil de ENTREGA, compartilhado por search() e search_boolean(): dedup
+    (_Colapso), teto de resultados (truncated no funil), contagem e progresso.
+    É aqui — antes de CLI, --json, GUI e booleano — que o dedup mora, para que
+    os quatro vejam o mesmo resultado. Cópia absorvida vira evento 'copy'
+    {path, of, snapshot} (o --json a relata; a GUI ignora e relê o Match)."""
+
+    def __init__(self, on_result, on_progress, stats, cap, on_event):
+        self.on_result, self.on_progress = on_result, on_progress
+        self.stats, self.cap, self.on_event = stats, cap, on_event
+        self.colapso = _Colapso()
+        self.n = 0
+        self.parou = False          # teto atingido: nada mais entra (nem extensão)
+
+    def entrega(self, m, origem=None) -> bool:
+        """`origem` = (arvore, padrao) quando o achado veio da extensão às
+        podadas. True se `m` foi entregue como resultado novo."""
+        vivo = None
+        if origem is not None:
+            m.snapshot = origem[0]
+            vivo = _caminho_vivo(m.path, origem[0], origem[1])
+        dono = self.colapso.absorve(m, vivo)
+        if dono is not None:
+            if m.path != dono.path:      # o mesmo caminho 2x não é cópia de nada
+                self.on_event("copy", {"path": m.path, "of": dono.path, "snapshot": m.snapshot})
+            return False
+        self.on_result(m)
+        self.n += 1
+        if self.n % 25 == 0:
+            self.on_progress(self.n)
+        if self.n >= self.cap:
+            # H2: ninguém EXPÕE max_results — nem a GUI nem a CLI têm controle
+            # pra isso; é um teto interno. Parar nele sem dizer é o programa
+            # decidindo por conta própria que o usuário já viu o bastante.
+            # Não-grave: o que foi mostrado está certo, só não é tudo.
+            anota_incompleto(self.stats, "truncated",
+                             detalhe="stopped at the cap of {cap} results; there may be more",
+                             args={"cap": self.cap})
+            self.parou = True
+        return True
+
+
+def _plano_extensao(q, roots, counts, parou, stats, on_event, excluidos=()):
+    """Depois da rodada viva: decide, por raiz DIGITADA, quais árvores podadas
+    entram na extensão, e escreve a nota de cada dono no funil E no painel
+    (H6: a CLI só enxerga o funil). Devolve a lista de árvores a estender
+    (dicts de _arvores_podadas), vazia se não há o que estender.
+
+    `parou` (teto ou cancelamento na rodada viva): não estende nada — o teto
+    já foi anunciado como 'truncated', e cancelar é cancelar."""
+    arvores = _arvores_podadas(roots, q.paths, excluidos)
+    if not arvores:
+        return []
+    achados = {}                         # raiz digitada -> achados vivos
+    for r in roots:
+        d = _raiz_mais_especifica(os.path.abspath(os.path.expanduser(r)), q.paths) or r
+        achados[d] = achados.get(d, 0) + counts.get(r, 0)
+    estender = []
+    por_dono = {}
+    for a in arvores:
+        if parou:
+            modo = "stopped"
+        elif not q.skip_snapshots:
+            modo = "requested"
+        elif achados.get(a["digitada"], 0) == 0:
+            modo = "searched"
+        else:
+            modo = "skipped"
+        if modo in ("searched", "requested") and a["fallback"]:
+            estender.append(a)
+        por_dono.setdefault(a["dono"], []).append((a, modo))
+    for dono, lst in por_dono.items():
+        tipo = "ostree" if all(a["padrao"] in _PADROES_OSTREE for a, _m in lst) else "snapshot"
+        modos = {m for a, m in lst if a["fallback"]} or {"skipped"}
+        modo = next((m for m in ("requested", "searched", "stopped") if m in modos), "skipped")
+        motivo = "snapshots_searched" if modo in ("requested", "searched") else "snapshots_skipped"
+        anota_incompleto(stats, motivo, onde=dono, detalhe=_TEXTO_PODA[(tipo, modo)])
+        on_event(motivo, {"path": dono, "ostree": tipo == "ostree",
+                          "trees": [a["arvore"] for a, m in lst
+                                    if m in ("requested", "searched") and a["fallback"]]})
+    return estender
+
+
+def _query_extensao(q, plano, forca_one_fs=False):
+    """A Query da rodada de extensão: raízes = as árvores podadas, poda
+    desligada (quem aponta pra dentro de um snapshot quer aquilo — F11 bug3,
+    mesma regra), e as MONTAGENS sob cada árvore excluídas: no ostree o
+    /var é bind de deploy/<os>/var e já foi varrido como raiz viva — varrer de
+    novo por outro nome seria o próprio desperdício que o dedup esconderia."""
+    disks = _mod_disks()
+    trees = [a["arvore"] for a in plano]
+    excl = set(q.excluded_paths)
+    if disks is not None:
+        for tr in trees:
+            try:
+                excl |= set(disks.mounts_under(tr))
+            except Exception:
+                pass
+    excl = tuple(sorted(e for e in excl if any(_sob(e, tr) for tr in trees)))
+    return replace(q, paths=trees, skip_snapshots=False, excluded_paths=excl,
+                   one_file_system=q.one_file_system or forca_one_fs)
+
+
+def _origem_de(plano):
+    """path -> (arvore, padrao) da árvore podada de prefixo mais longo que o
+    contém (a origem marcada no Match), e path -> dono (raiz viva) p/ contagem."""
+    ordem = sorted(plano, key=lambda a: len(a["arvore"]), reverse=True)
+
+    def origem(path):
+        for a in ordem:
+            if path == a["arvore"] or _sob(path, a["arvore"]):
+                return (a["arvore"], a["padrao"])
+        return None
+
+    def dono(path):
+        for a in ordem:
+            if path == a["arvore"] or _sob(path, a["arvore"]):
+                return a["dono"]
+        return ordem[0]["dono"] if ordem else None
+    return origem, dono
+
+
+def _raiz_mais_especifica(path, roots):
+    """A raiz de `roots` que contém `path` pelo prefixo mais longo (a mais
+    próxima dele); None se nenhuma contém."""
+    melhor, tam = None, -1
+    for r in roots:
+        ra = os.path.abspath(os.path.expanduser(r))
+        if (path == ra or _sob(path, ra)) and len(ra) > tam:
+            melhor, tam = r, len(ra)
+    return melhor
 
 
 def _sob(path, root) -> bool:
@@ -1168,6 +1510,9 @@ _PSEUDO_FS = frozenset({
 })
 
 _st_dev = lambda p: os.stat(p).st_dev     # injetável (topologias fictícias nos testes)
+# identidade do DIRETÓRIO por trás de um caminho (Bazzite/ostree 09/09/2026):
+# duas montagens com o mesmo par são o mesmo diretório (bind). Injetável.
+_ident = lambda p: (lambda st: (st.st_dev, st.st_ino))(os.stat(p))
 
 
 def planejar_raizes(paths, one_fs: bool, stats=None,
@@ -1190,7 +1535,20 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
     entram no funil como `mount_not_entered`, não-grave: "não entrei; busque
     pelo caminho dela". Bind mount do MESMO sistema de arquivos (st_dev igual
     ao da raiz-mãe) não vira raiz: o --one-file-system não a separa e ela
-    seria varrida duas vezes. Subvolume btrfs tem st_dev próprio e vira raiz."""
+    seria varrida duas vezes. Subvolume btrfs tem st_dev próprio e vira raiz.
+
+    Bazzite/ostree (09/09/2026): a comparação de st_dev acima só enxerga a
+    raiz-mãe, não as IRMÃS. No ostree /var é bind de
+    /sysroot/ostree/deploy/default/var — mesmo diretório, duas montagens, ambas
+    com st_dev diferente de "/" (composefs) — e as duas viravam raiz; a de
+    dentro de ostree/deploy ainda ganhava grupo próprio com a poda de snapshots
+    DESLIGADA (_pula_snapshot), e o /var era varrido 2× com prefixos
+    diferentes. Agora montagens expandidas que são o MESMO diretório
+    ((st_dev, st_ino) do ponto de montagem — fato do kernel, vale pra qualquer
+    bind em qualquer distro) entram uma vez: o que o usuário digitou tem
+    precedência; entre expandidas fica a de caminho mais curto, que é o nome
+    pelo qual ele conhece a pasta (/var, não /sysroot/ostree/…). Não é perda:
+    o diretório é varrido, sob o outro nome — por isso não passa pelo funil."""
     roots = []
     seen = set()
     for r in paths:
@@ -1224,6 +1582,8 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
                     _condena_montagem(mp, fstype, None, status, stats, on_event, mortas)
         return roots, set(), False
     expandidas, podadas = set(), []
+    ids_digitadas = set()     # identidade das raízes digitadas: elas mandam
+    candidatas = []           # (mp, identidade|None) na ordem de descoberta
     for r in list(roots):
         try:
             sob = disks.mounts_under(r, mounts)
@@ -1233,6 +1593,10 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
             dev_mae = _st_dev(r)
         except OSError:
             dev_mae = None
+        try:
+            ids_digitadas.add(_ident(r))
+        except OSError:
+            pass
         for mp in sob:
             if mp in seen:
                 continue
@@ -1254,15 +1618,31 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
                 continue
             # bind do mesmo FS: só em disco LOCAL de bloco dá pra fazer stat com
             # segurança (rede/FUSE pode travar — isso é trabalho da sonda do gate)
-            if (prof is not None and not prof.is_network and not fstype.startswith("fuse")
-                    and dev_mae is not None):
+            ident = None
+            if prof is not None and not prof.is_network and not fstype.startswith("fuse"):
+                if dev_mae is not None:
+                    try:
+                        if _st_dev(mp) == dev_mae:
+                            seen.add(mp)
+                            continue
+                    except OSError:
+                        pass
                 try:
-                    if _st_dev(mp) == dev_mae:
-                        seen.add(mp)
-                        continue
+                    ident = _ident(mp)
                 except OSError:
-                    pass
-            roots.append(mp); seen.add(mp); expandidas.add(mp)
+                    ident = None
+            candidatas.append((mp, ident)); seen.add(mp)
+    # bind do MESMO diretório entre irmãs/digitadas (ver docstring): uma só
+    vencedora = {}
+    for mp, ident in candidatas:
+        if ident is not None and ident not in ids_digitadas:
+            atual = vencedora.get(ident)
+            if atual is None or (len(mp), mp) < (len(atual), atual):
+                vencedora[ident] = mp
+    for mp, ident in candidatas:
+        if ident is not None and vencedora.get(ident) != mp:
+            continue          # mesmo diretório que outra raiz: já é varrido por ela
+        roots.append(mp); expandidas.add(mp)
     if podadas and stats is not None:
         stats.setdefault("pruned_mounts", []).extend(podadas)
     return roots, expandidas, bool(expandidas)
@@ -1453,11 +1833,17 @@ def _chave_de_disco(root):
             disks = None
     if disks is not None:
         try:
-            dev, _mp, fstype = disks._mount_entry(os.path.abspath(root))
+            ent = disks._mount_entry(os.path.abspath(root))
+            dev, _mp, fstype = ent
             # ZFS: o "dev" é pool/dataset, não um nó de bloco. Sem isto cada
             # dataset viraria um grupo e abriríamos N processos no MESMO pool.
             if (fstype or "").lower() == "zfs" and dev:
                 return ("zpool", dev.split("/")[0])
+            # composefs (Bazzite/ostree, 09/09/2026): "/" não tem nó de bloco,
+            # mas o kernel declara datadir+=/sysroot/... — o mesmo prato de
+            # /sysroot, /var e /etc. Sem isto "/" caía no reserva (st_dev) e
+            # virava grupo próprio: dois processos no mesmo disco.
+            dev = disks._backing_dev(ent)
             pai = disks._sys_disk(dev) if dev else None
             if pai:
                 return ("disco", pai)
@@ -1611,34 +1997,16 @@ def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None,
                                  detalhe="the disk did not answer the cancel in time; its losses were not counted")
 
 
-def search(q: Query, on_result: Callable[[Match], None],
-           cancel: Callable[[], bool] = lambda: False,
-           on_progress: Callable[[int], None] = lambda n: None,
-           stats: Optional[dict] = None,
-           on_event: Callable[[str, dict], None] = lambda ev, info: None):
-    """Executa a busca chamando on_result(Match) em streaming.
-    Retorna (total_encontrado, segundos). Se `stats` (dict) for passado, recebe
-    contadores como stats['denied'] (arquivos inacessíveis vistos no stderr) e
-    stats['skipped_mounts'] (montagens de rede mortas puladas — F9a §2.2).
+def _rodada(q, roots, classes, cancel, stats, on_event, entrega, origem_de=None,
+            dono_de=None, counts=None, eventos_por_grupo=True):
+    """UMA rodada de varredura sobre `roots` (raízes vivas, ou as árvores
+    podadas na extensão), particionada por disco, entregue em streaming pelo
+    funil `entrega`. Devolve True se parou antes do fim (teto ou cancel).
 
-    `on_event(ev, info)` (F10a §2 — painel de narrativa, no ALTO da GUI) recebe,
-    AO VIVO: 'root_scanning' {path, klass, mountpoint} quando um root passa o
-    gate; 'root_skipped' {path, mount, fstype, klass, reason} quando uma montagem
-    de rede morta é pulada (a GUI pinta linha vermelha na hora, sem popup); e
-    'root_done' {path, found} por root ao fim, com os achados atribuídos a ele.
-    Padrão no-op: chamadores e testes antigos seguem intactos."""
-    t0 = time.time()
-    n = 0
-    classes = {}
-    mortas: list = []
-    plano, expandidas, forca_one_fs = planejar_raizes(q.paths, q.one_file_system,
-                                                      stats, on_event, mortas=mortas)  # F12
-    roots = _live_roots(plano, stats, on_event=on_event, classes=classes,
-                        expandidas=expandidas, mortas=mortas)
-    if not roots:
-        return 0, time.time() - t0
-    q = _query_planejada(q, roots, forca_one_fs, mortas)
-    counts, _attribute = _atribuidor(roots)   # 'found' por root do root_done
+    `origem_de(path)` marca a árvore podada de cada achado (só na extensão);
+    `dono_de(path)` diz a que raiz viva o achado conta; `eventos_por_grupo`
+    fecha a narrativa de cada raiz assim que o disco dela termina (na
+    extensão o dono é fechado pelo chamador, depois da rodada inteira)."""
     # F11: fábrica do iterador — a MESMA nos dois modos (serial e particionado).
     # `jobs` só é aplicado no modo particionado; no serial o fd/rg segue com o
     # pool padrão (nº de CPUs), que é o certo quando há um processo só.
@@ -1650,10 +2018,6 @@ def search(q: Query, on_result: Callable[[Match], None],
         if FD:
             return _iter_names_fd(qq, cc, ss, jobs=jobs, procs=procs)
         return _iter_names_python(qq, ss, cc)
-
-    if q.skip_snapshots:
-        # H6: painel de narrativa E funil — a CLI só enxerga o funil
-        _avisa_snapshots([r for r in roots if _pula_snapshot([r], True)], stats, on_event)
 
     grupos = _separa_raizes_com_mortas(_grupos_por_disco(roots), q.excluded_paths)
     # Root apontado PARA DENTRO de um snapshot ganha grupo PROPRIO, senao a
@@ -1675,12 +2039,13 @@ def search(q: Query, on_result: Callable[[Match], None],
     # 1 disco só (ou fallback Python, que já é os.walk por root) → nada a ganhar
     # abrindo threads: mantém o caminho serial de sempre.
     paralelo = len(grupos) > 1 and (FD or (q.content and (RG or (q.documents and RGA))))
+    pendentes = set(roots)
     if paralelo:
-        pendentes = set(roots)
-
         def _grupo_terminou(paths, meu=None):
             # o disco acabou: já dá pra fechar a narrativa dos roots dele, sem
             # esperar os discos lentos (era isso que o iterador serial impedia)
+            if not eventos_por_grupo:
+                return
             erro = (meu or {}).get("erros")
             for r in paths:
                 if r in pendentes:
@@ -1704,27 +2069,22 @@ def search(q: Query, on_result: Callable[[Match], None],
                                        conteudo=bool(q.content))),
             ao_fim=_grupo_terminou)
     else:
-        pendentes = set(roots)
         it = _fabrica(replace(q, skip_snapshots=_pula_snapshot(roots, q.skip_snapshots)),
                       cancel, stats,
                       jobs=_jobs_para_classe([classes.get(r, "unknown") for r in roots],
                                              conteudo=bool(q.content)))
+    parou = False
     for m in it:
         if cancel():
+            parou = True
             break
-        on_result(m)
-        n += 1
-        _attribute(m.path)
-        if n % 25 == 0:
-            on_progress(n)
-        if n >= q.max_results:
-            # H2: ninguém EXPÕE max_results — nem a GUI nem a CLI têm controle
-            # pra isso; é um teto interno. Parar nele sem dizer é o programa
-            # decidindo por conta própria que o usuário já viu o bastante.
-            # Não-grave: o que foi mostrado está certo, só não é tudo.
-            anota_incompleto(stats, "truncated",
-                             detalhe="stopped at the cap of {cap} results; there may be more",
-                             args={"cap": q.max_results})
+        origem = origem_de(m.path) if origem_de is not None else None
+        if entrega.entrega(m, origem):
+            d = dono_de(m.path) if dono_de is not None else None
+            if d is not None and counts is not None:
+                counts[d] = counts.get(d, 0) + 1
+        if entrega.parou:
+            parou = True
             break
     # Fechar o gerador AQUI, não quando o GC quiser: é no finally dele que o
     # _reap lê o stderr e escreve no funil (e, no particionado, que os stats
@@ -1733,10 +2093,93 @@ def search(q: Query, on_result: Callable[[Match], None],
     fechar = getattr(it, "close", None)
     if fechar is not None:
         fechar()
-    for r in roots:                       # F11: no modo particionado a maioria já
-        if r in pendentes:                # foi anunciada assim que o disco fechou;
-            on_event("root_done", {"path": r, "found": counts[r]})   # aqui sobram
-    return n, time.time() - t0            # os interrompidos por cancel/max_results
+    if eventos_por_grupo:
+        for r in roots:                   # F11: no modo particionado a maioria já
+            if r in pendentes:            # foi anunciada assim que o disco fechou;
+                on_event("root_done", {"path": r, "found": counts[r]})   # aqui sobram
+    return parou                          # os interrompidos por cancel/max_results
+
+
+def _estende_snapshots(q, roots, classes, counts, parou, cancel, stats, on_event,
+                       entrega, forca_one_fs, rodada):
+    """Segunda rodada: "vivo primeiro, snapshots só se faltar". Decide (e
+    anota) com _plano_extensao, varre as árvores podadas com a MESMA
+    maquinaria (`rodada` = _rodada ou a do booleano), contando os achados no
+    dono e fechando a narrativa dele ao fim. Chamado por search() e por
+    search_boolean(): uma mecânica, dois motores."""
+    plano = _plano_extensao(q, roots, counts, parou or cancel(), stats, on_event,
+                            excluidos=q.excluded_paths)
+    if not plano:
+        return
+    q2 = _query_extensao(q, plano, forca_one_fs)
+    origem, dono = _origem_de(plano)
+    donos = []
+    for a in plano:
+        if a["dono"] not in donos:
+            donos.append(a["dono"])
+    for d in donos:
+        prof = classes.get(d, "unknown")
+        on_event("root_scanning", {"path": d, "klass": getattr(prof, "klass", prof),
+                                   "mountpoint": getattr(prof, "mountpoint", d)})
+    classes2 = dict(classes)
+    for a in plano:
+        classes2[a["arvore"]] = classes.get(a["dono"], "unknown")
+    rodada(q2, q2.paths, classes2, cancel, stats, on_event, entrega,
+           origem_de=origem, dono_de=dono, counts=counts, eventos_por_grupo=False)
+    for d in donos:
+        on_event("root_done", {"path": d, "found": counts.get(d, 0)})
+
+
+def search(q: Query, on_result: Callable[[Match], None],
+           cancel: Callable[[], bool] = lambda: False,
+           on_progress: Callable[[int], None] = lambda n: None,
+           stats: Optional[dict] = None,
+           on_event: Callable[[str, dict], None] = lambda ev, info: None):
+    """Executa a busca chamando on_result(Match) em streaming.
+    Retorna (total_encontrado, segundos). Se `stats` (dict) for passado, recebe
+    contadores como stats['denied'] (arquivos inacessíveis vistos no stderr) e
+    stats['skipped_mounts'] (montagens de rede mortas puladas — F9a §2.2).
+
+    `on_event(ev, info)` (F10a §2 — painel de narrativa, no ALTO da GUI) recebe,
+    AO VIVO: 'root_scanning' {path, klass, mountpoint} quando um root passa o
+    gate; 'root_skipped' {path, mount, fstype, klass, reason} quando uma montagem
+    de rede morta é pulada (a GUI pinta linha vermelha na hora, sem popup); e
+    'root_done' {path, found} por root ao fim, com os achados atribuídos a ele.
+    09/09/2026: 'snapshots_skipped' / 'snapshots_searched' {path, ostree, trees}
+    depois da rodada viva (ver _plano_extensao) e 'copy' {path, of, snapshot}
+    por resultado absorvido pelo dedup (ver _Entrega).
+    Padrão no-op: chamadores e testes antigos seguem intactos."""
+    t0 = time.time()
+    classes = {}
+    mortas: list = []
+    plano, expandidas, forca_one_fs = planejar_raizes(q.paths, q.one_file_system,
+                                                      stats, on_event, mortas=mortas)  # F12
+    roots = _live_roots(plano, stats, on_event=on_event, classes=classes,
+                        expandidas=expandidas, mortas=mortas)
+    if not roots:
+        return 0, time.time() - t0
+    q_digitada = q
+    q = _query_planejada(q, roots, forca_one_fs, mortas)
+    counts, _attribute = _atribuidor(roots)   # 'found' por root do root_done
+    entrega = _Entrega(on_result, on_progress, stats, q.max_results, on_event)
+
+    def _dono_vivo(path):
+        # o atribuidor conta; devolvemos None para _rodada não contar de novo
+        _attribute(path)
+        return None
+
+    # A rodada viva é SEMPRE podada — inclusive com --snapshots: "incluir" agora
+    # significa "estender às podadas sem esperar zero", não "varrer tudo junto"
+    # (varrer junto misturaria vivo e snapshot na ordem de chegada, e o dedup
+    # não teria como dar precedência ao vivo).
+    parou = _rodada(replace(q, skip_snapshots=True), roots, classes, cancel, stats,
+                    on_event, entrega, dono_de=_dono_vivo, counts=counts)
+    # 09/09/2026: vivo primeiro, podadas só se faltar (ou se pedido). A decisão
+    # olha a raiz DIGITADA (q_digitada.paths), não as expandidas.
+    _estende_snapshots(replace(q, paths=q_digitada.paths, excluded_paths=q.excluded_paths),
+                       roots, classes, counts, parou, cancel, stats, on_event,
+                       entrega, forca_one_fs, _rodada)
+    return entrega.n, time.time() - t0
 
 
 if __name__ == "__main__":

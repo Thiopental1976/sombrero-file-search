@@ -152,6 +152,9 @@ def _rows_of(m):
         "size": 0 if getattr(m, "is_dir", False) else m.size,
         "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(m.mtime)) if m.mtime else "",
         "matches": m.nmatch,
+        # 09/09/2026: mesmo contrato do --json da CLI — origem e cópias colapsadas
+        "snapshot": getattr(m, "snapshot", None) or "",
+        "copies": len(getattr(m, "copies", None) or []),
     }
     linhas = getattr(m, "lines", None) or []
     if not linhas:
@@ -162,7 +165,8 @@ def _rows_of(m):
 def export_csv(matches, fp) -> int:
     """CSV com cabeçalho, separador ';' e aspas quando preciso (é o que o
     LibreOffice pt-BR abre com dois cliques). Devolve o número de linhas."""
-    campos = ["path", "folder", "name", "size", "modified", "matches", "line", "text"]
+    campos = ["path", "folder", "name", "size", "modified", "matches", "snapshot", "copies",
+              "line", "text"]
     w = csv.DictWriter(fp, fieldnames=campos, delimiter=";",
                        quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
     w.writeheader()
@@ -189,6 +193,8 @@ def export_json(matches, fp) -> int:
             "matches": m.nmatch,
             "lines": [{"line": n, "text": txt.rstrip("\n")}
                       for n, txt in (getattr(m, "lines", None) or [])],
+            "snapshot": getattr(m, "snapshot", None),
+            "copies": list(getattr(m, "copies", None) or []),
         })
     json.dump(dados, fp, ensure_ascii=False, indent=2)
     fp.write("\n")

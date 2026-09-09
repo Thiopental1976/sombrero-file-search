@@ -103,10 +103,27 @@ def is_mount_slot(ap: str) -> bool:
     return avo in ("/media", "/run/media") and pai not in ("/media", "/run/media")
 
 
+class _Mount(tuple):
+    """Uma linha de /proc/mounts: 3-tupla (dev, mountpoint, fstype) que desempacota,
+    compara e indexa como sempre, e CARREGA as opções de montagem em `.opts`.
+
+    Por que não uma 4-tupla: uma dúzia de consumidores (aqui, engine, indexed,
+    testes) desempacota três campos ou compara com tupla literal; mudar a forma
+    quebraria todos por um campo que só o overlay lê (ver _backing_dev). Tabela
+    sintética feita de 3-tuplas cruas continua válida — `opts` vira ""."""
+    opts = ""
+
+    def __new__(cls, dev, mp, fstype, opts=""):
+        self = tuple.__new__(cls, (dev, mp, fstype))
+        self.opts = opts
+        return self
+
+
 def _read_mounts(src="/proc/mounts"):
-    """/proc/mounts como lista de (dev, mountpoint, fstype). `src` pode ser um
-    caminho OU um iterável de linhas — é o que torna testável o casamento de
-    caminho com montagens que NÃO têm nó em /dev/ (MTP, gvfs, sshfs)."""
+    """/proc/mounts como lista de (dev, mountpoint, fstype) — cada item é um
+    `_Mount`, com as opções em `.opts`. `src` pode ser um caminho OU um iterável
+    de linhas — é o que torna testável o casamento de caminho com montagens que
+    NÃO têm nó em /dev/ (MTP, gvfs, sshfs, composefs)."""
     linhas = open(src, encoding="utf-8").readlines() if isinstance(src, str) else list(src)
     out = []
     for line in linhas:
@@ -114,7 +131,8 @@ def _read_mounts(src="/proc/mounts"):
         if len(parts) < 3:
             continue
         # espaço no ponto de montagem vem escapado como \040 no /proc/mounts
-        out.append((parts[0], parts[1].replace("\\040", " "), parts[2]))
+        out.append(_Mount(parts[0], parts[1].replace("\\040", " "), parts[2],
+                          parts[3] if len(parts) > 3 else ""))
     return out
 
 
@@ -132,17 +150,74 @@ def _mount_entry(ap: str, mounts=None):
         entradas = mounts if mounts is not None else _read_mounts()
     except OSError:
         return ("", "", "")
-    for dev, mp, fstype in entradas:
+    for ent in entradas:
+        dev, mp, fstype = ent
         if ap == mp or mp == "/" or ap.startswith(mp.rstrip("/") + "/"):
             if len(mp) >= len(best[1]):               # prefixo mais específico vence
-                best = (dev, mp, fstype)
+                best = ent                            # o item inteiro: _Mount guarda .opts
     return best
 
 
-def _dev_for_path(ap: str) -> str:
+def _overlay_datadirs(opts: str) -> list:
+    """Caminhos `datadir+=`/`datadir=` das opções de um overlay (metacopy): é
+    onde o kernel diz que estão os BYTES dos arquivos quando a camada de baixo
+    só tem metadados. Lista vazia para overlay comum (lowerdir/upperdir)."""
+    out = []
+    for o in opts.split(","):
+        for k in ("datadir+=", "datadir="):
+            if o.startswith(k):
+                out.append(o[len(k):].replace("\\040", " "))
+                break
+    return out
+
+
+def _backing_dev(entry, mounts=None) -> str:
+    """Nó de bloco que SUSTENTA a montagem `entry` ((dev, mp, fstype) vindo de
+    `_mount_entry`). Quase sempre é o próprio dev. A exceção, medida na VM
+    Bazzite (bootc/composefs, 09/09/2026): a raiz é
+
+        composefs / overlay ro,...,lowerdir+=/run/ostree/.private/cfsroot-lower,
+                              datadir+=/sysroot/ostree/repo/objects,metacopy=on
+
+    — sem nó em /dev/, então `search_profile` devolvia "unknown" para "/" e
+    `_chave_de_disco` a punha num grupo à parte (st_dev 37 contra 35 de
+    /sysroot), abrindo dois processos no MESMO prato. Mas o kernel declara de
+    onde vêm os bytes: `datadir+=`. Herdar o disco desse caminho não é
+    inventar rótulo, é ler o fato que o overlay publica. Vale para Silverblue/
+    Kinoite/qualquer bootc com composefs.
+
+    O que NÃO herda, de propósito: overlay sem `datadir` (Docker/podman,
+    live-USB — lowerdir e upperdir podem estar em discos diferentes, e chutar
+    um deles seria rótulo inventado); datadirs em discos distintos; datadir que
+    cai em outro overlay (sem recursão). Nesses casos devolve o dev original e
+    a política fica como era: "unknown"."""
+    dev, _mp, fstype = entry
+    if dev.startswith("/dev/") or fstype.lower() != "overlay":
+        return dev
+    datadirs = _overlay_datadirs(getattr(entry, "opts", ""))
+    if not datadirs:
+        return dev
+    try:
+        entradas = mounts if mounts is not None else _read_mounts()
+    except OSError:
+        return dev
+    devs = set()
+    for d in datadirs:
+        sub = _mount_entry(d, entradas)
+        if sub[2].lower() == "overlay":
+            return dev
+        devs.add(sub[0])
+    if len(devs) == 1:
+        d = devs.pop()
+        if d.startswith("/dev/"):
+            return d
+    return dev
+
+
+def _dev_for_path(ap: str, mounts=None) -> str:
     """Nó de dispositivo (/dev/...) que sustenta `ap`. "" se não achar (então
-    tratamos como desconhecido)."""
-    return _mount_entry(ap)[0]
+    tratamos como desconhecido). Resolve composefs (ver _backing_dev)."""
+    return _backing_dev(_mount_entry(ap, mounts), mounts)
 
 
 def _udev_unescape(name: str) -> str:
@@ -292,7 +367,8 @@ def search_profile(path: str, mounts=None) -> IOProfile:
     dev. Coerente com `path_needs_serial` no eixo local (SMR/rotacional serializa,
     SSD/NVMe libera); acrescenta os eixos de REDE que aquela função não cobre."""
     ap = os.path.abspath(path)
-    dev, mp, fstype = _mount_entry(ap, mounts)
+    ent = _mount_entry(ap, mounts)
+    dev, mp, fstype = ent
     fskey = fstype.lower()
     if fskey in _GVFS_FSTYPES:
         # gvfs = rede por FUSE; fora do "buscar em tudo" por padrão — só se o
@@ -323,6 +399,11 @@ def search_profile(path: str, mounts=None) -> IOProfile:
     # `_must_wait` da GUI e o teto do booleano, e alargá-lo passaria a serializar
     # buscas em /home que hoje correm soltas — mudança de comportamento que não
     # foi medida e não é o assunto aqui.
+    # Bazzite/composefs (09/09/2026): "/" é overlay sem nó de bloco, mas o kernel
+    # publica `datadir+=/sysroot/ostree/repo/objects` — o disco de /sysroot é o
+    # disco de "/". Só herda quando o overlay diz de onde lê (ver _backing_dev);
+    # overlay comum continua sem dev e cai no "unknown" abaixo.
+    dev = _backing_dev(ent, mounts)
     if not dev.startswith("/dev/"):
         # Sem nó de bloco (FUSE de aplicativo — portal, RustDesk —, tmpfs, zfs
         # pool/dataset…) não há como medir rotational. Chamar isso de

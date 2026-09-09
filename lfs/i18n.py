@@ -168,8 +168,33 @@ _PT = {
     "the engine matched it, but the file vanished": "o motor casou, mas o arquivo sumiu",
     "path does not exist (disk unmounted? typo?)": "caminho não existe (disco desmontado? nome errado?)",
     "not a folder — searches take folders": "não é uma pasta — a busca recebe pastas",
-    "system snapshot tree was not searched (--snapshots / 'include snapshots' to include it)":
-        "árvore de snapshot do sistema não foi varrida (--snapshots / 'incluir snapshots' para incluir)",
+    # 09/09/2026 (decisão do Rodrigo): vivo primeiro, podadas só se faltar —
+    # os textos vivem em engine._TEXTO_PODA; ostree é só outro texto, mesma mecânica
+    "snapshots searched": "snapshots varridos",
+    "snapshot tree not searched: this location had live results (--snapshots / 'include snapshots' to always search it)":
+        "árvore de snapshot não varrida: este local teve resultado vivo (--snapshots / 'incluir snapshots' para varrer sempre)",
+    "nothing in the live tree, so the snapshot tree was searched too; results from it are marked":
+        "nada na árvore viva, então a árvore de snapshot também foi varrida; os resultados dela vêm marcados",
+    "snapshot tree searched as requested; results from it are marked":
+        "árvore de snapshot varrida como pedido; os resultados dela vêm marcados",
+    "ostree deployments (the system's own image store, not a snapshot) not searched: this location had live results (--snapshots / 'include snapshots' to always search them); the object store ostree/repo is never searched, its files are named by hash":
+        "implantações ostree (o acervo de imagens do próprio sistema, não um snapshot) não varridas: este local teve resultado vivo (--snapshots / 'incluir snapshots' para varrer sempre); o repositório de objetos ostree/repo nunca é varrido, os arquivos dele têm nome de hash",
+    "nothing in the live tree, so the ostree deployments were searched too; results from them are marked (the object store ostree/repo is never searched, its files are named by hash)":
+        "nada na árvore viva, então as implantações ostree também foram varridas; os resultados delas vêm marcados (o repositório de objetos ostree/repo nunca é varrido, os arquivos dele têm nome de hash)",
+    "ostree deployments searched as requested; results from them are marked (the object store ostree/repo is never searched, its files are named by hash)":
+        "implantações ostree varridas como pedido; os resultados delas vêm marcados (o repositório de objetos ostree/repo nunca é varrido, os arquivos dele têm nome de hash)",
+    "snapshot tree not searched: the search stopped (cap or cancel) before reaching it":
+        "árvore de snapshot não varrida: a busca parou (teto ou cancelamento) antes de chegar nela",
+    "ostree deployments not searched: the search stopped (cap or cancel) before reaching them":
+        "implantações ostree não varridas: a busca parou (teto ou cancelamento) antes de chegar nelas",
+    "ostree deployments skipped": "implantações ostree puladas",
+    "snapshots searched too": "snapshots varridos também",
+    "ostree deployments searched too": "implantações ostree varridas também",
+    "+{n} copies": "+{n} cópias",
+    "found in snapshot tree: {tree}": "achado na árvore de snapshot: {tree}",
+    "identical copies (same file, or same path + size + mtime):": "cópias idênticas (mesmo arquivo, ou mesmo caminho + tamanho + mtime):",
+    "ALWAYS search system snapshot trees too (Timeshift, snapper, ZFS, ostree deployments). By default they are searched only when the live tree gives nothing for that path — they are copies of the OS and can multiply the walk tenfold. Results from them are marked.":
+        "SEMPRE varrer também as árvores de snapshot do sistema (Timeshift, snapper, ZFS, implantações ostree). Por padrão elas só são varridas quando a árvore viva não dá nada para aquele caminho — são cópias do sistema e podem multiplicar a varredura por dez. Os resultados delas vêm marcados.",
     "the disk did not answer the cancel in time; its losses were not counted":
         "o disco não respondeu ao cancelamento a tempo; as perdas dele não foram contadas",
     "stopped at the cap of {cap} results; there may be more": "parou no teto de {cap} resultados; pode haver mais",

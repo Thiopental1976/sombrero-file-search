@@ -604,66 +604,85 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     mortas: list = []
     plano, expandidas, forca_one_fs = engine.planejar_raizes(
         q.paths, q.one_file_system, stats, on_event, mortas=mortas)     # F12
-    roots = engine._live_roots(plano, stats, on_event=on_event, expandidas=expandidas,
-                               mortas=mortas)
+    classes: dict = {}
+    roots = engine._live_roots(plano, stats, on_event=on_event, classes=classes,
+                               expandidas=expandidas, mortas=mortas)
     if not roots:
         return 0, time.time() - t0
+    q_digitada = q
     q = engine._query_planejada(q, roots, forca_one_fs, mortas)
-    if q.skip_snapshots:                     # H6: a poda vem de rg_flags_comuns;
-        # mesma regra do engine.search(): só avisa onde a poda está EM VIGOR —
-        # raiz apontada para dentro de um snapshot não pula snapshot nenhum
-        engine._avisa_snapshots([r for r in roots if engine._pula_snapshot([r], True)],
-                                stats, on_event)
     counts, atribui = engine._atribuidor(roots)          # H12: 'found' por root
     ast = parse(expr)
-    cache: dict = {}
-    universe_box = [None]
     pos = positive_terms(ast)
     # opt#4: passos = termos distintos (positivos e negados) + 1 (extração de linhas)
     n_terms = len(dict.fromkeys(_all_terms(ast)))
     phase = _Phase(on_phase, n_terms + (1 if pos else 0), bool(pos))
-    workers = _max_workers(q)                # opt#2: paraleliza OR fora de /mnt
-    if workers > 1:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            files = _eval(ast, q, cancel, cache, universe_box, pool=pool, phase=phase, stats=stats)
-    else:
-        files = _eval(ast, q, cancel, cache, universe_box, phase=phase, stats=stats)
-    # B3: filtro de nome por REGEX (o glob já vai pro rg; regex é pós-filtro no basename)
-    if q.name_is_regex and q.name_patterns:
-        nrx = re.compile(q.name_patterns[0], 0 if q.case_sensitive else re.IGNORECASE)
-        files = {f for f in files if nrx.search(os.path.basename(f))}
+    # 09/09/2026: o dedup e o teto moram no funil de ENTREGA do engine — o
+    # booleano vê o mesmo resultado que a busca simples, a CLI e a GUI
+    entrega = engine._Entrega(on_result, on_progress, stats, q.max_results, on_event)
 
-    # passada de exibição: linhas dos termos positivos, só nos arquivos do resultado
-    n = 0
-    files_sorted = sorted(files)
-    if pos and not cancel():
-        phase.finish_display()               # opt#4: último passo
-    lines_by_file = _display_lines(pos, files_sorted, q, cancel, stats) if pos else {}
-    for fp in files_sorted:
-        if cancel(): break
-        try:
-            st = os.stat(fp)
-        except OSError:
-            _anota(stats, "stat_failed", onde=fp,       # H5: o rg casou e a gente
-                   detalhe="the engine matched it, but the file vanished")  # descartava
-            continue
-        if not engine._passes_meta(q, st):
-            continue
-        m = engine.Match(fp, st.st_size, st.st_mtime)
-        for ln, txt in lines_by_file.get(fp, []):
-            m.lines.append((ln, txt)); m.nmatch += 1
-        on_result(m)
-        n += 1
-        atribui(fp)
-        if n % 25 == 0: on_progress(n)
-        if n >= q.max_results:
-            _anota(stats, "truncated",                 # H2: mesmo teto interno,
-                   detalhe="stopped at the cap of {cap} results; there may be more",
-                   args={"cap": q.max_results})        # mesmo aviso
-            break
+    def rodada(qq, paths, _classes, cancel, stats, _on_event, entrega_, origem_de=None,
+               dono_de=None, counts=None, eventos_por_grupo=True, **_kw):
+        """Uma rodada booleana sobre `paths` (vivas, ou as árvores podadas na
+        extensão): avalia a expressão, extrai linhas e entrega pelo funil.
+        Mesma assinatura da engine._rodada para _estende_snapshots chamar as
+        duas sem saber qual é. Devolve True se parou (teto/cancel)."""
+        qq = replace(qq, paths=list(paths))
+        cache: dict = {}
+        universe_box = [None]
+        workers = _max_workers(qq)           # opt#2: paraleliza OR fora de /mnt
+        if workers > 1:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                files = _eval(ast, qq, cancel, cache, universe_box, pool=pool, phase=phase, stats=stats)
+        else:
+            files = _eval(ast, qq, cancel, cache, universe_box, phase=phase, stats=stats)
+        # B3: filtro de nome por REGEX (o glob já vai pro rg; regex é pós-filtro no basename)
+        if qq.name_is_regex and qq.name_patterns:
+            nrx = re.compile(qq.name_patterns[0], 0 if qq.case_sensitive else re.IGNORECASE)
+            files = {f for f in files if nrx.search(os.path.basename(f))}
+        # passada de exibição: linhas dos termos positivos, só nos arquivos do resultado
+        files_sorted = sorted(files)
+        if pos and not cancel():
+            phase.finish_display()           # opt#4: último passo
+        lines_by_file = _display_lines(pos, files_sorted, qq, cancel, stats) if pos else {}
+        for fp in files_sorted:
+            if cancel():
+                return True
+            try:
+                st, ident = engine._stat_e_ident(fp)
+            except OSError:
+                _anota(stats, "stat_failed", onde=fp,       # H5: o rg casou e a gente
+                       detalhe="the engine matched it, but the file vanished")  # descartava
+                continue
+            if not engine._passes_meta(qq, st):
+                continue
+            m = engine.Match(fp, st.st_size, st.st_mtime, ident=ident)
+            for ln, txt in lines_by_file.get(fp, []):
+                m.lines.append((ln, txt)); m.nmatch += 1
+            origem = origem_de(fp) if origem_de is not None else None
+            if entrega_.entrega(m, origem):
+                d = dono_de(fp) if dono_de is not None else None
+                if d is not None and counts is not None:
+                    counts[d] = counts.get(d, 0) + 1
+            if entrega_.parou:
+                return True
+        return False
+
+    def _dono_vivo(fp):
+        atribui(fp)                          # o atribuidor conta; None = não contar 2x
+        return None
+
+    # rodada viva SEMPRE podada (idem engine.search): --snapshots = estender depois
+    parou = rodada(replace(q, skip_snapshots=True), roots, classes, cancel, stats, on_event,
+                   entrega, dono_de=_dono_vivo, counts=counts)
     for r in roots:                                      # H12: fecha a narrativa
         on_event("root_done", {"path": r, "found": counts[r]})
-    return n, time.time() - t0
+    # 09/09/2026: vivo primeiro, podadas só se faltar — a MESMA extensão da
+    # busca simples (engine._estende_snapshots), com a rodada booleana
+    engine._estende_snapshots(replace(q, paths=q_digitada.paths, excluded_paths=q.excluded_paths),
+                              roots, classes, counts, parou, cancel, stats, on_event,
+                              entrega, forca_one_fs, rodada)
+    return entrega.n, time.time() - t0
 
 
 def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dict:
