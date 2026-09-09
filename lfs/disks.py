@@ -323,6 +323,15 @@ def search_profile(path: str, mounts=None) -> IOProfile:
     # `_must_wait` da GUI e o teto do booleano, e alargá-lo passaria a serializar
     # buscas em /home que hoje correm soltas — mudança de comportamento que não
     # foi medida e não é o assunto aqui.
+    if not dev.startswith("/dev/"):
+        # Sem nó de bloco (FUSE de aplicativo — portal, RustDesk —, tmpfs, zfs
+        # pool/dataset…) não há como medir rotational. Chamar isso de
+        # "rotational" era rótulo inventado: o painel mostrava HD num FUSE. A
+        # POLÍTICA não muda — sob /mnt continua conservador (serialize=True, e
+        # engine._jobs_para_classe dá 1 thread a quem serializa) — só o nome
+        # passa a dizer a verdade: não sei o que é.
+        return IOProfile("unknown", mp, fstype, serialize=_under_mount(ap),
+                         is_network=False, max_workers=None, enumerate_default=True)
     rot = _rotational(dev)
     if rot == "1":
         return IOProfile("rotational", mp, fstype, serialize=_under_mount(ap),

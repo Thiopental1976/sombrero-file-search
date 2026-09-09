@@ -1452,9 +1452,21 @@ def test_planejar_expande_montagens():
         # raiz digitada dentro do plano não vira "expandida"
         roots2, exp2, _ = engine.planejar_raizes(["/", "/mnt/nas"], False, {}, mounts=M)
         assert roots2 == ["/", "/mnt/nas", "/mnt/disk"] and exp2 == {"/mnt/disk"}, (roots2, exp2)
-        # --one-fs explícito: só o que foi digitado
-        roots3, exp3, forca3 = engine.planejar_raizes(["/"], True, {}, mounts=M)
+        # --one-fs explícito: só o que foi digitado — mas as montagens sob a
+        # raiz ainda são SONDADAS (o stat do --one-file-system trava em D-state)
+        sondadas, mortas, st3 = [], [], {}
+        orig_status = disks.mount_status
+        disks.mount_status = lambda mp, timeout=3.0, **k: (sondadas.append(mp),
+                                                           "no_response" if mp == "/mnt/nas" else "alive")[1]
+        try:
+            roots3, exp3, forca3 = engine.planejar_raizes(["/"], True, st3, mounts=M, mortas=mortas)
+        finally:
+            disks.mount_status = orig_status
         assert roots3 == ["/"] and not exp3 and not forca3
+        assert "/proc" not in sondadas and "/mnt/nas" in sondadas, sondadas
+        assert mortas == ["/mnt/nas"] and st3["skipped_mounts"][0]["mount"] == "/mnt/nas"
+        q3 = engine._query_planejada(engine.Query(paths=["/"], one_file_system=True), roots3, forca3, mortas)
+        assert q3.excluded_paths == ("/mnt/nas",), q3.excluded_paths
     finally:
         engine._st_dev = orig_dev
 
@@ -1482,6 +1494,77 @@ def test_planejar_expande_montagens():
     finally:
         disks.search_profile, disks.mount_status = orig
     print("ok  F12  expansão de raízes: montagens sob '/' viram raízes gatadas; pseudo-fs podado; gvfs dito; bind não duplica")
+
+
+def test_excluded_paths_todos_os_backends():
+    """F12b: Query.excluded_paths (montagem condenada pelo gate) não é tocada por
+    nenhum motor — fd (--exclude ancorado, raiz única), rg (!**/abs), walker
+    Python (poda) e booleano (rg_flags_comuns + walker). A vizinha de mesmo
+    nome em OUTRO nível continua achada (a exclusão é por caminho, não por nome).
+    Também: _reap rotula errno de montagem morta como dead_mount, e o perfil de
+    um FUSE sem nó de bloco é 'unknown' (serializado sob /mnt), não 'rotational'."""
+    d = tempfile.mkdtemp(prefix="sfs-excl-")
+    try:
+        for sub in ("x", "y/x"):
+            os.makedirs(os.path.join(d, sub))
+            open(os.path.join(d, sub, "laudo.txt"), "w").write("laudo\n")
+        morta = os.path.join(d, "x")
+        viva = os.path.join(d, "y", "x", "laudo.txt")
+        def caminhos(q, bool_expr=None):
+            out = []
+            if bool_expr:
+                boolean.search_boolean(q, bool_expr, out.append)
+            else:
+                engine.search(q, out.append)
+            return sorted(m.path for m in out)
+        base = dict(paths=[d], excluded_paths=(morta,))
+        casos = {
+            "fd/nome":      engine.Query(name_patterns=["laudo*"], **base),
+            "rg/conteudo":  engine.Query(content="laudo", **base),
+            "booleano":     (engine.Query(**base), "laudo"),
+        }
+        for nome, q in casos.items():
+            got = caminhos(*q) if isinstance(q, tuple) else caminhos(q)
+            assert got == [viva], f"{nome}: {got}"
+        rg, fd = engine.RG, engine.FD
+        try:
+            engine.RG = engine.FD = None
+            for nome, q in {"py/nome": engine.Query(name_patterns=["laudo*"], **base),
+                            "py/conteudo": engine.Query(content="laudo", **base),
+                            "booleano/py": (engine.Query(**base), "laudo")}.items():
+                got = caminhos(*q) if isinstance(q, tuple) else caminhos(q)
+                assert got == [viva], f"{nome}: {got}"
+        finally:
+            engine.RG, engine.FD = rg, fd
+        # sem exclusão, os dois aparecem (prova de que o teste testa algo)
+        got = caminhos(engine.Query(paths=[d], name_patterns=["laudo*"]))
+        assert len(got) == 2, got
+        # a âncora do fd é a raiz do processo: raiz com morta embaixo fica sozinha
+        g = engine._separa_raizes_com_mortas([[d, "/outra"]], (morta,))
+        assert g == [["/outra"], [d]], g
+        assert engine._excludes_fd(engine.Query(**base)) == ["--exclude", "/x"]
+        flags = engine.rg_flags_comuns(engine.Query(**base))
+        assert flags[-2:] == ["--glob", "!**" + morta], flags[-2:]
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    # _reap: errno de montagem morta -> dead_mount no caminho; EIO segue read_error
+    errf = tempfile.TemporaryFile(mode="w+")
+    errf.write("[fd error]: /mnt/nas: Socket not connected (os error 107)\n"
+               "[fd error]: /mnt/d/f: Input/output error (os error 5)\n")
+    class P:  # processo já morto, rc 0
+        returncode = 0
+        def poll(self): return 0
+    st = {}
+    engine._reap(P(), errf, st)
+    mot = {(e["motivo"], e["onde"]) for e in st["incompleto"]}
+    assert mot == {("dead_mount", "/mnt/nas"), ("read_error", "")}, mot
+    # perfil: FUSE sem nó de bloco sob /mnt = unknown, serializado (1 thread)
+    M = [("rustdesk-fs", "/mnt/app", "fuse"), ("/dev/sda1", "/", "ext4")]
+    p = disks.search_profile("/mnt/app/x", M)
+    assert p.klass == "unknown" and p.serialize, p
+    assert engine._jobs_para_classe([p]) == 1
+    assert engine._jobs_para_classe(["unknown"]) is None       # fora de /mnt: solto
+    print("ok  F12b excluded_paths: nenhum motor toca montagem condenada; errno morto = dead_mount; FUSE = unknown")
 
 
 def test_descent_gate_skips_dead_network_mount():
@@ -3821,6 +3904,7 @@ def main():
            # F9a — perfil de I/O de rede + watchdog de montagem morta + gate de descida
            test_search_profile_classification, test_mount_alive_watchdog,
            test_planejar_expande_montagens,
+           test_excluded_paths_todos_os_backends,
            test_descent_gate_skips_dead_network_mount,
            test_list_search_targets_boundary_visibility,
            test_part_path_respects_name_limits, test_gio_strategy_uri_and_runner,

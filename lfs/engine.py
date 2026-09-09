@@ -313,6 +313,20 @@ def resumo_incompleto(stats, tr=None):
 
 
 # ---------------------------------------------------------------- utilidades
+_ERRNO_MONTAGEM_MORTA = frozenset({107, 116, 112, 19})   # ENOTCONN ESTALE EHOSTDOWN ENODEV
+_RX_ERRO_MOTOR = re.compile(r"^(?:\[fd error\]|rg|fd|fdfind)?:?\s*(/.*?): ([^:]*)\(os error (\d+)\)\s*$")
+
+
+def _linha_de_montagem_morta(linha: str):
+    """(caminho, mensagem) se a linha de stderr do fd/rg é um errno de montagem
+    morta — "[fd error]: /x: Socket not connected (os error 107)",
+    "rg: /x: Transport endpoint is not connected (os error 107)"; senão None."""
+    m = _RX_ERRO_MOTOR.match(linha.strip())
+    if m and int(m.group(3)) in _ERRNO_MONTAGEM_MORTA:
+        return m.group(1), m.group(2).strip()
+    return None
+
+
 def _reap(proc, errf=None, stats=None):
     """Encerra o subprocesso SEM deixar órfão (B1) e conta 'inacessíveis' do
     stderr capturado (B8). Idempotente e à prova de exceção."""
@@ -373,10 +387,22 @@ def _reap(proc, errf=None, stats=None):
                     # flag sem escutar o resto abriria um vazamento novo entre
                     # o fd e este _reap. Medido: o rg --json não escreve nada
                     # no stderr em arquivo binário, então isto não inventa ruído.
-                    outras = sum(1 for L in linhas
-                                 if L.strip() and "ermission denied" not in L)
-                    anota_incompleto(stats, "read_error", n=outras,
-                                     detalhe=motivo[:200])
+                    # F12b: linha com errno de MONTAGEM MORTA (ENOTCONN/ESTALE…)
+                    # é dead_mount naquele caminho — o rótulo certo, agregado
+                    # com o do gate se ele já a conhecia — e não "read error".
+                    outras = 0
+                    for L in linhas:
+                        if not L.strip() or "ermission denied" in L:
+                            continue
+                        morta = _linha_de_montagem_morta(L)
+                        if morta:
+                            anota_incompleto(stats, "dead_mount", onde=morta[0],
+                                             detalhe=morta[1])
+                        else:
+                            outras += 1
+                    if outras:
+                        anota_incompleto(stats, "read_error", n=outras,
+                                         detalhe=motivo[:200])
             except Exception:
                 pass
         try: errf.close()
@@ -433,6 +459,8 @@ class Query:
     follow_symlinks: bool = False
     respect_gitignore: bool = False   # False = busca TUDO (estilo Agent Ransack)
     one_file_system: bool = False     # não cruzar mounts (útil c/ USB do acervo)
+    excluded_paths: tuple = ()        # F12b: montagens MORTAS sob as raízes, condenadas
+                                      # pelo gate — nenhum motor as toca (ver _excludes_fd)
     skip_snapshots: bool = True       # pula timeshift/snapper/zfs (ver EXCLUSOES_SNAPSHOT)
     min_size: Optional[int] = None         # bytes
     max_size: Optional[int] = None
@@ -547,6 +575,8 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                     pass
             if not q.include_hidden:
                 dns[:] = [d for d in dns if not d.startswith(".")]
+            if q.excluded_paths:                    # F12b: montagem morta: nem stat
+                dns[:] = [d for d in dns if os.path.join(dp, d) not in q.excluded_paths]
             if q.skip_snapshots:                    # F11: poda a arvore de snapshot
                 dns[:] = [d for d in dns           # ANTES de descer nela — filtrar
                           if not eh_snapshot(os.path.join(dp, d) + "/")]  # depois nao
@@ -687,6 +717,7 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
         if q.skip_snapshots:
             for g in _globs_snapshot():
                 cmd += ["--exclude", g]
+        cmd += _excludes_fd(q)                 # F12b: montagem morta, nem stat
         if not q.recursive:
             cmd += ["--max-depth", "1"]
         elif q.max_depth is not None:
@@ -806,6 +837,11 @@ def rg_flags_comuns(q: Query, matching: bool = True):
     if q.skip_snapshots:                            # depois dos globs de nome
         for g in _globs_snapshot():
             cmd += ["--glob", "!" + g]
+    for e in q.excluded_paths:
+        # F12b: no rg '!/abs' NÃO ancora (medido, rg 14.1); '!**/abs' casa o
+        # caminho absoluto inteiro como sufixo — exato na prática, e um falso
+        # positivo exigiria outro caminho que TERMINE com este inteiro.
+        cmd += ["--glob", "!**" + e]
     return cmd
 
 
@@ -1045,6 +1081,50 @@ def _avisa_snapshots(roots, stats, on_event=lambda ev, info: None):
             on_event("snapshots_skipped", {"path": r})
 
 
+def _sob(path, root) -> bool:
+    """`path` está estritamente dentro de `root`?"""
+    base = root.rstrip("/")
+    return path != base and path.startswith(base + "/")
+
+
+def _query_planejada(q: Query, roots, forca_one_fs: bool, mortas) -> Query:
+    """A Query que os motores recebem depois do gate: raízes vivas, one-fs
+    forçado quando houve expansão, e as montagens mortas sob alguma raiz em
+    `excluded_paths`."""
+    excl = tuple(sorted({m for m in mortas if any(_sob(m, r) for r in roots)}))
+    if roots == list(q.paths) and not forca_one_fs and not excl:
+        return q
+    return replace(q, paths=roots, one_file_system=q.one_file_system or forca_one_fs,
+                   excluded_paths=excl)
+
+
+def _separa_raizes_com_mortas(grupos, excluidos):
+    """F12b: o `--exclude '/rel'` do fd ancora na PRIMEIRA raiz do processo
+    (medido: fd 10.4 — '/x' com raízes A e B exclui só A/x). Raiz com montagem
+    morta embaixo ganha processo próprio, e aí a âncora é exata."""
+    if not excluidos:
+        return grupos
+    out = []
+    for g in grupos:
+        com = [r for r in g if any(_sob(e, r) for e in excluidos)]
+        sem = [r for r in g if r not in com]
+        if sem:
+            out.append(sem)
+        out += [[r] for r in com]
+    return out
+
+
+def _excludes_fd(q: Query):
+    """`--exclude` do fd para Query.excluded_paths, relativo à raiz (única, por
+    _separa_raizes_com_mortas) e ancorado com '/'."""
+    flags = []
+    for r in q.paths:
+        for e in q.excluded_paths:
+            if _sob(e, r):
+                flags += ["--exclude", "/" + os.path.relpath(e, r)]
+    return flags
+
+
 def _atribuidor(roots):
     """(counts, attribute): atribui cada achado ao root de prefixo mais longo,
     p/ o 'found' do evento root_done. H12: fatorado do search() porque o
@@ -1091,7 +1171,8 @@ _st_dev = lambda p: os.stat(p).st_dev     # injetável (topologias fictícias no
 
 
 def planejar_raizes(paths, one_fs: bool, stats=None,
-                    on_event=lambda ev, info: None, mounts=None):
+                    on_event=lambda ev, info: None, mounts=None, mortas=None,
+                    probe_timeout: float = 3.0):
     """F12 — EXPANSÃO DE RAÍZES. Buscar em "/" ou "/mnt" quer dizer "em tudo que
     mora ali embaixo", inclusive NFS/SMB (decisão do Rodrigo, 09/09/2026). Até
     aqui o gate F9a só sondava o que o usuário DIGITOU: "/" passava como disco
@@ -1116,7 +1197,31 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
         if r not in seen:
             roots.append(r); seen.add(r)
     disks = _mod_disks()
-    if one_fs or disks is None:
+    if disks is None:
+        return roots, set(), False
+    if one_fs:
+        # F12b: sem expansão, mas o walker da raiz ainda faz stat em cada ponto
+        # de montagem sob ela (é assim que --one-file-system compara st_dev), e
+        # num NFS/FUSE em D-state esse stat TRAVA. Sonda cada montagem sob a
+        # raiz (0,7 ms cada, medido) e condena as mortas: entram em
+        # `mortas` -> Query.excluded_paths, e nenhum motor as toca.
+        for r in roots:
+            try:
+                sob = disks.mounts_under(r, mounts)
+            except Exception:
+                continue
+            for mp in sob:
+                try:
+                    fstype = next((fs for _d, m, fs in
+                                   (mounts if mounts is not None else disks._read_mounts())
+                                   if m == mp), "")
+                except OSError:
+                    fstype = ""
+                if fstype.lower() in _PSEUDO_FS:
+                    continue
+                status = disks.mount_status(mp, timeout=probe_timeout)
+                if status != "alive":
+                    _condena_montagem(mp, fstype, None, status, stats, on_event, mortas)
         return roots, set(), False
     expandidas, podadas = set(), []
     for r in list(roots):
@@ -1163,9 +1268,24 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
     return roots, expandidas, bool(expandidas)
 
 
+def _condena_montagem(mp, fstype, klass, status, stats, on_event, mortas, path=None):
+    """Registra uma montagem morta nos três canais — funil (dead_mount),
+    stats['skipped_mounts'] (CLI/JSON) e painel (root_skipped) — e em `mortas`,
+    que vira Query.excluded_paths: o que o gate condenou, nenhum motor toca."""
+    if stats is not None:
+        stats.setdefault("skipped_mounts", []).append(
+            {"path": path or mp, "mount": mp, "fstype": fstype, "reason": status})
+        anota_incompleto(stats, "dead_mount", onde=mp,
+                         detalhe=f"{fstype}: {status}")   # 'no_response' | 'broken_mount'
+    on_event("root_skipped", {"path": path or mp, "mount": mp, "fstype": fstype,
+                              "klass": klass, "reason": status})
+    if mortas is not None:
+        mortas.append(mp)
+
+
 def _live_roots(paths, stats, probe_timeout: float = 3.0,
                 on_event=lambda ev, info: None, classes=None,
-                expandidas=frozenset()):
+                expandidas=frozenset(), mortas=None):
     """F9a §2.2 — GATE DE DESCIDA. Antes de o walker entrar num root, se ele for
     uma montagem de rede (NFS/CIFS/SSHFS/…), sonda `mount_status` numa PROCESSO
     descartável (F1). Montagem que não responde (D-state, `stat` travado) ou que
@@ -1209,16 +1329,9 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
             mp = prof.mountpoint or root
             status = disks.mount_status(mp, timeout=probe_timeout)
             if status != "alive":
-                if stats is not None:
-                    stats.setdefault("skipped_mounts", []).append(
-                        {"path": root, "mount": mp, "fstype": prof.fstype,
-                         "reason": status})
-                    anota_incompleto(stats, "dead_mount", onde=mp,
-                                     detalhe=f"{prof.fstype}: {status}")   # 'no_response' | 'broken_mount'
                 # linha VERMELHA ao vivo (não popup no fim) — F10a §2
-                on_event("root_skipped",
-                         {"path": root, "mount": mp, "fstype": prof.fstype,
-                          "klass": prof.klass, "reason": status})
+                _condena_montagem(mp, prof.fstype, prof.klass, status, stats, on_event,
+                                  mortas, path=root)
                 continue
         # H3: só DEPOIS da sonda de rede — os.path.exists() numa montagem NFS em
         # D-state trava o processo, que é o congelamento que o F9a existe para
@@ -1227,7 +1340,7 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
             continue                      # expandida: está montada, por definição
         live.append(root)
         if classes is not None:
-            classes[root] = prof.klass
+            classes[root] = prof            # perfil inteiro: _jobs_para_classe lê serialize
         on_event("root_scanning",
                  {"path": root, "klass": prof.klass, "mountpoint": prof.mountpoint})
     return live
@@ -1300,8 +1413,16 @@ def _jobs_para_classe(classes_do_grupo):
     MAIS conservadora — errar para menos só custa tempo; errar para mais faz o
     cabeçote de um disco mecânico passear."""
     rede = _jobs_de_rede()
-    valores = [rede if k in ("network", "gvfs", "autofs") else _JOBS_POR_CLASSE.get(k)
-               for k in classes_do_grupo] or [None]
+    valores = []
+    for c in classes_do_grupo:          # str (classe) ou IOProfile (classe + serialize)
+        k = getattr(c, "klass", c)
+        if k in ("network", "gvfs", "autofs"):
+            valores.append(rede)
+        elif getattr(c, "serialize", False):
+            valores.append(1)           # o perfil pediu um de cada vez: um cabeçote
+        else:                           # (ou algo que não sei medir, sob /mnt)
+            valores.append(_JOBS_POR_CLASSE.get(k))
+    valores = valores or [None]
     concretos = [v for v in valores if v is not None]
     return min(concretos) if concretos else None
 
@@ -1499,14 +1620,14 @@ def search(q: Query, on_result: Callable[[Match], None],
     t0 = time.time()
     n = 0
     classes = {}
+    mortas: list = []
     plano, expandidas, forca_one_fs = planejar_raizes(q.paths, q.one_file_system,
-                                                      stats, on_event)     # F12
+                                                      stats, on_event, mortas=mortas)  # F12
     roots = _live_roots(plano, stats, on_event=on_event, classes=classes,
-                        expandidas=expandidas)
+                        expandidas=expandidas, mortas=mortas)
     if not roots:
         return 0, time.time() - t0
-    if roots != list(q.paths) or forca_one_fs:
-        q = replace(q, paths=roots, one_file_system=q.one_file_system or forca_one_fs)
+    q = _query_planejada(q, roots, forca_one_fs, mortas)
     counts, _attribute = _atribuidor(roots)   # 'found' por root do root_done
     # F11: fábrica do iterador — a MESMA nos dois modos (serial e particionado).
     # `jobs` só é aplicado no modo particionado; no serial o fd/rg segue com o
@@ -1524,7 +1645,7 @@ def search(q: Query, on_result: Callable[[Match], None],
         # H6: painel de narrativa E funil — a CLI só enxerga o funil
         _avisa_snapshots([r for r in roots if _pula_snapshot([r], True)], stats, on_event)
 
-    grupos = _grupos_por_disco(roots)
+    grupos = _separa_raizes_com_mortas(_grupos_por_disco(roots), q.excluded_paths)
     # Root apontado PARA DENTRO de um snapshot ganha grupo PROPRIO, senao a
     # decisao dele contaminaria os vizinhos do mesmo disco: buscar em
     # ["/.snapshots/5/snapshot/home", "/"] reabriria os snapshots tambem no "/".
