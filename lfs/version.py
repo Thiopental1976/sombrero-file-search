@@ -37,7 +37,7 @@ _ROOT = os.path.dirname(_HERE)                 # …/linux_file_search ou …/<P
 # commit não ordena. É o único lugar onde este número existe — o build lê daqui.
 # 0.9: em uso diário e completo do F1 ao F4 e F7; o 1.0 fica para quando o
 # empacotamento estiver rodando em outra máquina que não a do autor.
-RELEASE = "0.9.0"
+RELEASE = "1.1.0"
 
 
 def _from_file(root: str) -> str:

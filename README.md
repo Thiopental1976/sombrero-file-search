@@ -5,9 +5,9 @@
 # Sombrero File Search
 
 **Native file search for Linux — by name, by content, boolean, and inside documents.**
-*A live, index-free search tool in the spirit of Agent Ransack / FileLocator Pro.*
+*Live, index-free, and honest: when it could not look somewhere, it says so.*
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-3776ab)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776ab)
 ![PySide6](https://img.shields.io/badge/GUI-PySide6-41cd52)
 ![ripgrep](https://img.shields.io/badge/engine-ripgrep%20%2B%20fd-orange)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
@@ -26,288 +26,244 @@
 ## What it is
 
 An **index-free** file searcher with **live** results, in the spirit of Windows'
-*Agent Ransack / FileLocator Pro* — but native to Linux and portable across distros.
-The engine is **ripgrep** (`rg`) for content and **fd** for names; both are faster than
-the commercial searchers. Without `rg`/`fd` it falls back to pure Python, so it runs
-anywhere.
+*Agent Ransack / FileLocator Pro*, native to Linux and portable across distros. The engines
+are **ripgrep** (`rg`) for content and **fd** for names; without them it falls back to pure
+Python, so it runs anywhere. The Windows searchers are useless on Linux (they read the NTFS
+MFT/USN, which does not exist here); this project reimplements the job natively.
 
-The Windows searchers are **useless on Linux**: they read the NTFS MFT/USN, which does
-not exist here. This project reimplements the job natively.
+It was built on, and for, a home server with a dozen mechanical disks, SMR drives on USB,
+network mounts that sometimes die, and archives of hundreds of thousands of files. Everything
+below that sounds like policy was **measured** there, on cold cache, and the numbers are in
+this README.
 
-> 📖 **Full manual:** [MANUAL.md](MANUAL.md) (English) · [MANUAL.pt-BR.md](MANUAL.pt-BR.md) (Português) — GUI usage and every CLI capability.
+> 📖 **Full manual:** [MANUAL.md](MANUAL.md) (English) · [MANUAL.pt-BR.md](MANUAL.pt-BR.md) (Português) — GUI usage and every CLI option.
 
-## Interface language
+## The thesis: honesty over completeness
 
-**English is the source language.** Every user-facing string is written in English in the
-code; other languages are optional translation tables keyed by the English string. The GUI
-follows your system locale and **falls back to English for any locale that is not
-Portuguese** — so on `en_US`, `de_DE`, `fr_FR`, `ja_JP`, `C`, or an unset locale, the whole
-interface is English. The **CLI is English-only**.
+A search tool has one way to lie that is worse than any bug: returning **"0 results"** when it
+never actually looked. A folder that denied reading, a search engine that choked on a flag, a
+disk that was not mounted, a NAS that stopped answering, a root that was a typo — every one of
+those used to look exactly like *"the file is not there"*. The user concludes the file does not
+exist, and that conclusion is wrong.
 
-Force a language explicitly, whatever the system locale says:
+Sombrero routes **every loss of completeness through a single channel** (`stats['incompleto']`
+in the engine). Whatever happens to it downstream is derived from that one channel, so a new
+kind of loss added anywhere shows up everywhere for free:
 
-```bash
-SFS_LANG=en sombrero-file-search   # English
-SFS_LANG=pt sombrero-file-search   # Português (BR)
-```
+| where | what you see |
+|---|---|
+| GUI status bar | `⚠ 0 result(s) · ⚠ incomplete: permission denied (×25): directories that denied reading` — the icon turns to **⚠** when the result may be *wrong*, not just short |
+| GUI narrative panel | one line per root, live: scanning / done (N found) / **skipped** with the reason (dead mount, folder not found, disk not mounted, not entered by default) |
+| CLI stderr | `# incomplete: invalid location in /mnt/naoexiste: path does not exist (disk unmounted? typo?)` plus `#        results are INCOMPLETE — this is not 'nothing was found'` when it is grave |
+| `--json` | `{"warn"\|"error": "incomplete", "reason": "<id>", "where": "<path>", "detail": "...", "count": N}` in the same stream as the results |
+| exit code | **0** found · **1** nothing found · **2** the result may be wrong — grep-style |
 
-Currently shipped: **English** (source) and **Português (BR)**. Adding one is a single
-dictionary in [`lfs/i18n.py`](lfs/i18n.py); any key you don't translate falls back to the
-English source, so a partial translation degrades gracefully instead of showing blanks.
+The `reason` identifiers are a contract for scripts (stable, English):
+
+| reason | grave? | meaning |
+|---|---|---|
+| `permission_denied` | no | directories or files that denied reading |
+| `read_error` | no | the engine could not read something (I/O error, not a directory…) |
+| `stat_failed` | no | the engine listed or matched a file that vanished before it could be stat'ed |
+| `truncated` | no | stopped at the internal result cap; there may be more |
+| `snapshots_skipped` | no | a system snapshot tree (Timeshift, snapper, ZFS, Samba shadow copies) was not searched — `--snapshots` / "include snapshots" to include it |
+| `dead_mount` | no | a mount under the search did not answer, or answered broken (ENOTCONN/ESTALE), and was skipped |
+| `empty_mountpoint` | no | the root is an empty folder where disks are mounted (`/mnt/X`, `/media/<user>/X`) and is not a mount point — is the disk mounted? |
+| `mount_not_entered` | no | a gvfs (phone) or autofs mount under the root was not entered by default; search it by its own path |
+| `batch_failed` | no | (boolean) one batch of files could not be read |
+| `interrupted` | no | a disk did not answer the cancel in time; its losses were not counted |
+| `engine_failed` | **yes** | rg/fd exited with an error (an unsupported flag on an old version, for instance) |
+| `engine_missing` | **yes** | rg/fd could not be run; the Python fallback is *not* equivalent (it does not read UTF-16 with BOM) |
+| `invalid_root` | **yes** | the root does not exist, or is a file (searches take folders) |
+| `not_mounted` | **yes** | the root is listed in `/etc/fstab` and is not mounted — the disk should be there and is not |
+| `disk_failed` | **yes** | the worker for one disk crashed |
+
+*Grave* means the result may be **wrong**, not merely incomplete: only grave reasons change the
+exit code, so a script doing `sfs ... || echo "not found"` does not start failing because a
+system folder denied reading.
+
+This is not a slogan; it is a test. `tests/test_honestidade.py` provokes each loss for real
+(chmod 000, an invalid flag injected into the engine's command line, a fake fstab, a root that
+is a file…) in **each backend** — fd/name, rg/content, Python/name, Python/content, boolean,
+boolean without rg — and demands the right reason in the funnel. **6 backends × 11 losses,
+53 applicable cells, all green.** The table is a ratchet in both directions: it fails if a
+green cell regresses *and* if a pinned known gap starts working without being un-pinned.
+
+## Disk-aware, and measured
+
+The second thesis is that a search over many disks has to respect what each disk can do.
+The rule of the house is *one mechanical head, one process* — and every rule below was
+measured on cold cache (`drop_caches`) on a quiesced machine, in September 2026, on the
+hardware named. Numbers that were not measured are not in this README.
+
+**Partition by physical disk.** The roots of a search are grouped by the physical disk
+behind them (through LVM/LUKS, so btrfs subvolumes and two partitions on the same platter
+do not become two processes fighting one head). Each group gets its own `fd`/`rg` process
+and its own thread, and results stream in as each disk finishes. On a 10-mount archive:
+
+| | total | when 9 of the 10 disks were done |
+|---|---|---|
+| single process, 24 threads (before) | 1 094 s | 1 094 s — everything arrived at the end |
+| one process per disk + per-class pools (now) | **80 s** | 45 s |
+
+**Thread pool per disk class, and per operation.** The pool of each process follows the
+class of the disk (`/sys/block/<disk>/queue/rotational`, resolved through the device mapper)
+and whether the search reads *names* or *contents*:
+
+| disk / operation | 1 thread | 4 threads | full pool (24) | policy |
+|---|---|---|---|---|
+| NVMe, name search (`/usr`, 92 680 hits) | 5.2 s | 1.5 s | **0.5 s** | SSD: full pool |
+| SMR 8 TB, **name** search (1.15 M inodes) | **38 s** | — | 48 s | rotational, names: 1 thread |
+| SMR 8 TB, **content** search (rg, 25 k files) | 36 s | 30 s | **29 s** | rotational, content: full pool |
+| USB HDD, two roots on the same platter (100 k inodes) | 1 process 4.8 s · 2 processes 5.5 s · 2 processes with full pools 6.4 s | | | keep one process per platter |
+
+Name search is metadata, laid out sequentially on the platter: one thread wins and a full
+pool costs 21 %. Content search opens every file, and there the disk reorders reads when
+several requests are in flight: throttling `rg` only cost 17 %. Throttling the SSD would cost
+**12.5×**. A small tree does not tell these policies apart — it takes volume for the head to
+start travelling, which is why the first measurement round, on a 175 k-inode disk, showed no
+signal at all.
+
+One number worth knowing before you search *contents* in a video archive: the 8 TB SMR disk
+above, whole, with one thread, **had not finished after an hour**. Content search on a disk
+of large binaries is one seek per file; that is physics, not a bug, and the status bar will be
+honest about how far it got.
+
+**Snapshot trees are pruned by default.** One archive disk hosted five Timeshift snapshots:
+2.4 M inodes against 175 k on the next disk, and it alone took 1 264 s. With the pruning,
+**95 s, identical results, 13.3× faster**. The pruning is *said* (`snapshots_skipped`, a
+checkbox in the GUI, `--snapshots` on the CLI), and it switches itself off when you point the
+search *into* a snapshot — that is where you wanted to look.
+
+## Mounts, dead and alive
+
+Searching `/` or `/mnt` means *everything that lives under it*, network and local disks
+alike. Every mount under a root becomes a root of its own, goes through the gate one by one,
+gets its own process, and the parent walks with `--one-file-system` so nothing is visited
+twice. Kernel pseudo-filesystems (`/proc`, `/sys`, `/dev`…) are left out with a note; a bind
+mount of the same filesystem is not walked twice; `--one-fs` on the CLI (or "1 disk" in the
+GUI) turns the expansion off, because then you asked for one folder.
+
+**The gate.** An NFS hard mount whose server is down freezes `stat()` in uninterruptible
+D state — not even `kill` helps. Before any engine descends into a mount, Sombrero probes it
+from a **throwaway child process** with a timeout (a stuck thread would keep the whole
+program from exiting; a stuck child is reparented to init and abandoned). A mount that does
+not answer, or answers broken, is skipped with a visible line — and it is **excluded from
+every engine's command line**, because with `--one-file-system` the walker still has to
+`stat()` the mount point to compare devices, and that is exactly the call that hangs. Each
+engine anchors the exclusion in its own way, measured: `fd --exclude '/rel'` anchors on the
+first root of the process (so a root with a dead mount beneath gets a process of its own);
+`rg` only anchors `!**/absolute/path`; the Python walker prunes by path.
+
+**Empty mount points.** The most realistic "disk not mounted" case is a folder that *exists*
+and is empty. If it is declared in `/etc/fstab`, that is a fact (`not_mounted`, grave). If it
+merely sits where disks are mounted, that is a hint (`empty_mountpoint`, not grave): the
+search goes on, and the bar asks whether the disk is mounted.
+
+`gvfs` (phones, cameras) and `autofs` triggers stay **out** of "search everywhere" — waking
+every automount in the house is not what you meant — but the funnel says so, with the path
+to search explicitly.
 
 ## Features
 
-- 🔎 **Name + content** — glob (`*.py`) or regex, plain text or regex, with highlighting in the preview.
-- 🧩 **Boolean search** — `(note OR report) AND patient NOT draft`. Also accepts `| & !` and
-  `"quotes"` for phrases. Precedence `NOT > AND > OR`, parentheses supported. Resolved over
-  file sets (`rg -l`).
-- 📄 **Inside documents** — searches **PDF, docx, epub, odt, zip** via
-  [ripgrep-all](https://github.com/phiresky/ripgrep-all) (optional).
-- 🎬 **Media preview** — image thumbnails and an audio/video **player** with transport
-  controls (⏮ ▶/⏸ ⏭), a position slider, and navigation across the media in your results.
-- 🌗 **Light/dark theme** — toggle with `Ctrl+T`, preference persisted.
-- 🎛️ **Filters** — minimum size, modified in the last N days, hidden files, `.gitignore`,
-  don't cross mount points (`--one-file-system`), whole word, case sensitivity.
-- ⚡ **Live** — the table grows *during* the search (streaming `rg --json` on a worker thread).
-- 🗂️ **Search tabs** — several searches open at once, each with its own form and results
-  (`Ctrl+N` new, `Ctrl+↵` search in a new tab, `Ctrl+W` close).
-- ⭐ **Saved searches + history** — save a whole search (not just the term) and reopen it
-  later; recent searches live in the **Searches ▾** menu (`Ctrl+S` save, `Ctrl+R` repeat),
-  and `↑`/`↓` in the name field walk the history.
-- 📤 **Export** — results to **CSV** (one row per matched snippet) or **JSON** (one object
-  per file), in the order shown on screen (`Ctrl+E`).
-- 📁 **Copy files** — drag to another app or copy to a folder, with destination pre-flight
-  checks (free space, FAT32 limits, illegal names) and **paced writing to removable media**
-  so it never hijacks the system cache. It never moves or deletes the source.
-- 💻 **Matching CLI** — same engine, with `--print0` for pipelines.
+- 🔎 **Name + content** — glob (`*.py`) or regex, plain text or regex, highlighted in the preview.
+- 🧩 **Boolean search** — `(note OR report) AND patient NOT draft`; also `| & !` and `"quoted phrases"`.
+  Precedence `NOT > AND > OR`, parentheses. `AND` narrows the second term to the files the first
+  one found; independent `OR` terms run in parallel (`LFS_WORKERS`, default 3).
+- 📄 **Inside documents** — PDF, docx, epub, odt, zip via [ripgrep-all](https://github.com/phiresky/ripgrep-all) (optional).
+- 🎬 **Media preview** — thumbnails and an audio/video player with transport controls.
+- 🗂️ **Search tabs, saved searches, history, export** to CSV/JSON, light/dark theme.
+- 📁 **Copy files** — never moves or deletes the source; destination pre-flight (free space,
+  FAT32 limits, illegal names per filesystem) and **paced writes** to removable and network
+  media so a 300 GB copy does not swallow the system's page cache.
+- 🔁 **Duplicate finder** — finds, shows and exports byte-identical groups. **Never deletes.**
+  Deciding which copy dies belongs to the human, in their file manager, with the paths in front
+  of them; a delete button would be the end of that argument.
+- 💻 **Matching CLI** — same engine, `--print0` for pipelines, `--json` for automation,
+  `--nice-io` for cron on a busy server, `--index` (name only) to lean on `plocate` when you
+  explicitly ask — it refuses when the index has holes, and every hit is verified live.
 
 ## Installation
 
-Three routes, in the order you probably care about:
-
-| | when to use | does the GUI work? |
+| | when to use | GUI? |
 |---|---|---|
-| **AppImage** | any distro, nothing to install | yes — Python and PySide6 are bundled |
-| **.deb** | Debian/Ubuntu/Mint, apt-integrated | needs PySide6 (see below) |
-| **install.sh** | any distro, installs into `~`, no root | yes — uses the system's or builds a venv |
-
-### AppImage — one file, nothing to install
+| **AppImage** | any distro, nothing to install | yes — Python and PySide6 bundled |
+| **.deb** | Debian/Ubuntu/Mint | needs PySide6 (`sombrero-file-search --setup-gui` builds a venv in your home) |
+| **install.sh** | any distro, installs into `~/.local`, no root, immutable distros included | yes |
 
 ```bash
-chmod +x Sombrero_File_Search-*.AppImage
-./Sombrero_File_Search-*.AppImage                            # GUI
+# AppImage
+chmod +x Sombrero_File_Search-*.AppImage && ./Sombrero_File_Search-*.AppImage
 ./Sombrero_File_Search-*.AppImage --cli ~/docs -n '*.pdf'    # the very same CLI
-```
 
-Ships Python and Qt inside (~135 MB). Uses **your system's** `rg`/`fd` when present —
-it neither hijacks nor duplicates them.
-
-> There is no Flatpak build, on purpose: this program exists to sweep the whole disk, and
-> the Flatpak sandbox is the wrong model for that. Granting it `--filesystem=host` would
-> void the sandbox and still fight the portals.
-
-### .deb
-
-```bash
+# .deb
 sudo apt install ./sombrero-file-search_*_all.deb
-lfs ~/docs -n '*.pdf'          # CLI: works right away, only needs python3
-sombrero-file-search           # GUI
-```
 
-The package is **deliberately thin**: `Depends: python3`, with `ripgrep` and `fd-find` as
-*Recommends* (there is a pure-Python fallback, so declaring them mandatory would be a lie).
-Debian/Ubuntu/Mint's apt **has no PySide6** — on those distros, the first GUI launch asks
-for a single command:
-
-```bash
-sombrero-file-search --setup-gui   # creates a venv in YOUR home, no root
-```
-
-### install.sh — universal installer
-
-Detects apt/dnf/pacman/zypper and installs the app into `~/.local`, without root:
-
-```bash
+# from source
 git clone https://github.com/Thiopental1976/sombrero-file-search.git
-cd sombrero-file-search
-./install.sh
+cd sombrero-file-search && ./install.sh
 ```
 
-It installs `ripgrep`, `fd` and `poppler` through your distro's package manager (with your
-consent), downloads `ripgrep-all` and `pandoc` (static binaries, for document mode) and sets
-up PySide6 (system-wide or in a dedicated venv). When it finishes, launch **Sombrero File
-Search** from the menu or run `sombrero-file-search`.
+The `.deb` is deliberately thin: `Depends: python3`, with `ripgrep` and `fd-find` as
+*Recommends* — there is a pure-Python fallback, so declaring them mandatory would be a lie.
+There is no Flatpak on purpose: this program exists to sweep the whole disk, and the sandbox is
+the wrong model for that.
 
-It also works on **immutable distros** (Fedora Atomic, Bazzite, SteamOS-style systems):
-fully user-space, no root, no layering.
-
-### Manual
+## CLI
 
 ```bash
-# system dependencies (Debian/Ubuntu/Mint example)
-sudo apt install ripgrep fd-find poppler-utils
-pip install PySide6            # or use the venv from install.sh
-python3 lfs/app.py             # GUI
+sfs ~/projects -n '*.py' -c "def main"        # name + content   (lfs is an alias)
+sfs ~/docs -c report --docs                   # inside PDF/docx/epub
+sfs ~/notes -b '(note OR report) AND patient' # boolean
+sfs /data -c error -l --print0 | xargs -0 …   # pipeline
+sfs /mnt -n '*.iso' --json                    # NDJSON, one object per match + warnings
+sfs / -n laudo --snapshots                    # include snapshot trees
 ```
 
-## CLI usage
+`--json` emits one object per match (`path`, `size`, `mtime`, `is_dir`, `nmatch`, `lines[]`)
+and, in the same stream, `{"warn":"incomplete",…}` / `{"error":"incomplete",…}` with the
+`reason` table above, `{"warn":"mount_dead",…}`, `{"warn":"denied",…}`, and
+`{"error":"boolean_expression",…}` for a malformed expression. Exit code: 0 / 1 / 2.
 
-```bash
-lfs ~/projects -n '*.py' -c "def main"           # name + content
-lfs ~/docs -c "report" --docs                    # inside PDF/docx/epub
-lfs ~/notes -b '(note OR report) AND patient'    # boolean
-lfs /data -c error -l --print0 | xargs -0 ...    # pipeline
-lfs /repo -n '*.log' --json                      # NDJSON for automation (cron, scripts)
-lfs /repo -c error --nice-io                     # yields CPU/IO to the server's real workload
-lfs ~/archive -n report --index                  # NAME search accelerated by plocate
-```
+## `rg` ↔ Python fallback parity
 
-`-c` content · `-n` name · `-b/--bool` boolean · `-D/--docs` documents · `-l` paths only ·
-`--print0` null separator · `--json` NDJSON · `--nice-io` low priority · `--index` index.
-Run `lfs --help` for everything.
-
-**Index acceleration (`--index`, NAME only):** explicitly opt-in — the default mode is always
-"what is on disk RIGHT NOW". With `--index`, name searches query `plocate` (fast), but with
-**guaranteed honesty**: (1) if any part of the path is **pruned** from the index
-(`PRUNEFS`/`PRUNEPATHS` in `updatedb.conf` — typically network mounts, `/mnt`, `/media`,
-`/tmp`), SFS **refuses with a clear error** instead of silently returning a missing subtree;
-(2) every result is **verified live** (`lstat`) — whatever vanished from disk since the last
-`updatedb` does not show up; (3) the **index date** is always displayed. Content is not
-indexable → `--index` is rejected for it (use the live search).
-
-**For automation (`--json`):** one JSON object per match, one per line (NDJSON) — fields
-`path`, `size`, `mtime`, `is_dir`, `nmatch`, `lines[]` (the same logical `Match.lines`, without
-terminators). Warnings travel **in the same stream** (`{"warn":"mount_dead",…}`,
-`{"warn":"denied",…}`) and a malformed boolean expression becomes
-`{"error":"boolean_expression",…}`. The **exit code** follows `grep`: **0** found, **1** nothing,
-**2** error. A filename containing `\n` is escaped by JSON and never breaks line framing.
-
-## `rg` ↔ Python fallback parity (known divergences)
-
-The pure-Python fallback returns the **same result** as ripgrep in the overwhelming majority
-of cases — the parity harness runs 500 random boolean expressions × 2000 files and demands zero
-divergence (`tests/test_parity_rg_python.py`). The few differences that do exist are
-**documented on purpose** — none of them is a surprise:
-
-- **`nmatch` (the "how hot is this file" counter)** — with `rg` it counts per **occurrence**;
-  in the fallback, per **matching line**. It only differs when the same line contains the term
-  more than once. The file set and the lines (number + text) are identical. It is an indicator,
-  not a contract.
-- **UTF-16/UTF-32 with BOM** — `rg` detects the BOM and decodes; the fallback opens in text mode
-  (UTF-8/locale) and **does not find** the term. Affects only the **no-ripgrep** mode, on files
-  of Windows origin. Installing `ripgrep` (it is a *Recommends*) fixes it.
-- **CRLF (`\r\n`) — SOLVED.** `rg` used to hand back the line **with** its trailing `\r` while
-  the fallback (universal-newline reading) did **not**. Now **both** engines normalise a trailing
-  `\r` via `engine._logical_line`: `m.lines` carries the **logical** text of the line, free of
-  terminator artefacts (what the user reads, copies, and what the CSV/JSON export consumes). The
-  parity suite pins the invariant with a **sentinel** (`assert not txt.endswith("\r")` on both sides).
-- **Lone CR outside CRLF (classic Mac, `\r\r\n`)** — a **structural** divergence in line
-  *segmentation*, not in text: `rg` separates records by `\n` only (a lone-CR file becomes **one
-  giant line**), while Python in text mode treats CR as a break (**N lines**). No `rstrip` can fix
-  the numbering; it is a pathological pre-OSX case and is **not chased** — it stays documented, and
-  a dedicated test **pins** the divergence (`rg=1`, `Python=N`) so that "fixing" one side by accident
-  becomes a regression.
-- **Legacy encodings without BOM (Shift-JIS, GBK, EUC-KR…)** — here `rg` and the fallback **agree**:
-  neither finds anything, because the search term is UTF-8 and the file is not. That is not a
-  divergence, it is a shared limitation (of every Unix tool). **CJK in UTF-8** — both filenames and
-  content — works 100% on both engines.
+The fallback returns the same result as ripgrep in the overwhelming majority of cases; the
+parity harness runs 500 random boolean expressions × 2 000 files and demands zero divergence.
+The differences that exist are documented on purpose and pinned by tests: `nmatch` counts
+occurrences with `rg` and matching lines in the fallback; UTF-16/UTF-32 with BOM is found by
+`rg` only (hence `engine_missing` is grave); a lone CR outside CRLF segments lines differently
+(pre-OS X files, not chased). CRLF is normalized on both sides.
 
 ## Architecture
 
 ```
-lfs/engine.py   # Qt-free core: Query/Match + rg (content) / fd (name) backends + Python fallback
-lfs/boolean.py  # recursive-descent parser for boolean search (tokenizer → AST → sets)
-lfs/app.py      # PySide6 GUI: form, live table, text/media preview, themes
-lfs/cli.py      # CLI (same core)
-lfs/fileops.py  # non-destructive copy: never moves, renames or deletes
-lfs/disks.py    # destination capabilities: FAT/exFAT/NTFS/MTP and their limits
-lfs/xdg.py      # mime types, "open with", default file manager
-lfs/version.py  # build identity (is what is running what you think it is?)
-install.sh      # universal multi-distro installer
-packaging/      # build_deb.sh and build_appimage.sh
+lfs/engine.py     # Qt-free core: Query/Match, rg (content) / fd (name) backends, Python fallback,
+                  # the completeness funnel, the mount gate, root expansion, per-disk partitioning
+lfs/boolean.py    # boolean search: tokenizer → AST → file sets, same funnel and gate
+lfs/disks.py      # facts about disks and mounts: class, rotational, fstab, liveness probe, caps
+lfs/dupes.py      # duplicate finder (own code; no removal feature, nor should it ever gain one)
+lfs/indexed.py    # --index: plocate with coverage checks and live verification
+lfs/app.py        # PySide6 GUI: form, live table, narrative panel, preview, copy, duplicates
+lfs/cli.py        # CLI (same core)
+lfs/fileops.py    # non-destructive copy: never moves, renames or deletes
+lfs/i18n.py       # English is the source; pt-BR is a table keyed by the English string
+tests/            # test_audit.py (125 tests), test_honestidade.py (the table),
+                  # test_parity_rg_python.py, test_paralelo_por_disco.py, test_topologias.py…
 ```
-
-To build the packages yourself:
 
 ```bash
-./packaging/build_deb.sh        # ~3 s, only needs dpkg-deb
-./packaging/build_appimage.sh   # ~10 min the first time (downloads Python + PySide6)
+python3 tests/test_audit.py          # ~1 min; GUI tests need PySide6 (offscreen)
+python3 tests/test_honestidade.py    # the honesty table, ~1 min
+./packaging/build_deb.sh             # ~3 s
+./packaging/build_appimage.sh        # ~10 min the first time
 ```
 
-## Requirements
+## Interface language
 
-- Python 3.9+ and **PySide6** (GUI).
-- **ripgrep** and **fd** (recommended; without them, the Python fallback).
-- Optional: **ripgrep-all** + **pandoc**/**poppler** (document mode); **QtMultimedia** (player).
-
-## Care with SMR disks
-
-Built to run over large archives, including **SMR** drives and external USB disks. SMR
-(*Shingled Magnetic Recording*) writes overlapping tracks "like roof shingles": it reads well
-sequentially, but suffers with random writes and, above all, with **concurrent reads** (the
-heads start seeking and throughput collapses) — unlike conventional **CMR**, which rewrites in
-place. The program is designed to spare those disks:
-
-- it **never leaves an orphan `rg`/`fd`** sweeping the disk in the background (cancelling a
-  search or closing the window kills the process);
-- the **boolean AND narrows** the second term to the files the first one already found, reading
-  far less from the disk;
-- **`--one-file-system`** ("1 disk") avoids crossing into another mount by accident;
-- **large images** are not decoded on the fly (which would stall on an SMR drive);
-- **parallelism is disk-aware**: independent terms (`OR`) run in parallel on SSD/CMR, but the
-  search is **serialised automatically** when any path lives under `/mnt` (or `/media`,
-  `/run/media`) on a **rotational or unknown** device, sparing SMR from concurrent seeks. An
-  SSD/NVMe mounted there (checked via `/sys/block/<dev>/queue/rotational`) is **not** penalised.
-  The degree of parallelism is tunable through the **`LFS_WORKERS`** environment variable
-  (default `3`; `LFS_WORKERS=1` serialises everything).
-
-## Servers, NAS and network mounts
-
-SFS runs both **on a desktop searching a NAS** (NFS/SMB/SSHFS mounts) and **on the server
-itself** (headless, over SSH, across repositories of dozens of TB). What protects you there:
-
-- **Dead-mount watchdog.** An NFS *hard mount* whose server is down freezes `stat()` in
-  **uninterruptible D state** — not even `kill` helps, and an ordinary program hangs there with
-  no remedy. Before descending into a **network** mount, SFS probes its liveness on a
-  *throwaway thread* with a timeout; if it does not answer, the mount is **skipped with a visible
-  warning** (never silently, never hanging). If a NAS dies **mid-search**, the result carries the
-  warning — **honesty > completeness**.
-- **Per-mount I/O class.** Network does not serialise like SMR, but it must not hijack the pool
-  either: each network mount gets its own worker ceiling, so a slow link cannot drown out the
-  search on local disks. `gvfs` (phones/cameras) and `autofs` stay **out of "search everywhere"**
-  by default — they only join if you give the explicit path (otherwise "search `/mnt`" would wake
-  every automount in the house).
-- **Filenames by protocol.** When **copying** to a network destination, SFS already knows what
-  each one accepts: `nfs` is fully POSIX; `cifs`/`smb` forbids `: ? * < > |` and has no symlinks;
-  `sshfs` has atomic rename. And it writes **at a measured pace** (as with USB sticks), because a
-  slow CIFS/NFS builds up global writeback just the same.
-- **Visible boundary.** A "search `/`" can list **up front** which mounts will be touched and of
-  what class (disk/network/SMR) — a server with 40 mounts appreciates it.
-
-**What SFS deliberately is NOT:** a **resident indexer** in the style of Everything/Recoll. Its
-identity is a **live, stateless tool** — what it shows is what is on disk **now**, not a snapshot
-of a database that may be stale. Where the system already has an index (`plocate`), SFS can lean
-on it for speed — **but only under an explicit `--index`, and never silently** (it refuses when
-coverage has holes; see above). **An indexing daemon of its own, no.** And it does not become a
-web service: if you want remote search, use **SSH + `--json`**. (Same reason there is no Flatpak
-— see *Installation*.)
-
-And the **duplicate finder** (*Duplicates…* menu) **finds, shows and exports** groups of
-byte-identical files — to CSV or JSON — but **never deletes them**. Not with a confirmation, not
-"just to the trash", not "only the extra copies". *Reads and exports, never alters* is the whole
-identity of the product, and a delete button would be the end of that argument: deciding which
-copy dies belongs to the human, in their own file manager, with their eyes on the paths SFS showed
-them. The dedup engine is **SFS's own code** (`lfs/dupes.py`), not a dependency on another project,
-and it has no removal feature — nor should it ever gain one.
+English is the source language; the GUI follows the system locale and falls back to English
+for any locale that is not Portuguese. The CLI is English-only. `SFS_LANG=en|pt` forces it.
 
 ## License
 
 **GNU GPL v3 or later** ([LICENSE](LICENSE)) — `SPDX-License-Identifier: GPL-3.0-or-later`.
-
-Genuinely free software: use it, study it, modify it and redistribute it freely. The only
-obligation is reciprocal — anyone distributing a modified version must distribute its source
-under the same license. That is what stops someone from closing this work and reselling it as
-their own product, and it is also what lets the project enter repositories like Flathub, Debian
-and the AUR (a homemade license is accepted by none of them).
-
 Copyright (C) 2026 Rodrigo Toledo. Distributed WITHOUT ANY WARRANTY.
