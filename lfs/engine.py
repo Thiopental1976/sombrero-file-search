@@ -204,7 +204,7 @@ _INCOMPLETO_MAX = 200        # teto: um disco negando 50 mil pastas não vira 50
 # como resposta. grep e rg saem 2 num caminho inexistente; um script que decide
 # "não está no disco X" tem de saber que o disco X não estava lá.
 MOTIVOS_GRAVES = frozenset({"engine_failed", "engine_missing", "disk_failed",
-                            "invalid_root"})
+                            "invalid_root", "not_mounted"})
 
 # H11: o que o funil DESCREVE nasce em EN-US, como o resto da fonte do
 # programa — o motivo é identificador estável (é o `reason` do --json, contrato
@@ -216,6 +216,8 @@ MOTIVO_TEXTO = {
     "engine_missing":    "search engine missing",
     "disk_failed":       "disk failed",
     "invalid_root":      "invalid location",
+    "not_mounted":       "disk not mounted",
+    "empty_mountpoint":  "empty mount point",
     "dead_mount":        "mount not responding",
     "stat_failed":       "file vanished",
     "batch_failed":      "batch failed",
@@ -230,6 +232,7 @@ REASON_TEXTO = {
     "no_response":  "not responding",
     "broken_mount": "broken mount",
     "invalid_root": "folder not found",
+    "not_mounted":  "disk not mounted",
     "error":        "disk error",
 }
 
@@ -944,6 +947,38 @@ def _iter_content_python(q: Query, cancel, stats=None):
 _existe = os.path.exists     # injetáveis: os testes do gate montam topologias
 _eh_pasta = os.path.isdir    # fictícias (/mnt/nas2/y) sem NAS nenhum na máquina
 
+
+def _vazia(p) -> bool:
+    try:
+        with os.scandir(p) as it:
+            return next(it, None) is None
+    except OSError:
+        return False                 # sem permissão/erro não é "vazia": outro funil
+
+
+def _eh_mountpoint(p) -> bool:
+    try:
+        import disks  # type: ignore
+        return disks.is_mountpoint(p)
+    except Exception:
+        return True                  # sem `disks` não há como afirmar; não acusa
+
+
+def _fstab_alvos() -> set:
+    try:
+        import disks  # type: ignore
+        return disks.fstab_targets()
+    except Exception:
+        return set()
+
+
+def _eh_vaga_de_montagem(p) -> bool:
+    try:
+        import disks  # type: ignore
+        return disks.is_mount_slot(p)
+    except Exception:
+        return False
+
 def _raiz_existe(root, stats, on_event=lambda ev, info: None) -> bool:
     """H3: raiz que não existe (disco desmontado, caminho digitado errado) era
     a mentira mais barata do programa — devolvia "0 resultados" com cara de
@@ -961,11 +996,37 @@ def _raiz_existe(root, stats, on_event=lambda ev, info: None) -> bool:
         # "folder(s) to search in"; recusar nos cinco é a única resposta igual.
         detalhe = "not a folder — searches take folders"
     else:
-        return True
+        return _raiz_montada(root, stats, on_event)
     anota_incompleto(stats, "invalid_root", onde=root, detalhe=detalhe)
     on_event("root_skipped", {"path": root, "mount": None, "fstype": None,
                               "klass": None, "reason": "invalid_root"})
     return False
+
+
+def _raiz_montada(root, stats, on_event=lambda ev, info: None) -> bool:
+    """H13 (09/09/2026): ponto de montagem VAZIO era a mentira que sobrou depois
+    do H3 — /mnt/BACKUP sem o disco existe, é pasta, e "0 resultados" ali
+    parecia resposta. Dois sinais, separados pelo que se pode AFIRMAR:
+      - FATO (grave, raiz pulada): a pasta está no /etc/fstab como ponto de
+        montagem e não está montada. O disco deveria estar ali e não está.
+      - INDÍCIO (não-grave, a busca segue): pasta vazia numa vaga de montagem
+        (/mnt/X, /media/<user>/X…) que não é ponto de montagem. Pode ser só
+        uma pasta vazia; o programa não sabe — então diz o que viu e pergunta.
+    Roda só DEPOIS de existir+ser pasta e depois da sonda de rede (scandir
+    numa montagem morta travaria; aqui ela já respondeu)."""
+    r = root.rstrip("/") or "/"
+    if _eh_mountpoint(r):
+        return True
+    if r in _fstab_alvos():
+        anota_incompleto(stats, "not_mounted", onde=root,
+                         detalhe="listed in /etc/fstab but not mounted")
+        on_event("root_skipped", {"path": root, "mount": None, "fstype": None,
+                                  "klass": None, "reason": "not_mounted"})
+        return False
+    if _eh_vaga_de_montagem(r) and _vazia(r):
+        anota_incompleto(stats, "empty_mountpoint", onde=root,
+                         detalhe="empty folder where disks are mounted — is the disk mounted?")
+    return True
 
 
 def _avisa_snapshots(roots, stats, on_event=lambda ev, info: None):

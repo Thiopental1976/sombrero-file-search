@@ -51,6 +51,50 @@ _, linhas = E.resumo_incompleto(dst)
 ok("{rc}" not in linhas[0] and "code 2: bad flag" in linhas[0],
    "fusão do particionado mantém os args do detalhe (sem '{rc}' cru)")
 
+# ---- 1d) H13: ponto de montagem vazio — fatos do disks.py
+from lfs import disks as D
+fstab = ["# comentário", "UUID=1 /mnt/Disco ext4 defaults 0 2",
+         "/dev/sdz1 /mnt/Com\\040Espaco auto 0 0", "/dev/mapper/swap none swap sw 0 0",
+         "tmpfs /tmp tmpfs 0 0", "linha quebrada"]
+alvos = D.fstab_targets(fstab)
+ok(alvos == {"/mnt/Disco", "/mnt/Com Espaco", "/tmp"},
+   f"fstab_targets lê a 2a coluna, desescapa \\040 e ignora swap/none: {alvos}")
+mounts = [("/dev/sda1", "/mnt/Disco", "ext4"), ("/dev/sdb1", "/media/rodrigo/Pen", "vfat")]
+ok(D.is_mountpoint("/mnt/Disco/", mounts) and not D.is_mountpoint("/mnt/Disco/sub", mounts)
+   and not D.is_mountpoint("/mnt/Outro", mounts), "is_mountpoint é EXATO, não 'sob um mount'")
+ok(all(D.is_mount_slot(p) for p in ("/mnt/X", "/var/mnt/X", "/media/X", "/media/rodrigo/X", "/run/media/rodrigo/X/"))
+   and not any(D.is_mount_slot(p) for p in ("/mnt", "/media/rodrigo", "/home/rodrigo/X", "/mnt/X/sub", "/run/media")),
+   "is_mount_slot: /mnt/X, /media/[user/]X, /run/media/user/X — e só isso")
+
+# gate: fstab diz que há disco e não há -> grave, raiz pulada; vaga vazia -> indício, busca segue
+_orig = (E._fstab_alvos, E._eh_mountpoint, E._eh_vaga_de_montagem)
+_d = tempfile.mkdtemp(prefix="lfs_mp_")
+try:
+    E._eh_mountpoint = lambda p: False; E._eh_vaga_de_montagem = lambda p: True
+    E._fstab_alvos = lambda: {_d}
+    st = {}; evs = []
+    vivos = E._live_roots([_d], st, on_event=lambda ev, i: evs.append((ev, i.get("reason"))))
+    grave, linhas = E.resumo_incompleto(st)
+    ok(vivos == [] and "not_mounted" in motivos(st) and grave and ("root_skipped", "not_mounted") in evs,
+       "raiz no fstab sem montagem: not_mounted GRAVE, raiz pulada, painel avisado")
+    E._fstab_alvos = lambda: set()
+    st = {}
+    vivos = E._live_roots([_d], st)
+    grave, _ = E.resumo_incompleto(st)
+    ok(vivos == [_d] and "empty_mountpoint" in motivos(st) and not grave,
+       "vaga de montagem vazia: empty_mountpoint NÃO-grave, busca segue")
+    open(os.path.join(_d, "x.txt"), "w").write("1")
+    st = {}
+    E._live_roots([_d], st)
+    ok(not motivos(st), "vaga de montagem COM conteúdo: nada a dizer")
+    E._eh_mountpoint = lambda p: True
+    shutil.rmtree(_d); os.makedirs(_d); st = {}
+    E._live_roots([_d], st)
+    ok(not motivos(st), "ponto de montagem ATIVO e vazio (disco vazio de verdade): nada a dizer")
+finally:
+    E._fstab_alvos, E._eh_mountpoint, E._eh_vaga_de_montagem = _orig
+    shutil.rmtree(_d, ignore_errors=True)
+
 # ---- 1c) o booleano só avisa 'snapshots_skipped' onde a poda está em vigor —
 # raiz apontada para DENTRO de um snapshot não pula snapshot nenhum
 _orig_tem = E.tem_snapshot

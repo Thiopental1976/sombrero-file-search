@@ -53,6 +53,56 @@ def _under_mount(ap: str) -> bool:
     return any(ap == pre or ap.startswith(pre + os.sep) for pre in _MNT_PREFIXES)
 
 
+def fstab_targets(src="/etc/fstab") -> set:
+    """Pontos de montagem DECLARADOS no fstab (2a coluna; \040 = espaço).
+    'none'/swap ficam de fora. `src` pode ser caminho ou iterável de linhas."""
+    try:
+        linhas = open(src, encoding="utf-8").readlines() if isinstance(src, str) else list(src)
+    except OSError:
+        return set()
+    out = set()
+    for line in linhas:
+        line = line.split("#", 1)[0].strip()
+        parts = line.split()
+        if len(parts) < 2 or parts[1] in ("none", "swap") or not parts[1].startswith("/"):
+            continue
+        out.add(parts[1].replace("\\040", " ").rstrip("/") or "/")
+    return out
+
+
+def is_mountpoint(ap: str, mounts=None) -> bool:
+    """`ap` é EXATAMENTE um ponto de montagem ativo (não 'está sob um')."""
+    ap = ap.rstrip("/") or "/"
+    try:
+        entradas = mounts if mounts is not None else _read_mounts()
+    except OSError:
+        return False
+    return any((mp.rstrip("/") or "/") == ap for _, mp, _ in entradas)
+
+
+def _eh_usuario(nome: str) -> bool:
+    try:
+        import pwd
+        pwd.getpwnam(nome)
+        return True
+    except (KeyError, ImportError):
+        return False
+
+
+def is_mount_slot(ap: str) -> bool:
+    """`ap` está onde discos costumam ser montados: /mnt/X, /var/mnt/X,
+    /media/X, /media/<user>/X, /run/media/<user>/X. Diz onde a pasta MORA,
+    não se há disco nela — é o indício, não o fato."""
+    ap = ap.rstrip("/")
+    pai = os.path.dirname(ap)
+    if pai == "/media" and _eh_usuario(os.path.basename(ap)):
+        return False                      # /media/<user> é a PASTA das vagas, não uma vaga
+    if pai in ("/mnt", "/var/mnt", "/media"):
+        return True
+    avo = os.path.dirname(pai)
+    return avo in ("/media", "/run/media") and pai not in ("/media", "/run/media")
+
+
 def _read_mounts(src="/proc/mounts"):
     """/proc/mounts como lista de (dev, mountpoint, fstype). `src` pode ser um
     caminho OU um iterável de linhas — é o que torna testável o casamento de

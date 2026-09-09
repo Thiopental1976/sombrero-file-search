@@ -2387,7 +2387,7 @@ class MainWindow(QMainWindow):
             return
         rec = tab.roots.get(path)
         if rec is None:
-            if ev == "root_skipped" and info.get("reason") == "invalid_root":
+            if ev == "root_skipped" and info.get("reason") in ("invalid_root", "not_mounted"):
                 # transparência sobre os LOCAIS: raiz que não existe mostra o
                 # caminho que o usuário digitou, não o rótulo do volume onde ele
                 # estaria ("OptaneCache — pasta não encontrada" não diz nada)
@@ -2628,7 +2628,7 @@ class MainWindow(QMainWindow):
     # barra seria dizer a mesma coisa duas vezes em cada busca do disco com
     # Timeshift. Só some da barra se o painel de FATO tem aquela raiz — no
     # booleano, que não emite eventos, tudo continua indo pra barra.
-    _MOTIVOS_NO_PAINEL = {"snapshots_skipped", "dead_mount", "invalid_root"}
+    _MOTIVOS_NO_PAINEL = {"snapshots_skipped", "dead_mount", "invalid_root", "not_mounted"}
 
     def _funil_para_barra(self, tab, stats):
         """(grave, linhas) do funil, menos o que o painel já mostra. `grave` é

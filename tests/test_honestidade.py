@@ -163,6 +163,30 @@ def p_erro_leitura(a, bk, stats):
     try:    bk(a, [a.raiz], stats)
     finally: builtins.open = REAL_OPEN
 
+def _com_montagem(fstab, mountpoint, vaga):
+    """Injeta os fatos de montagem no gate (a máquina de teste não tem o disco)."""
+    orig = (E._fstab_alvos, E._eh_mountpoint, E._eh_vaga_de_montagem)
+    E._fstab_alvos = lambda: fstab
+    E._eh_mountpoint = lambda p: mountpoint
+    E._eh_vaga_de_montagem = lambda p: vaga
+    return orig
+
+def _restaura_montagem(orig):
+    E._fstab_alvos, E._eh_mountpoint, E._eh_vaga_de_montagem = orig
+
+def p_raiz_nao_montada(a, bk, stats):
+    # a raiz está no fstab e não é ponto de montagem ativo: disco ausente
+    orig = _com_montagem({a.raiz.rstrip("/")}, False, True)
+    try:    bk(a, [a.raiz], stats)
+    finally: _restaura_montagem(orig)
+
+def p_mountpoint_vazio(a, bk, stats):
+    vazia = os.path.join(a.raiz, "vaga")
+    os.makedirs(vazia)
+    orig = _com_montagem(set(), False, True)
+    try:    bk(a, [vazia], stats)
+    finally: _restaura_montagem(orig)
+
 def p_max_results(a, bk, stats):
     for i in range(30):
         open(os.path.join(a.raiz, f"m{i}.txt"), "w").write("laudo\n")
@@ -185,6 +209,8 @@ PERDAS = [
      {"fd/nome", "rg/conteudo", "booleano"}),
     ("raiz inexistente", "invalid_root",  True,  p_raiz_inexistente, None),
     ("raiz e arquivo",   "invalid_root",  True,  p_raiz_arquivo,    None),
+    ("raiz nao montada", "not_mounted",   True,  p_raiz_nao_montada, None),
+    ("mountpoint vazio", "empty_mountpoint", False, p_mountpoint_vazio, None),
     ("max_results",      "truncated",       False, p_max_results,     None),
     ("snapshots",        "snapshots_skipped", False, p_snapshots,     None),
     ("erro de leitura",  "read_error",   False, p_erro_leitura,

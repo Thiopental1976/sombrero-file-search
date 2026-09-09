@@ -142,6 +142,11 @@ _PT = {
     "search engine missing": "motor de busca ausente",
     "disk failed": "disco falhou",
     "invalid location": "local inválido",
+    "disk not mounted": "disco não montado",
+    "empty mount point": "ponto de montagem vazio",
+    "listed in /etc/fstab but not mounted": "está no /etc/fstab mas não está montado",
+    "empty folder where disks are mounted — is the disk mounted?":
+        "pasta vazia onde os discos são montados — o disco está montado?",
     "mount not responding": "montagem não responde",
     "file vanished": "arquivo sumiu",
     "batch failed": "lote falhou",
