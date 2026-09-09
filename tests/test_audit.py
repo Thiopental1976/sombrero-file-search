@@ -1424,6 +1424,66 @@ def test_mount_alive_watchdog():
     print("ok  F9a  mount_status: viva/quebrada/travada via processo, sem zumbi (F1/F2)")
 
 
+def test_planejar_expande_montagens():
+    """F12: buscar em "/" expande cada montagem sob ela em raiz PRÓPRIA (passa
+    pelo gate uma a uma), força --one-file-system na raiz-mãe, poda pseudo-fs
+    do kernel com nota, não entra em gvfs/autofs mas DIZ, e não duplica bind
+    mount do mesmo FS. --one-fs explícito desliga tudo. Topologia sintética."""
+    M = [("/dev/sda1", "/", "ext4"), ("proc", "/proc", "proc"), ("sysfs", "/sys", "sysfs"),
+         ("/dev/sdb1", "/mnt/disk", "ext4"), ("nas:/x", "/mnt/nas", "nfs4"),
+         ("gvfsd-fuse", "/run/user/1000/gvfs", "fuse.gvfsd-fuse"),
+         ("/dev/sda1", "/home/bind", "ext4")]            # bind: mesmo FS que "/"
+    devs = {"/": 1, "/home/bind": 1, "/mnt/disk": 2, "/mnt/nas": 3}
+    orig_dev = engine._st_dev
+    engine._st_dev = lambda p: devs[p]
+    try:
+        st, evs = {}, []
+        roots, exp, forca = engine.planejar_raizes(
+            ["/"], False, st, on_event=lambda ev, i: evs.append((ev, i["path"], i.get("reason"))),
+            mounts=M)
+        assert roots == ["/", "/mnt/disk", "/mnt/nas"], roots
+        assert exp == {"/mnt/disk", "/mnt/nas"} and forca, (exp, forca)
+        assert st.get("pruned_mounts") == ["/proc", "/sys"], st.get("pruned_mounts")
+        mot = {e["motivo"] for e in st["incompleto"]}
+        assert mot == {"mount_not_entered"}, mot
+        grave, linhas = engine.resumo_incompleto(st)
+        assert not grave and "gvfs" in linhas[0], linhas
+        assert ("root_skipped", "/run/user/1000/gvfs", "not_entered") in evs, evs
+        # raiz digitada dentro do plano não vira "expandida"
+        roots2, exp2, _ = engine.planejar_raizes(["/", "/mnt/nas"], False, {}, mounts=M)
+        assert roots2 == ["/", "/mnt/nas", "/mnt/disk"] and exp2 == {"/mnt/disk"}, (roots2, exp2)
+        # --one-fs explícito: só o que foi digitado
+        roots3, exp3, forca3 = engine.planejar_raizes(["/"], True, {}, mounts=M)
+        assert roots3 == ["/"] and not exp3 and not forca3
+    finally:
+        engine._st_dev = orig_dev
+
+    # gate: expandida é sondada em TODA classe; morta vira dead_mount NÃO-grave
+    IOP = disks.IOProfile
+    by = {"/": IOP("ssd", "/", "ext4", False, False, None, True),
+          "/mnt/disk": IOP("rotational", "/mnt/disk", "ext4", True, False, None, True),
+          "/mnt/nas": IOP("network", "/mnt/nas", "nfs4", False, True, 4, True)}
+    sondadas = []
+    def status(mp, timeout=3.0, **k):
+        sondadas.append(mp); return "no_response" if mp == "/mnt/nas" else "alive"
+    orig = (disks.search_profile, disks.mount_status)
+    try:
+        disks.search_profile = lambda p, mounts=None: by[p]
+        disks.mount_status = status
+        st, evs = {}, []
+        live = engine._live_roots(["/", "/mnt/disk", "/mnt/nas"], st,
+                                  on_event=lambda ev, i: evs.append((ev, i["path"], i.get("reason"))),
+                                  expandidas={"/mnt/disk", "/mnt/nas"})
+        assert live == ["/", "/mnt/disk"], live
+        assert sorted(sondadas) == ["/mnt/disk", "/mnt/nas"], sondadas   # "/" digitada e local: sem sonda
+        grave, _ = engine.resumo_incompleto(st)
+        assert {e["motivo"] for e in st["incompleto"]} == {"dead_mount"} and not grave
+        assert ("root_skipped", "/mnt/nas", "no_response") in evs, evs
+    finally:
+        disks.search_profile, disks.mount_status = orig
+    print("ok  F12  expansão de raízes: montagens sob '/' viram raízes gatadas; pseudo-fs podado; gvfs dito; bind não duplica")
+
+
 def test_descent_gate_skips_dead_network_mount():
     """F9a §2.2: o gate de descida (`engine._live_roots`) PULA um root de rede cuja
     montagem não responde, registrando o aviso em stats['skipped_mounts'] — nunca
@@ -3760,6 +3820,7 @@ def main():
            test_write_probe_classifies_errno, test_decide_strategy_machine,
            # F9a — perfil de I/O de rede + watchdog de montagem morta + gate de descida
            test_search_profile_classification, test_mount_alive_watchdog,
+           test_planejar_expande_montagens,
            test_descent_gate_skips_dead_network_mount,
            test_list_search_targets_boundary_visibility,
            test_part_path_respects_name_limits, test_gio_strategy_uri_and_runner,

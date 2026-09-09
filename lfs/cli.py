@@ -204,6 +204,10 @@ def main():
     if denied:
         print(f"# warning: {denied} directories without permission — partial results",
               file=sys.stderr)
+    pruned = stats.get("pruned_mounts") or []
+    if pruned:            # F12: nota, não perda — não há arquivo de usuário em /proc
+        print(f"# note: {len(pruned)} kernel filesystem(s) not searched: "
+              f"{', '.join(pruned[:6])}{'…' if len(pruned) > 6 else ''}", file=sys.stderr)
     # F11c: o aviso e o exit code DERIVAM do funil único (engine.anota_incompleto),
     # não de cada canal solto. Quem adiciona uma perda nova em qualquer módulo
     # aparece aqui de graça.

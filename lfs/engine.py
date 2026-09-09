@@ -225,6 +225,7 @@ MOTIVO_TEXTO = {
     "snapshots_skipped": "snapshots skipped",
     "read_error":        "read error",
     "interrupted":       "interrupted",
+    "mount_not_entered": "mount not entered",
 }
 
 # `reason` do evento root_skipped -> frase (o painel da GUI traduz por t())
@@ -233,6 +234,7 @@ REASON_TEXTO = {
     "broken_mount": "broken mount",
     "invalid_root": "folder not found",
     "not_mounted":  "disk not mounted",
+    "not_entered":  "not entered by default",
     "error":        "disk error",
 }
 
@@ -1063,8 +1065,107 @@ def _atribuidor(roots):
     return counts, attribute
 
 
+def _mod_disks():
+    try:
+        from . import disks
+        return disks
+    except Exception:
+        try:
+            import disks  # type: ignore
+            return disks
+        except Exception:
+            return None
+
+
+# F12 (09/09/2026): sistemas de arquivos do KERNEL que moram sob "/" e não têm
+# arquivo de usuário. Ficam fora da expansão e o walker do "/" roda com
+# --one-file-system, então nunca são varridos. tmpfs/squashfs/overlay FICAM:
+# há arquivo de verdade lá.
+_PSEUDO_FS = frozenset({
+    "proc", "sysfs", "devtmpfs", "devpts", "cgroup", "cgroup2", "securityfs",
+    "pstore", "efivarfs", "bpf", "debugfs", "tracefs", "configfs", "fusectl",
+    "hugetlbfs", "mqueue", "binfmt_misc", "nsfs", "rpc_pipefs", "selinuxfs",
+})
+
+_st_dev = lambda p: os.stat(p).st_dev     # injetável (topologias fictícias nos testes)
+
+
+def planejar_raizes(paths, one_fs: bool, stats=None,
+                    on_event=lambda ev, info: None, mounts=None):
+    """F12 — EXPANSÃO DE RAÍZES. Buscar em "/" ou "/mnt" quer dizer "em tudo que
+    mora ali embaixo", inclusive NFS/SMB (decisão do Rodrigo, 09/09/2026). Até
+    aqui o gate F9a só sondava o que o usuário DIGITOU: "/" passava como disco
+    local e o fd descia sozinho até a montagem de rede morta — o congelamento
+    que o gate existe para evitar. Agora cada montagem sob uma raiz vira RAIZ
+    PRÓPRIA (passa pelo gate uma a uma, ganha grupo por disco, paraleliza) e o
+    walker da raiz-mãe roda com --one-file-system para não entrar de novo.
+
+    Devolve (roots, expandidas, forcar_one_fs). `one_fs` explícito do usuário
+    desliga a expansão: aí ele pediu UMA pasta e só ela.
+
+    Fora da expansão, sempre DITO: pseudo-fs do kernel (nota, não perda —
+    stats['pruned_mounts']); montagens que a política F9a não enumera por
+    padrão (gvfs = celular, autofs = gatilho que acordaria todo mount da casa)
+    entram no funil como `mount_not_entered`, não-grave: "não entrei; busque
+    pelo caminho dela". Bind mount do MESMO sistema de arquivos (st_dev igual
+    ao da raiz-mãe) não vira raiz: o --one-file-system não a separa e ela
+    seria varrida duas vezes. Subvolume btrfs tem st_dev próprio e vira raiz."""
+    roots = []
+    seen = set()
+    for r in paths:
+        if r not in seen:
+            roots.append(r); seen.add(r)
+    disks = _mod_disks()
+    if one_fs or disks is None:
+        return roots, set(), False
+    expandidas, podadas = set(), []
+    for r in list(roots):
+        try:
+            sob = disks.mounts_under(r, mounts)
+        except Exception:
+            continue
+        try:
+            dev_mae = _st_dev(r)
+        except OSError:
+            dev_mae = None
+        for mp in sob:
+            if mp in seen:
+                continue
+            try:
+                prof = disks.search_profile(mp, mounts) if mounts is not None else disks.search_profile(mp)
+            except Exception:
+                prof = None
+            fstype = (prof.fstype if prof else "").lower()
+            if fstype in _PSEUDO_FS:
+                podadas.append(mp); seen.add(mp)
+                continue
+            if prof is not None and not prof.enumerate_default:
+                seen.add(mp)
+                anota_incompleto(stats, "mount_not_entered", onde=mp,
+                                 detalhe="not entered by default ({klass}); search it by its own path",
+                                 args={"klass": prof.klass})
+                on_event("root_skipped", {"path": mp, "mount": mp, "fstype": prof.fstype,
+                                          "klass": prof.klass, "reason": "not_entered"})
+                continue
+            # bind do mesmo FS: só em disco LOCAL de bloco dá pra fazer stat com
+            # segurança (rede/FUSE pode travar — isso é trabalho da sonda do gate)
+            if (prof is not None and not prof.is_network and not fstype.startswith("fuse")
+                    and dev_mae is not None):
+                try:
+                    if _st_dev(mp) == dev_mae:
+                        seen.add(mp)
+                        continue
+                except OSError:
+                    pass
+            roots.append(mp); seen.add(mp); expandidas.add(mp)
+    if podadas and stats is not None:
+        stats.setdefault("pruned_mounts", []).extend(podadas)
+    return roots, expandidas, bool(expandidas)
+
+
 def _live_roots(paths, stats, probe_timeout: float = 3.0,
-                on_event=lambda ev, info: None, classes=None):
+                on_event=lambda ev, info: None, classes=None,
+                expandidas=frozenset()):
     """F9a §2.2 — GATE DE DESCIDA. Antes de o walker entrar num root, se ele for
     uma montagem de rede (NFS/CIFS/SSHFS/…), sonda `mount_status` numa PROCESSO
     descartável (F1). Montagem que não responde (D-state, `stat` travado) ou que
@@ -1101,7 +1202,10 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
             on_event("root_scanning",   # F10a §2: badge de classe p/ o painel
                      {"path": root, "klass": "unknown", "mountpoint": None})
             continue
-        if prof.is_network:
+        # F12: raiz que veio da EXPANSÃO é uma montagem que ninguém digitou —
+        # sonda TODA classe (um FUSE de portal/RustDesk preso em D trava igual
+        # a NFS) e, morta, é perda não-grave (dead_mount), não raiz inválida.
+        if prof.is_network or root in expandidas:
             mp = prof.mountpoint or root
             status = disks.mount_status(mp, timeout=probe_timeout)
             if status != "alive":
@@ -1119,8 +1223,8 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
         # H3: só DEPOIS da sonda de rede — os.path.exists() numa montagem NFS em
         # D-state trava o processo, que é o congelamento que o F9a existe para
         # evitar. Aqui a montagem já respondeu (ou é local), e o stat é barato.
-        if not _raiz_existe(root, stats, on_event):
-            continue
+        if root not in expandidas and not _raiz_existe(root, stats, on_event):
+            continue                      # expandida: está montada, por definição
         live.append(root)
         if classes is not None:
             classes[root] = prof.klass
@@ -1395,11 +1499,14 @@ def search(q: Query, on_result: Callable[[Match], None],
     t0 = time.time()
     n = 0
     classes = {}
-    roots = _live_roots(q.paths, stats, on_event=on_event, classes=classes)
+    plano, expandidas, forca_one_fs = planejar_raizes(q.paths, q.one_file_system,
+                                                      stats, on_event)     # F12
+    roots = _live_roots(plano, stats, on_event=on_event, classes=classes,
+                        expandidas=expandidas)
     if not roots:
         return 0, time.time() - t0
-    if roots != list(q.paths):
-        q = replace(q, paths=roots)
+    if roots != list(q.paths) or forca_one_fs:
+        q = replace(q, paths=roots, one_file_system=q.one_file_system or forca_one_fs)
     counts, _attribute = _atribuidor(roots)   # 'found' por root do root_done
     # F11: fábrica do iterador — a MESMA nos dois modos (serial e particionado).
     # `jobs` só é aplicado no modo particionado; no serial o fd/rg segue com o

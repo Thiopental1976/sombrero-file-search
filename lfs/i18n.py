@@ -143,6 +143,10 @@ _PT = {
     "disk failed": "disco falhou",
     "invalid location": "local inválido",
     "disk not mounted": "disco não montado",
+    "mount not entered": "montagem não varrida",
+    "not entered by default": "não varrida por padrão",
+    "not entered by default ({klass}); search it by its own path":
+        "não varrida por padrão ({klass}); busque pelo caminho dela",
     "empty mount point": "ponto de montagem vazio",
     "listed in /etc/fstab but not mounted": "está no /etc/fstab mas não está montado",
     "empty folder where disks are mounted — is the disk mounted?":

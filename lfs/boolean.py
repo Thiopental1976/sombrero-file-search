@@ -601,11 +601,13 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     t0 = time.time()
     # F9a §2.2 — gate de descida: monta de rede morta é pulada (aviso em stats),
     # nunca congela. Mesmo mecanismo do engine.search().
-    roots = engine._live_roots(q.paths, stats, on_event=on_event)
+    plano, expandidas, forca_one_fs = engine.planejar_raizes(
+        q.paths, q.one_file_system, stats, on_event)            # F12
+    roots = engine._live_roots(plano, stats, on_event=on_event, expandidas=expandidas)
     if not roots:
         return 0, time.time() - t0
-    if roots != list(q.paths):
-        q = replace(q, paths=roots)
+    if roots != list(q.paths) or forca_one_fs:
+        q = replace(q, paths=roots, one_file_system=q.one_file_system or forca_one_fs)
     if q.skip_snapshots:                     # H6: a poda vem de rg_flags_comuns;
         # mesma regra do engine.search(): só avisa onde a poda está EM VIGOR —
         # raiz apontada para dentro de um snapshot não pula snapshot nenhum
