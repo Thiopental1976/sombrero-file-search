@@ -196,7 +196,7 @@ def main():
         for e in (stats.get("incompleto") or []):
             emit_json({"warn" if e["motivo"] not in engine.MOTIVOS_GRAVES else "error":
                        "incomplete", "reason": e["motivo"], "where": e["onde"],
-                       "detail": e["detalhe"], "count": e["n"]})
+                       "detail": engine.texto_detalhe(e), "count": e["n"]})
     wb.flush()
     for sk in skipped:
         print(f"# warning: mount not responding — skipped: {sk.get('mount')} "

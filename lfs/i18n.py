@@ -133,8 +133,46 @@ _PT = {
     # status line
     "Ready.": "Pronto.",
     "⚠  No valid folder in 'In:'.": "⚠  Nenhuma pasta válida em 'Em:'.",
-    "⚠  Ignoring non-existent folder(s): {paths}":
-        "⚠  Ignorando pasta(s) inexistente(s): {paths}",
+    "  ·  ⚠ incomplete: {what}": "  ·  ⚠ incompleto: {what}",
+    # funil de incompletude (engine.MOTIVO_TEXTO + detalhes; H11)
+    " in {where}": " em {where}",
+    "and {n} more occurrence(s) not listed": "e mais {n} ocorrência(s) não listada(s)",
+    "permission denied": "sem permissão",
+    "search engine failed": "motor de busca falhou",
+    "search engine missing": "motor de busca ausente",
+    "disk failed": "disco falhou",
+    "invalid location": "local inválido",
+    "mount not responding": "montagem não responde",
+    "file vanished": "arquivo sumiu",
+    "batch failed": "lote falhou",
+    "truncated": "truncado",
+    "snapshots skipped": "snapshots pulados",
+    "read error": "erro de leitura",
+    "interrupted": "interrompido",
+    "directories that denied reading": "diretórios que negaram leitura",
+    "files that denied reading": "arquivos que negaram leitura",
+    "exited with code {rc}: {msg}": "saiu com código {rc}: {msg}",
+    "fd could not be run; using the Python walker": "fd não pôde ser executado; usando o walker Python",
+    "rg could not be run; the Python walker does not read UTF-16/UTF-32 with BOM":
+        "rg não pôde ser executado; o walker Python não lê UTF-16/UTF-32 com BOM",
+    "the engine listed it, but the file vanished": "o motor listou, mas o arquivo sumiu",
+    "the engine matched it, but the file vanished": "o motor casou, mas o arquivo sumiu",
+    "path does not exist (disk unmounted? typo?)": "caminho não existe (disco desmontado? nome errado?)",
+    "not a folder — searches take folders": "não é uma pasta — a busca recebe pastas",
+    "system snapshot tree was not searched (--snapshots / 'include snapshots' to include it)":
+        "árvore de snapshot do sistema não foi varrida (--snapshots / 'incluir snapshots' para incluir)",
+    "the disk did not answer the cancel in time; its losses were not counted":
+        "o disco não respondeu ao cancelamento a tempo; as perdas dele não foram contadas",
+    "stopped at the cap of {cap} results; there may be more": "parou no teto de {cap} resultados; pode haver mais",
+    "{n} file(s) could not be read in this batch": "{n} arquivo(s) não puderam ser lidos neste lote",
+    "{n} file(s) were left without their lines": "{n} arquivo(s) ficaram sem as linhas",
+    "(NOT universe)": "(universo do NOT)",
+    "(display lines)": "(linhas de exibição)",
+    " (+{n} more)": " (+{n} mais)",
+    "not responding": "não responde",
+    "broken mount": "montagem quebrada",
+    "folder not found": "pasta não encontrada",
+    "disk error": "erro no disco",
     "Searching…": "Buscando…",
     " · {d} inaccessible": " · {d} inacessível(is)",
     "Searching…{tag}  {n} found · {sec}s{extra}{step}":
@@ -142,7 +180,6 @@ _PT = {
     "step {done}/{total}: {label}": "passo {done}/{total}: {label}",
     "⚠  Invalid boolean expression: {msg}":
         "⚠  Expressão booleana inválida: {msg}",
-    "  ·  {d} inaccessible": "  ·  {d} inacessível(is)",
     "{icon}  {tot} result(s)  ·  {sec}s{extra}{cancel}":
         "{icon}  {tot} resultado(s)  ·  {sec}s{extra}{cancel}",
     "   (cancelled)": "   (cancelado)",

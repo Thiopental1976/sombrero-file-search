@@ -21,23 +21,53 @@ def motivos(st):
 
 # ---- 1) o funil em si
 st = {}
-E.anota_incompleto(st, "sem_permissao", n=3)
-E.anota_incompleto(st, "sem_permissao", n=5)
+E.anota_incompleto(st, "permission_denied", n=3)
+E.anota_incompleto(st, "permission_denied", n=5)
 ok(len(st["incompleto"]) == 1 and st["incompleto"][0]["n"] == 8,
    "agrega por (motivo, onde) em vez de virar uma linha por ocorrência")
 
 st2 = {}
 for i in range(E._INCOMPLETO_MAX + 40):
-    E.anota_incompleto(st2, "sem_stat", onde=f"/x/{i}")
+    E.anota_incompleto(st2, "stat_failed", onde=f"/x/{i}")
 ok(len(st2["incompleto"]) == E._INCOMPLETO_MAX and st2["incompleto_omitidos"] == 40,
    "o teto CONTA o que não coube (silenciar seria a própria doença)")
 
 grave, linhas = E.resumo_incompleto({"incompleto": [
-    {"motivo": "sem_permissao", "onde": "", "detalhe": "", "n": 4}]})
+    {"motivo": "permission_denied", "onde": "", "detalhe": "", "n": 4}]})
 ok(not grave, "falta de permissão é incompleto, NÃO grave (não pode mudar exit code)")
 grave, _ = E.resumo_incompleto({"incompleto": [
-    {"motivo": "motor_falhou", "onde": "", "detalhe": "x", "n": 1}]})
+    {"motivo": "engine_failed", "onde": "", "detalhe": "x", "n": 1}]})
 ok(grave, "motor que falhou é grave")
+
+# ---- 1b) a FUSÃO do particionado preserva os args do detalhe (09/09/2026:
+# a revisão achou "exited with code {rc}: {msg}" cru na barra — cada worker
+# anotava com args e _funde_stats os jogava fora ao reanotar no dict global)
+w = {}
+E.anota_incompleto(w, "engine_failed", detalhe="exited with code {rc}: {msg}",
+                   args={"rc": 2, "msg": "bad flag"})
+dst = {}
+E._funde_stats(dst, w)
+_, linhas = E.resumo_incompleto(dst)
+ok("{rc}" not in linhas[0] and "code 2: bad flag" in linhas[0],
+   "fusão do particionado mantém os args do detalhe (sem '{rc}' cru)")
+
+# ---- 1c) o booleano só avisa 'snapshots_skipped' onde a poda está em vigor —
+# raiz apontada para DENTRO de um snapshot não pula snapshot nenhum
+_orig_tem = E.tem_snapshot
+try:
+    E.tem_snapshot = lambda r: True
+    from lfs import boolean as B
+    _d = tempfile.mkdtemp(prefix="lfs_snap_")
+    _snap = os.path.join(_d, "timeshift", "snapshots", "2026-09-09", "home")
+    os.makedirs(_snap); open(os.path.join(_snap, "a.txt"), "w").write("laudo\n")
+    for raiz_b, espera, nome in ((_snap, False, "raiz dentro do snapshot: booleano NÃO avisa poda"),
+                                 (_d, True, "raiz que hospeda snapshot: booleano avisa poda")):
+        stb = {}
+        B.search_boolean(E.Query(paths=[raiz_b], content="laudo"), "laudo", lambda m: None, stats=stb)
+        ok(("snapshots_skipped" in motivos(stb)) is espera, nome)
+    shutil.rmtree(_d, ignore_errors=True)
+finally:
+    E.tem_snapshot = _orig_tem
 
 
 # ---- 2) perdas reais chegam ao funil
@@ -57,7 +87,7 @@ try:
             E.search(E.Query(paths=[raiz], content="laudo"), out.append, stats=st)
         finally:
             subprocess.Popen = real_popen
-        ok("motor_falhou" in motivos(st), "rg que sai com erro chega ao funil")
+        ok("engine_failed" in motivos(st), "rg que sai com erro chega ao funil")
 
     # motor AUSENTE: o fallback Python não é equivalente (UTF-16 com BOM)
     def popen_sumiu(cmd, *a, **k):
@@ -68,7 +98,7 @@ try:
         E.search(E.Query(paths=[raiz], content="laudo"), out.append, stats=st)
     finally:
         subprocess.Popen = real_popen
-    ok("motor_ausente" in motivos(st),
+    ok("engine_missing" in motivos(st),
        "cair no walker Python deixa de ser fallback SILENCIOSO")
     grave, _ = E.resumo_incompleto(st)
     ok(grave, "motor ausente é grave: o resultado pode estar errado, não só incompleto")
@@ -88,8 +118,8 @@ try:
         st, out = {}, []
         E.search(E.Query(paths=[raiz], content="laudo"), out.append, stats=st)
         grave, _ = E.resumo_incompleto(st)
-        ok("sem_permissao" in motivos(st), "pasta proibida vira sem_permissao no funil")
-        ok("motor_falhou" not in motivos(st),
+        ok("permission_denied" in motivos(st), "pasta proibida vira sem_permissao no funil")
+        ok("engine_failed" not in motivos(st),
            "o rg saindo 2 SO por permissao nao e falha de motor")
         ok(not grave, "busca com pasta proibida nao e grave (exit code preservado)")
     finally:

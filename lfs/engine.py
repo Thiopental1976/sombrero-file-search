@@ -41,6 +41,29 @@ RG = _which("rg")                    # ripgrep
 FD = _which("fd", "fdfind")          # fd (Debian/Mint = fdfind)
 RGA = _which("rga", "ripgrep-all")   # ripgrep-all: busca DENTRO de PDF/docx/epub/zip…
 
+# H1 (Fable 5.1, 08/09/2026): o fd ENGOLE "Permission denied" a menos que receba
+# --show-errors — medido: pasta chmod 000, rc=0, stderr vazio. Como a busca por
+# NOME é o modo padrão da GUI, o modo padrão do programa mentia por omissão.
+# A flag não existe em fd antigos (o fdfind do Ubuntu 20.04 é 7.4), e a
+# pergunta é feita AO BINÁRIO: `fd --help` lista as flags que ele aceita.
+# Comparar número de versão seria palpite. Cache por caminho do binário, e só
+# guarda resposta de um --help que saiu 0 — um exec que falhou não vira "não".
+_FD_SHOW_ERRORS: dict = {}
+
+def _fd_mostra_erros(fd=None) -> bool:
+    fd = fd or FD
+    if not fd:
+        return False
+    if fd not in _FD_SHOW_ERRORS:
+        try:
+            r = subprocess.run([fd, "--help"], stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, timeout=5)
+            if r.returncode == 0:
+                _FD_SHOW_ERRORS[fd] = b"--show-errors" in r.stdout
+        except Exception:
+            pass
+    return _FD_SHOW_ERRORS.get(fd, False)
+
 def engine_info():
     return {
         "ripgrep": RG or "(ausente — fallback Python)",
@@ -176,13 +199,56 @@ _INCOMPLETO_MAX = 200        # teto: um disco negando 50 mil pastas não vira 50
 # pedaço" — só estes mudam o código de saída da CLI, porque um script que checa
 # `sfs ... || echo "não achei"` não pode passar a falhar porque uma pasta do
 # sistema negou leitura.
-MOTIVOS_GRAVES = frozenset({"motor_falhou", "motor_ausente", "disco_caiu"})
+# `raiz_invalida` entra (H3): raiz que não existe — disco desmontado, nome
+# digitado errado — não é "faltou um pedaço", é ZERO daquele lugar apresentado
+# como resposta. grep e rg saem 2 num caminho inexistente; um script que decide
+# "não está no disco X" tem de saber que o disco X não estava lá.
+MOTIVOS_GRAVES = frozenset({"engine_failed", "engine_missing", "disk_failed",
+                            "invalid_root"})
+
+# H11: o que o funil DESCREVE nasce em EN-US, como o resto da fonte do
+# programa — o motivo é identificador estável (é o `reason` do --json, contrato
+# de automação) e a frase humana mora aqui, traduzida na RENDERIZAÇÃO pelo
+# `tr` que a GUI injeta (i18n.t). A CLI fica em inglês, como todo o resto dela.
+MOTIVO_TEXTO = {
+    "permission_denied": "permission denied",
+    "engine_failed":     "search engine failed",
+    "engine_missing":    "search engine missing",
+    "disk_failed":       "disk failed",
+    "invalid_root":      "invalid location",
+    "dead_mount":        "mount not responding",
+    "stat_failed":       "file vanished",
+    "batch_failed":      "batch failed",
+    "truncated":         "truncated",
+    "snapshots_skipped": "snapshots skipped",
+    "read_error":        "read error",
+    "interrupted":       "interrupted",
+}
+
+# `reason` do evento root_skipped -> frase (o painel da GUI traduz por t())
+REASON_TEXTO = {
+    "no_response":  "not responding",
+    "broken_mount": "broken mount",
+    "invalid_root": "folder not found",
+    "error":        "disk error",
+}
+
+# Strings-fonte (EN-US) que este módulo entrega a t() por VARIÁVEL — a guarda
+# de i18n (test_i18n_no_stale_keys) consome isto, como faz com humane. Os
+# `detalhe="..."` das chamadas de anota_incompleto ficam em UMA linha, literal:
+# a guarda os varre no fonte, e concatenação implícita a cegaria.
+SOURCE_STRINGS = (frozenset(MOTIVO_TEXTO.values()) | frozenset(REASON_TEXTO.values())
+                  | {" in {where}", "and {n} more occurrence(s) not listed"})
 
 
-def anota_incompleto(stats, motivo, onde="", detalhe="", n=1):
+def anota_incompleto(stats, motivo, onde="", detalhe="", n=1, args=None):
     """Registra uma perda de completude. Agrega por (motivo, onde) para não
     estourar, e conta o que passar do teto em vez de descartar em silêncio —
-    seria a própria doença que este funil trata."""
+    seria a própria doença que este funil trata.
+
+    `detalhe` é a frase EN-US como está no código (chave do i18n); o que varia
+    (código de saída, teto) vai em `args` e é formatado só na renderização —
+    senão a chave nunca casaria com a tabela de tradução."""
     if stats is None:
         return
     fila = stats.setdefault("incompleto", [])
@@ -191,27 +257,53 @@ def anota_incompleto(stats, motivo, onde="", detalhe="", n=1):
             e["n"] += n
             if detalhe and not e.get("detalhe"):
                 e["detalhe"] = detalhe[:200]
+                if args:
+                    e["args"] = dict(args)
             return
     if len(fila) >= _INCOMPLETO_MAX:
         stats["incompleto_omitidos"] = stats.get("incompleto_omitidos", 0) + n
         return
-    fila.append({"motivo": motivo, "onde": onde, "detalhe": (detalhe or "")[:200], "n": n})
+    e = {"motivo": motivo, "onde": onde, "detalhe": (detalhe or "")[:200], "n": n}
+    if args:
+        e["args"] = dict(args)
+    fila.append(e)
 
 
-def resumo_incompleto(stats):
+def texto_detalhe(e, tr=None) -> str:
+    """Detalhe de uma entrada do funil, traduzido e formatado (ver anota_incompleto)."""
+    tr = tr or (lambda s: s)
+    det = e.get("detalhe") or ""
+    if not det:
+        return ""
+    txt = tr(det)
+    args = e.get("args")
+    if args:
+        try:
+            txt = txt.format(**args)
+        except (KeyError, IndexError, ValueError):
+            pass
+    return txt
+
+
+def resumo_incompleto(stats, tr=None):
     """(grave, linhas) a partir do funil — fonte única da barra da GUI e do
-    código de saída da CLI."""
+    código de saída da CLI. `tr` (H11) traduz motivo e detalhe p/ o idioma do
+    usuário; sem ele, EN-US."""
+    tr = tr or (lambda s: s)
     fila = (stats or {}).get("incompleto") or []
     grave = any(e["motivo"] in MOTIVOS_GRAVES for e in fila)
     linhas = []
     for e in fila:
-        alvo = f" em {e['onde']}" if e["onde"] else ""
+        # `onde` é caminho (passa intacto por tr) ou pseudo-local do booleano
+        # ("(NOT universe)"), que se traduz
+        alvo = tr(" in {where}").format(where=tr(e["onde"])) if e["onde"] else ""
         vezes = f" (×{e['n']})" if e["n"] > 1 else ""
-        det = f": {e['detalhe']}" if e["detalhe"] else ""
-        linhas.append(f"{e['motivo']}{alvo}{vezes}{det}")
+        det = texto_detalhe(e, tr)
+        det = f": {det}" if det else ""
+        linhas.append(f"{tr(MOTIVO_TEXTO.get(e['motivo'], e['motivo']))}{alvo}{vezes}{det}")
     om = (stats or {}).get("incompleto_omitidos")
     if om:
-        linhas.append(f"e mais {om} ocorrência(s) não listadas")
+        linhas.append(tr("and {n} more occurrence(s) not listed").format(n=om))
     return grave, linhas
 
 
@@ -238,8 +330,8 @@ def _reap(proc, errf=None, stats=None):
                 d = sum(1 for L in linhas if "ermission denied" in L)
                 if d:
                     stats["denied"] = stats.get("denied", 0) + d
-                    anota_incompleto(stats, "sem_permissao", n=d,
-                                     detalhe="diretórios que negaram leitura")
+                    anota_incompleto(stats, "permission_denied", n=d,
+                                     detalhe="directories that denied reading")
                 # F11b (Fable 5): o rg sai com codigo 2 quando NAO ENTENDE uma
                 # flag — p.ex. --glob-case-insensitive, que so existe do rg 12
                 # pra cima e falta no Ubuntu 20.04. Antes disso o erro morria
@@ -266,8 +358,20 @@ def _reap(proc, errf=None, stats=None):
                         and not so_permissao):
                     msg = (motivo or f"o motor saiu com codigo {rc}")[:200]
                     stats.setdefault("engine_errors", []).append({"rc": rc, "erro": msg})
-                    anota_incompleto(stats, "motor_falhou",
-                                     detalhe=f"saiu com codigo {rc}: {msg}")
+                    anota_incompleto(stats, "engine_failed",
+                                     detalhe="exited with code {rc}: {msg}",
+                                     args={"rc": rc, "msg": msg})
+                elif motivo:
+                    # H1b: com --show-errors o fd passa a contar TUDO que não
+                    # conseguiu ler (I/O error, "not a directory") com rc 0/1 —
+                    # e este bloco só escutava "Permission denied". Ligar a
+                    # flag sem escutar o resto abriria um vazamento novo entre
+                    # o fd e este _reap. Medido: o rg --json não escreve nada
+                    # no stderr em arquivo binário, então isto não inventa ruído.
+                    outras = sum(1 for L in linhas
+                                 if L.strip() and "ermission denied" not in L)
+                    anota_incompleto(stats, "read_error", n=outras,
+                                     detalhe=motivo[:200])
             except Exception:
                 pass
         try: errf.close()
@@ -396,8 +500,8 @@ def _walk_onerror(stats):
     def cb(err):
         if stats is not None and isinstance(err, PermissionError):
             stats["denied"] = stats.get("denied", 0) + 1
-            anota_incompleto(stats, "sem_permissao",
-                             detalhe="diretórios que negaram leitura")
+            anota_incompleto(stats, "permission_denied",
+                             detalhe="directories that denied reading")
     return cb
 
 
@@ -467,6 +571,7 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                         try:
                             st = os.lstat(dpp)      # E5: symlink de dir quebrado
                         except OSError:
+                            anota_incompleto(stats, "stat_failed", onde=dpp)   # H5
                             continue
                     if not _passes_meta(q, st):
                         continue
@@ -488,6 +593,7 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                         try:
                             st = os.lstat(fp)       # E5: symlink quebrado casa por nome
                         except OSError:
+                            anota_incompleto(stats, "stat_failed", onde=fp)    # H5
                             continue
                     if not _passes_meta(q, st):
                         continue
@@ -560,6 +666,8 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
         # arquivos E pastas (e symlinks): busca só-por-nome acha "Argentina/" como
         # pasta e "argentina.txt" como arquivo — dir não tem conteúdo p/ filtrar.
         cmd = [FD, "--absolute-path", "--type", "f", "--type", "d", "--type", "l"]
+        if _fd_mostra_erros(FD):          # H1: sem isto o fd ENGOLE "Permission
+            cmd.append("--show-errors")   # denied" e a busca por NOME mente por omissão
         if jobs:
             cmd += ["--threads", str(jobs)]   # F11: particionado por disco -> pool
                                               # enxuto por processo (ver _grupos_por_disco)
@@ -600,8 +708,8 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
         except OSError:
             errf.close()
             # NÃO é fallback silencioso: o walker Python não é equivalente ao fd
-            anota_incompleto(stats, "motor_ausente",
-                             detalhe="fd não pôde ser executado; usando o walker Python")
+            anota_incompleto(stats, "engine_missing",
+                             detalhe="fd could not be run; using the Python walker")
             yield from _iter_names_python(q, stats, cancel); return
         try:
             buf = b""
@@ -636,6 +744,10 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
                         try:
                             st = os.lstat(fp)    # E5: symlink quebrado — mostra o link
                         except OSError:
+                            # H5: o fd listou e nós descartamos — mesma regra
+                            # que o rg já seguia em _iter_content_rg
+                            anota_incompleto(stats, "stat_failed", onde=fp,
+                                             detalhe="the engine listed it, but the file vanished")
                             continue
                         is_dir = False
                     if not _passes_meta(q, st):
@@ -726,9 +838,8 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
         errf.close()
         # Aqui a diferença é REAL e não é de desempenho: o fallback Python não
         # decodifica UTF-16/UTF-32 com BOM, que o rg acha. Avisar é obrigatório.
-        anota_incompleto(stats, "motor_ausente",
-                         detalhe="rg não pôde ser executado; o walker Python não "
-                                 "lê UTF-16/UTF-32 com BOM")
+        anota_incompleto(stats, "engine_missing",
+                         detalhe="rg could not be run; the Python walker does not read UTF-16/UTF-32 with BOM")
         yield from _iter_content_python(q, cancel, stats); return
 
     cur = None
@@ -754,8 +865,8 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
                     if not docs:
                         # o rg CASOU o conteudo e a gente esta jogando fora o
                         # achado — perda de completude, nao detalhe tecnico
-                        anota_incompleto(stats, "sem_stat", onde=path,
-                                         detalhe="o motor casou, mas o arquivo sumiu do FS")
+                        anota_incompleto(stats, "stat_failed", onde=path,
+                                         detalhe="the engine matched it, but the file vanished")
                     continue
                 if not _passes_meta(q, st):
                     cur = None; continue
@@ -795,7 +906,8 @@ def _iter_content_python(q: Query, cancel, stats=None):
             if not stat.S_ISREG(os.stat(m.path, follow_symlinks=q.follow_symlinks).st_mode):
                 continue
         except OSError:
-            continue
+            anota_incompleto(stats, "stat_failed", onde=m.path)   # H5: o walker listou
+            continue                                            # e o arquivo sumiu
         try:
             with open(m.path, "r", errors="ignore") as fh:
                 hit = None
@@ -813,12 +925,83 @@ def _iter_content_python(q: Query, cancel, stats=None):
         except PermissionError:
             if stats is not None:                     # N2: arquivo sem permissão de leitura
                 stats["denied"] = stats.get("denied", 0) + 1
+                # H4: contava em 'denied' (vista) e não no funil (fonte) — o
+                # arquivo que não abre sumia do relatório da CLI e da barra.
+                anota_incompleto(stats, "permission_denied", onde=os.path.dirname(m.path),
+                                 detalhe="files that denied reading")
             continue
-        except (OSError, UnicodeError):
+        except OSError as e:
+            # H4b: EIO num disco ruim, ELOOP, ENXIO… — o arquivo NÃO foi lido.
+            # Um `continue` mudo aqui era o walker mentindo igual ao fd sem flag.
+            anota_incompleto(stats, "read_error", onde=m.path,
+                             detalhe=e.strerror or repr(e))
+            continue
+        except UnicodeError:
             continue
 
 
 # ---------------------------------------------------------------- API pública
+_existe = os.path.exists     # injetáveis: os testes do gate montam topologias
+_eh_pasta = os.path.isdir    # fictícias (/mnt/nas2/y) sem NAS nenhum na máquina
+
+def _raiz_existe(root, stats, on_event=lambda ev, info: None) -> bool:
+    """H3: raiz que não existe (disco desmontado, caminho digitado errado) era
+    a mentira mais barata do programa — devolvia "0 resultados" com cara de
+    resposta legítima nos cinco backends (o fd sai 1 e cala; o rg sai 2 e virava
+    'engine_failed', rótulo errado; o os.walk chama onerror com
+    FileNotFoundError, que o _walk_onerror ignora por não ser PermissionError).
+    Um lugar só, no gate por onde TODA busca passa (engine.search e
+    search_boolean chamam _live_roots)."""
+    if not _existe(root):
+        detalhe = "path does not exist (disk unmounted? typo?)"
+    elif not _eh_pasta(root):
+        # H3b: os backends DIVERGIAM — o rg aceita um arquivo como raiz, o fd
+        # recusa ("Search path is not a directory", rc 1, mudo) e o os.walk
+        # chama onerror com NotADirectoryError, ignorado. A CLI documenta
+        # "folder(s) to search in"; recusar nos cinco é a única resposta igual.
+        detalhe = "not a folder — searches take folders"
+    else:
+        return True
+    anota_incompleto(stats, "invalid_root", onde=root, detalhe=detalhe)
+    on_event("root_skipped", {"path": root, "mount": None, "fstype": None,
+                              "klass": None, "reason": "invalid_root"})
+    return False
+
+
+def _avisa_snapshots(roots, stats, on_event=lambda ev, info: None):
+    """H6: a poda de snapshots (F11) avisava só por on_event — que a CLI não
+    passa. `sfs /media/4TB -n laudo` calava que o Timeshift daquele disco foi
+    pulado, e um arquivo que só sobreviveu no snapshot virava "0 resultados".
+    A poda é política deliberada, mas o lema não abre exceção: perda de
+    cobertura passa pelo funil (não-grave; o remédio é --snapshots / a caixa
+    da GUI). `roots` = só os em que a poda está de fato em vigor."""
+    for r in roots:
+        if tem_snapshot(r):
+            anota_incompleto(stats, "snapshots_skipped", onde=r,
+                             detalhe="system snapshot tree was not searched (--snapshots / 'include snapshots' to include it)")
+            on_event("snapshots_skipped", {"path": r})
+
+
+def _atribuidor(roots):
+    """(counts, attribute): atribui cada achado ao root de prefixo mais longo,
+    p/ o 'found' do evento root_done. H12: fatorado do search() porque o
+    booleano emitia evento nenhum — a GUI ficava sem painel de narrativa numa
+    busca booleana, e a mesma raiz inválida aparecia de um jeito na busca
+    simples e de outro na booleana."""
+    counts = {r: 0 for r in roots}
+    ordered = sorted(roots, key=len, reverse=True)
+
+    def attribute(path):
+        for r in ordered:
+            base = r.rstrip("/")
+            if path == base or path == r or path.startswith(base + os.sep):
+                counts[r] += 1
+                return
+        if roots:
+            counts[roots[0]] += 1      # sem prefixo casável (ex.: '.') → 1º root
+    return counts, attribute
+
+
 def _live_roots(paths, stats, probe_timeout: float = 3.0,
                 on_event=lambda ev, info: None, classes=None):
     """F9a §2.2 — GATE DE DESCIDA. Antes de o walker entrar num root, se ele for
@@ -841,12 +1024,16 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
         try:
             import disks  # type: ignore
         except Exception:
-            return list(paths)
+            # sem `disks` não há sonda de rede, mas o gate de existência (H3)
+            # continua valendo — é o que menos custa e o que mais mentia
+            return [r for r in paths if _raiz_existe(r, stats, on_event)]
     live = []
     for root in paths:
         try:
             prof = disks.search_profile(root)
         except Exception:
+            if not _raiz_existe(root, stats, on_event):
+                continue
             if classes is not None:
                 classes[root] = "unknown"
             live.append(root)          # não sei classificar → não bloqueio
@@ -861,13 +1048,18 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
                     stats.setdefault("skipped_mounts", []).append(
                         {"path": root, "mount": mp, "fstype": prof.fstype,
                          "reason": status})
-                    anota_incompleto(stats, "montagem_morta", onde=mp,
+                    anota_incompleto(stats, "dead_mount", onde=mp,
                                      detalhe=f"{prof.fstype}: {status}")   # 'no_response' | 'broken_mount'
                 # linha VERMELHA ao vivo (não popup no fim) — F10a §2
                 on_event("root_skipped",
                          {"path": root, "mount": mp, "fstype": prof.fstype,
                           "klass": prof.klass, "reason": status})
                 continue
+        # H3: só DEPOIS da sonda de rede — os.path.exists() numa montagem NFS em
+        # D-state trava o processo, que é o congelamento que o F9a existe para
+        # evitar. Aqui a montagem já respondeu (ou é local), e o stat é barato.
+        if not _raiz_existe(root, stats, on_event):
+            continue
         live.append(root)
         if classes is not None:
             classes[root] = prof.klass
@@ -1000,7 +1192,16 @@ def _funde_stats(dst, src):
     if dst is None or not src:
         return
     for k, v in src.items():
-        if isinstance(v, list):
+        if k == "incompleto":
+            # H7: NÃO concatenar — cada worker já agregou por (motivo, onde).
+            # Um extend devolvia 'sem_permissao (×3)' e 'sem_permissao (×5)'
+            # em vez de (×8): o relatório mentia pra menos em cada linha.
+            for e in v:
+                anota_incompleto(dst, e["motivo"], e.get("onde", ""),
+                                 e.get("detalhe", ""), e.get("n", 1),
+                                 args=e.get("args"))   # sem isto o particionado
+                                                       # mostrava "{rc}: {msg}" cru
+        elif isinstance(v, list):
             dst.setdefault(k, []).extend(v)
         elif isinstance(v, (int, float)):
             dst[k] = dst.get(k, 0) + v
@@ -1008,7 +1209,8 @@ def _funde_stats(dst, src):
             dst.setdefault(k, v)
 
 
-def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None):
+def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None,
+                       limite_s: float = 5.0):
     """Roda `fabrica(q_do_grupo, cancel, stats_do_grupo)` em uma thread por grupo
     e devolve os Matches EM STREAMING, na ordem em que chegarem.
 
@@ -1025,6 +1227,7 @@ def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None):
         return parar.is_set() or cancel()
 
     procs = []          # list.append e atomico sob o GIL; so o finally le
+    fins = set()        # H9: grupos cujo FIM (e stats) chegou — ver o finally
 
     def trabalha(paths):
         meu = {}
@@ -1035,7 +1238,7 @@ def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None):
                 fila.put(m)
         except Exception as e:                # um disco quebrar não derruba a busca
             meu.setdefault("erros", []).append({"paths": paths, "erro": repr(e)})
-            anota_incompleto(meu, "disco_caiu", onde=paths[0] if paths else "",
+            anota_incompleto(meu, "disk_failed", onde=paths[0] if paths else "",
                              detalhe=repr(e))
         finally:
             fila.put((FIM, paths, meu))
@@ -1055,6 +1258,7 @@ def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None):
                 continue
             if isinstance(item, tuple) and item and item[0] is FIM:
                 _, paths, meu = item
+                fins.add(tuple(paths))
                 _funde_stats(stats, meu)
                 if ao_fim is not None:
                     ao_fim(paths, meu)
@@ -1085,8 +1289,8 @@ def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None):
                 except Exception:
                     pass
 
-        limite = time.time() + 5.0     # teto: são daemon threads, jamais seguram
-        while time.time() < limite:    # a busca refém de um I/O que não volta
+        limite = time.time() + limite_s   # teto: são daemon threads, jamais seguram
+        while time.time() < limite:       # a busca refém de um I/O que não volta
             _mata()
             if not any(t.is_alive() for t in threads):
                 break
@@ -1096,10 +1300,19 @@ def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None):
                 continue
             # não perde o 'denied' de quem foi interrompido no meio
             if isinstance(item, tuple) and item and item[0] is FIM:
+                fins.add(tuple(item[1]))
                 _funde_stats(stats, item[2])
         _mata()
         for t in threads:
             t.join(timeout=0.2)
+        # H9: quem não respondeu dentro do teto levou consigo o próprio dict de
+        # stats — as perdas DAQUELE disco não foram contadas. Era o último
+        # caminho em que o funil perdia entrada por desenho; agora ele diz
+        # que não sabe, em vez de fingir que sabe.
+        for g in grupos:
+            if tuple(g) not in fins:
+                anota_incompleto(stats, "interrupted", onde=g[0] if g else "",
+                                 detalhe="the disk did not answer the cancel in time; its losses were not counted")
 
 
 def search(q: Query, on_result: Callable[[Match], None],
@@ -1126,16 +1339,7 @@ def search(q: Query, on_result: Callable[[Match], None],
         return 0, time.time() - t0
     if roots != list(q.paths):
         q = replace(q, paths=roots)
-    # atribuição de achado -> root (prefixo mais longo) p/ o 'found' do root_done
-    counts = {r: 0 for r in roots}
-    ordered = sorted(roots, key=len, reverse=True)
-    def _attribute(path):
-        for r in ordered:
-            base = r.rstrip("/")
-            if path == base or path == r or path.startswith(base + os.sep):
-                counts[r] += 1
-                return
-        counts[roots[0]] += 1          # sem prefixo casável (ex.: '.') → 1º root
+    counts, _attribute = _atribuidor(roots)   # 'found' por root do root_done
     # F11: fábrica do iterador — a MESMA nos dois modos (serial e particionado).
     # `jobs` só é aplicado no modo particionado; no serial o fd/rg segue com o
     # pool padrão (nº de CPUs), que é o certo quando há um processo só.
@@ -1149,10 +1353,8 @@ def search(q: Query, on_result: Callable[[Match], None],
         return _iter_names_python(qq, ss, cc)
 
     if q.skip_snapshots:
-        for r in roots:
-            if _pula_snapshot([r], True) and tem_snapshot(r):
-                # o painel de narrativa avisa; nada de esconder calado
-                on_event("snapshots_skipped", {"path": r})
+        # H6: painel de narrativa E funil — a CLI só enxerga o funil
+        _avisa_snapshots([r for r in roots if _pula_snapshot([r], True)], stats, on_event)
 
     grupos = _grupos_por_disco(roots)
     # Root apontado PARA DENTRO de um snapshot ganha grupo PROPRIO, senao a
@@ -1215,7 +1417,21 @@ def search(q: Query, on_result: Callable[[Match], None],
         if n % 25 == 0:
             on_progress(n)
         if n >= q.max_results:
+            # H2: ninguém EXPÕE max_results — nem a GUI nem a CLI têm controle
+            # pra isso; é um teto interno. Parar nele sem dizer é o programa
+            # decidindo por conta própria que o usuário já viu o bastante.
+            # Não-grave: o que foi mostrado está certo, só não é tudo.
+            anota_incompleto(stats, "truncated",
+                             detalhe="stopped at the cap of {cap} results; there may be more",
+                             args={"cap": q.max_results})
             break
+    # Fechar o gerador AQUI, não quando o GC quiser: é no finally dele que o
+    # _reap lê o stderr e escreve no funil (e, no particionado, que os stats
+    # dos workers são fundidos). Com o `break` acima, sem isto o funil só
+    # ficaria completo por acidente de ordem de coleta.
+    fechar = getattr(it, "close", None)
+    if fechar is not None:
+        fechar()
     for r in roots:                       # F11: no modo particionado a maioria já
         if r in pendentes:                # foi anunciada assim que o disco fechou;
             on_event("root_done", {"path": r, "found": counts[r]})   # aqui sobram

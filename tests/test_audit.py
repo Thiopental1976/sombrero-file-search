@@ -756,23 +756,29 @@ def test_i18n_env_override():
 
 def test_i18n_no_stale_keys():
     """Toda chave do dicionário PT precisa existir como literal t(...) no código —
-    pega 'drift' (typo entre a fonte no código e a chave da tradução)."""
+    pega 'drift' (typo entre a fonte no código e a chave da tradução).
+
+    H11: o funil de incompletude nasce em EN-US no engine e é traduzido na
+    renderização, então a varredura cobre também engine.py, o `tr(...)` que o
+    resumo usa e os `detalhe="..."` / `onde="..."` (literais de UMA linha, por
+    convenção — o `onde` costuma ser caminho, mas o booleano usa pseudo-locais)."""
     import re
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lfs")
     src = ""
-    for fn in ("app.py", "boolean.py"):
+    for fn in ("app.py", "boolean.py", "engine.py"):
         with open(os.path.join(base, fn), encoding="utf-8") as f:
             src += f.read()
     lits = set()
-    for m in re.finditer(r"""t\(\s*((?:(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*)+)""", src):
+    for m in re.finditer(r"""(?:t|tr)\(\s*((?:(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*)+)""", src):
         parts = re.findall(r"""(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')""", m.group(1))
         joined = "".join(a or b for a, b in parts)
         for esc, real in (('\\n', '\n'), ('\\"', '"'), ("\\'", "'"), ('\\\\', '\\')):
             joined = joined.replace(esc, real)
         lits.add(joined)
-    dynamic = set(engine.__dict__.get("_HEADERS_SOURCE", ())) | \
-        {"File", "Folder", "Size", "Modified"}          # via t(self.HEADERS[s])
+    lits |= set(re.findall(r'(?:detalhe|onde)\s*=\s*"((?:\\.|[^"\\])*)"', src))
+    dynamic = {"File", "Folder", "Size", "Modified"}   # via t(self.HEADERS[s])
     dynamic |= humane.SOURCE_STRINGS       # humane.py é orientado a dados: t(variável)
+    dynamic |= engine.SOURCE_STRINGS       # funil: MOTIVO_TEXTO / REASON_TEXTO
     stale = [k for k in i18n._PT if k not in lits and k not in dynamic]
     assert not stale, "chaves PT sem uso no código (drift):\n" + "\n".join(map(repr, stale))
     print(f"ok  i18n  sem chaves órfãs ({len(i18n._PT)} chaves cobertas)")
@@ -1435,10 +1441,12 @@ def test_descent_gate_skips_dead_network_mount():
     # nas travou (no_response), nas2 vivo — o gate lê o status, não só um bool
     status = {"/mnt/nas": "no_response", "/mnt/nas2": "alive"}
     orig_prof, orig_status = _disks.search_profile, _disks.mount_status
+    orig_existe = (engine._existe, engine._eh_pasta)
     try:
         _disks.search_profile = lambda p, mounts=None: by_path[p]
         _disks.mount_status = lambda mp, timeout=3.0, **k: status[mp]
-        stats: dict = {}
+        engine._existe = engine._eh_pasta = lambda p: True      # H3: os roots são fictícios; o gate
+        stats: dict = {}                     # de existência é outro teste
         roots = engine._live_roots(["/mnt/repo", "/mnt/nas/x", "/mnt/nas2/y"], stats)
         assert roots == ["/mnt/repo", "/mnt/nas2/y"], f"gate errou os vivos: {roots}"
         sk = stats.get("skipped_mounts", [])
@@ -1451,6 +1459,7 @@ def test_descent_gate_skips_dead_network_mount():
         assert st2["skipped_mounts"][0]["reason"] == "broken_mount", "motivo F2 ausente"
     finally:
         _disks.search_profile, _disks.mount_status = orig_prof, orig_status
+        engine._existe, engine._eh_pasta = orig_existe
     print("ok  F9a  gate de descida: NAS morto/quebrado pulado c/ aviso, vivo passa")
 
 
@@ -2964,10 +2973,12 @@ def test_root_events_stream():
                     is_network=True, max_workers=4, enumerate_default=True)
     by_path = {"/mnt/repo": prof_local, "/mnt/nas/x": prof_dead}
     orig_prof, orig_status = disks.search_profile, disks.mount_status
+    orig_existe = (engine._existe, engine._eh_pasta)
     try:
         disks.search_profile = lambda p, mounts=None: by_path[p]
         disks.mount_status = lambda mp, timeout=3.0, **k: (
             "no_response" if mp == "/mnt/nas" else "alive")
+        engine._existe = engine._eh_pasta = lambda p: True      # H3: roots fictícios (ver acima)
         evs = []
         roots = engine._live_roots(["/mnt/repo", "/mnt/nas/x"], {},
                                    on_event=lambda ev, info: evs.append((ev, info)))
@@ -2980,6 +2991,7 @@ def test_root_events_stream():
         assert scanned == ["/mnt/repo"], scanned
     finally:
         disks.search_profile, disks.mount_status = orig_prof, orig_status
+        engine._existe, engine._eh_pasta = orig_existe
     print("ok  F10a narrativa: root_scanning/root_skipped/root_done ao vivo, com achados por root")
 
 

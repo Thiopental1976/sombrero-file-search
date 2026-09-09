@@ -243,16 +243,15 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
         except OSError:
             errf.close()
             if restrict is None:
-                engine.anota_incompleto(stats, "motor_ausente", onde=term,
-                                        detalhe="rg nao pode ser executado; o walker "
-                                                "Python nao le UTF-16/UTF-32 com BOM")
+                _anota(stats, "engine_missing", onde=term,
+                       detalhe="rg could not be run; the Python walker does not read UTF-16/UTF-32 with BOM")
                 return _files_with_term_py(term, q, cancel, stats)
             # F11c: "segue os outros" e razoavel, mas ATE 400 ARQUIVOS somem do
             # resultado de um AND aqui. Sem o funil isso era perda muda — e um
             # AND com um lote perdido devolve MENOS do que deveria, sem sinal.
-            engine.anota_incompleto(stats, "lote_falhou", onde=term,
-                                    detalhe=f"{len(roots)} arquivo(s) nao puderam "
-                                            f"ser lidos neste lote", n=1)
+            _anota(stats, "batch_failed", onde=term,
+                   detalhe="{n} file(s) could not be read in this batch",
+                   args={"n": len(roots)})
             continue                              # lote isolado falhou; segue os outros
         try:
             for line in proc.stdout:
@@ -268,7 +267,7 @@ def _files_with_term_py(term: str, q: engine.Query, cancel, stats=None) -> set[s
     sub = engine.Query(**{**q.__dict__, "content": term})
     local = {} if stats is not None else None     # N2: conta no local e mescla sob lock
     res = {os.path.abspath(m.path) for m in engine._iter_content_python(sub, cancel, local)}
-    _merge_denied(stats, local)
+    _funde_local(stats, local)
     return res
 
 
@@ -304,6 +303,10 @@ def _universe(q: engine.Query, cancel, stats=None) -> set[str]:
                                     stderr=errf, text=True, errors="replace")
         except OSError:
             errf.close(); proc = None
+            # H8b: o mesmo aviso que _files_with_term já dava — aqui o universo
+            # do NOT caía no walker Python calado, e o walker não lê UTF-16
+            _anota(stats, "engine_missing", onde="(NOT universe)",
+                   detalhe="rg could not be run; the Python walker does not read UTF-16/UTF-32 with BOM")
         if proc:
             out = set()
             try:
@@ -317,7 +320,7 @@ def _universe(q: engine.Query, cancel, stats=None) -> set[str]:
     local = {} if stats is not None else None
     res = {os.path.abspath(m.path) for m in engine._iter_names_python(q, local, cancel)
            if _is_probably_text(m.path)}          # B1: paridade — universo só-texto
-    _merge_denied(stats, local)
+    _funde_local(stats, local)
     return res
 
 
@@ -351,15 +354,31 @@ def _path_needs_serial(ap: str) -> bool:
 
 
 # ------------------------------------------------------------------ contagem de inacessíveis (N2)
-def _merge_denied(stats, local):
-    """Soma o 'denied' contado num dict LOCAL no `stats` compartilhado, sob lock
-    (thread-safe p/ o paralelismo da opt#2)."""
+def _funde_local(stats, local):
+    """Funde o dict LOCAL de um lote no `stats` compartilhado, sob lock
+    (thread-safe p/ o paralelismo da opt#2).
+
+    H8 (Fable 5.1, 08/09/2026): chamava-se _merge_denied e copiava SÓ
+    local['denied'] — jogava fora tudo o mais que engine._reap escreveu no
+    local, inclusive o funil 'incompleto' (sem_permissao, motor_falhou,
+    erro_leitura…). O booleano era o backend mais mudo dos cinco e o nome
+    antigo descrevia o bug com precisão. A fusão é a mesma do particionado do
+    engine, que já sabe não concatenar o funil (H7)."""
     if stats is None or not local:
         return
-    d = local.get("denied", 0)
-    if d:
-        with _cache_lock:
-            stats["denied"] = stats.get("denied", 0) + d
+    with _cache_lock:
+        engine._funde_stats(stats, local)
+
+_merge_denied = _funde_local        # nome antigo, p/ quem ainda o importa
+
+
+def _anota(stats, motivo, onde="", detalhe="", n=1, args=None):
+    """anota_incompleto sob o _cache_lock: os operandos de um OR rodam em
+    threads (opt#2) e o `e['n'] += n` do funil não é atômico."""
+    if stats is None:
+        return
+    with _cache_lock:
+        engine.anota_incompleto(stats, motivo, onde=onde, detalhe=detalhe, n=n, args=args)
 
 
 def _reap_stats(proc, errf, stats):
@@ -370,7 +389,7 @@ def _reap_stats(proc, errf, stats):
         return
     local = {}
     engine._reap(proc, errf, local)               # conta no local (isolado por thread)
-    _merge_denied(stats, local)
+    _funde_local(stats, local)
 
 
 def _max_workers(q: engine.Query) -> int:
@@ -565,7 +584,8 @@ def _eval(node, q, cancel, cache, universe_box, restrict=None, pool=None, phase=
 
 # ------------------------------------------------------------------ API pública
 def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
-                   on_progress=lambda n: None, on_phase=None, stats=None):
+                   on_progress=lambda n: None, on_phase=None, stats=None,
+                   on_event=lambda ev, info: None):
     """Resolve a expressão booleana -> arquivos, então emite Matches com linhas
     dos termos positivos. Retorna (total, segundos).
 
@@ -573,16 +593,25 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     termo "paciente"' e, por fim, 'passo 4/4: extraindo linhas'. Cada termo
     DISTINTO é um passo; a extração de linhas dos positivos é o passo final.
     N2: `stats` (dict) recebe 'denied' — inacessíveis vistos no stderr do rg e
-    nos fallbacks Python — de forma thread-safe (compatível com a opt#2)."""
+    nos fallbacks Python — de forma thread-safe (compatível com a opt#2).
+    H12: `on_event` recebe a MESMA narrativa por root do engine.search()
+    (root_scanning / root_skipped / snapshots_skipped / root_done) — antes o
+    booleano não emitia nada e a GUI ficava sem painel nessa busca."""
     import time
     t0 = time.time()
     # F9a §2.2 — gate de descida: monta de rede morta é pulada (aviso em stats),
     # nunca congela. Mesmo mecanismo do engine.search().
-    roots = engine._live_roots(q.paths, stats)
+    roots = engine._live_roots(q.paths, stats, on_event=on_event)
     if not roots:
         return 0, time.time() - t0
     if roots != list(q.paths):
         q = replace(q, paths=roots)
+    if q.skip_snapshots:                     # H6: a poda vem de rg_flags_comuns;
+        # mesma regra do engine.search(): só avisa onde a poda está EM VIGOR —
+        # raiz apontada para dentro de um snapshot não pula snapshot nenhum
+        engine._avisa_snapshots([r for r in roots if engine._pula_snapshot([r], True)],
+                                stats, on_event)
+    counts, atribui = engine._atribuidor(roots)          # H12: 'found' por root
     ast = parse(expr)
     cache: dict = {}
     universe_box = [None]
@@ -612,6 +641,8 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
         try:
             st = os.stat(fp)
         except OSError:
+            _anota(stats, "stat_failed", onde=fp,       # H5: o rg casou e a gente
+                   detalhe="the engine matched it, but the file vanished")  # descartava
             continue
         if not engine._passes_meta(q, st):
             continue
@@ -620,8 +651,15 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
             m.lines.append((ln, txt)); m.nmatch += 1
         on_result(m)
         n += 1
+        atribui(fp)
         if n % 25 == 0: on_progress(n)
-        if n >= q.max_results: break
+        if n >= q.max_results:
+            _anota(stats, "truncated",                 # H2: mesmo teto interno,
+                   detalhe="stopped at the cap of {cap} results; there may be more",
+                   args={"cap": q.max_results})        # mesmo aviso
+            break
+    for r in roots:                                      # H12: fecha a narrativa
+        on_event("root_done", {"path": r, "found": counts[r]})
     return n, time.time() - t0
 
 
@@ -646,6 +684,11 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
                                     stderr=errf, text=True, errors="replace")
         except OSError:
             errf.close()
+            # H8c: os arquivos continuam no resultado, mas SEM as linhas —
+            # o usuário veria "0 linhas" e concluiria que o termo não está lá
+            _anota(stats, "batch_failed", onde="(display lines)",
+                   detalhe="{n} file(s) were left without their lines",
+                   args={"n": len(files[i:i + _BATCH])})
             continue
         try:
             for line in proc.stdout:

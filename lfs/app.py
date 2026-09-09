@@ -281,7 +281,8 @@ class SearchWorker(QThread):
             if self.boolexpr:
                 tot, dt = boolean.search_boolean(self.q, self.boolexpr, on_result,
                                                  lambda: self._cancel, on_prog, on_phase,
-                                                 stats=self.stats)      # N2: conta inacessíveis
+                                                 stats=self.stats,      # N2: conta inacessíveis
+                                                 on_event=lambda ev, info: self.root_event.emit(ev, info))
             else:
                 tot, dt = engine.search(self.q, on_result, lambda: self._cancel, on_prog,
                                         stats=self.stats,
@@ -1422,7 +1423,7 @@ class DuplicatesPanel(QWidget):
         extra = t("  ·  {d} unreadable", d=denied) if denied else ""
         # F11c: a barra DERIVA do funil único — antes mostrava só o primeiro
         # erro de motor e as outras perdas não apareciam em lugar nenhum.
-        grave, linhas = engine.resumo_incompleto(stats)
+        grave, linhas = engine.resumo_incompleto(stats, tr=t)   # H11: idioma do usuário
         if linhas:
             extra += t("  ·  ⚠ incomplete: {what}", what="; ".join(linhas[:3])[:240])
             if len(linhas) > 3:
@@ -2265,13 +2266,14 @@ class MainWindow(QMainWindow):
 
         paths = [p.strip() for p in self.ed_path.text().split(";") if p.strip()]
         paths = [os.path.expanduser(p) for p in paths]
-        bad = [p for p in paths if not os.path.exists(p)]
-        paths = [p for p in paths if os.path.exists(p)]
+        # H10: não filtrar raiz inexistente AQUI. Era um segundo canal, fora do
+        # funil, com a mesma regra do gate do motor (engine._raiz_existe) — e
+        # as duas já divergiam (o motor recusa arquivo como raiz; isto aceitava).
+        # O motor decide; o veredito volta como 'invalid_root' na barra e como
+        # linha vermelha no painel. Só "nada digitado" continua sendo daqui.
         if not paths:
             self.status.setText(t("⚠  No valid folder in 'In:'."))
             return None
-        if bad:
-            self.status.setText(t("⚠  Ignoring non-existent folder(s): {paths}", paths=', '.join(bad)))
         name_txt = self.ed_name.text().strip()
         if self.ck_nrx.isChecked():
             name_pats = [name_txt] if name_txt else []
@@ -2366,6 +2368,9 @@ class MainWindow(QMainWindow):
     # únicos e seguem a aba. Montagem de rede morta vira LINHA VERMELHA aqui, não
     # popup: o usuário vê "pulei o NAS porque caiu" sem perder a busca dos discos.
     _KLASS_TAG = {"rotational": "HD", "ssd": "SSD", "gvfs": "MTP", "autofs": "auto"}
+    # reason do root_skipped -> frase: engine.REASON_TEXTO (EN, chave do i18n),
+    # traduzida no evento, não no import — senão trocar de idioma em runtime
+    # não pegaria aqui
 
     def _reset_narrative(self, tab):
         tab.roots = {}
@@ -2382,7 +2387,13 @@ class MainWindow(QMainWindow):
             return
         rec = tab.roots.get(path)
         if rec is None:
-            name = disks.volume_label(path) or os.path.basename(path.rstrip("/")) or path
+            if ev == "root_skipped" and info.get("reason") == "invalid_root":
+                # transparência sobre os LOCAIS: raiz que não existe mostra o
+                # caminho que o usuário digitou, não o rótulo do volume onde ele
+                # estaria ("OptaneCache — pasta não encontrada" não diz nada)
+                name = path
+            else:
+                name = disks.volume_label(path) or os.path.basename(path.rstrip("/")) or path
             rec = {"name": name, "klass": info.get("klass", "unknown"),
                    "state": "scanning", "found": 0, "reason": "", "snap": False}
             tab.roots[path] = rec
@@ -2395,7 +2406,8 @@ class MainWindow(QMainWindow):
         elif ev == "root_skipped":
             rec["state"] = "skipped"
             rec["klass"] = info.get("klass", rec["klass"])
-            rec["reason"] = info.get("reason", "") or t("unreachable")
+            why = info.get("reason", "")
+            rec["reason"] = t(engine.REASON_TEXTO[why]) if why in engine.REASON_TEXTO else (why or t("unreachable"))
         elif ev == "root_done":
             if rec["state"] != "skipped":
                 rec["state"] = "done"
@@ -2611,6 +2623,26 @@ class MainWindow(QMainWindow):
     def _denied(tab) -> int:
         return tab.worker.stats.get("denied", 0) if tab.worker else 0
 
+    # H10/nível 3: perdas que o painel de narrativa JÁ desenha por raiz (linha
+    # vermelha com o motivo; "(snapshots skipped)" ao lado do disco). Repetir na
+    # barra seria dizer a mesma coisa duas vezes em cada busca do disco com
+    # Timeshift. Só some da barra se o painel de FATO tem aquela raiz — no
+    # booleano, que não emite eventos, tudo continua indo pra barra.
+    _MOTIVOS_NO_PAINEL = {"snapshots_skipped", "dead_mount", "invalid_root"}
+
+    def _funil_para_barra(self, tab, stats):
+        """(grave, linhas) do funil, menos o que o painel já mostra. `grave` é
+        calculado no funil INTEIRO — a raiz inválida some da barra, não do ícone."""
+        grave, _ = engine.resumo_incompleto(stats)
+        fila = (stats or {}).get("incompleto") or []
+        roots = getattr(tab, "roots", {}) or {}
+        vista = dict(stats or {})
+        vista["incompleto"] = [e for e in fila
+                               if not (e["motivo"] in self._MOTIVOS_NO_PAINEL
+                                       and e.get("onde") in roots)]
+        _, linhas = engine.resumo_incompleto(vista, tr=t)   # H11: idioma do usuário
+        return grave, linhas
+
     def _searching_text(self, tab) -> str:
         d = self._denied(tab)
         extra = t(" · {d} inaccessible", d=d) if d else ""
@@ -2680,14 +2712,24 @@ class MainWindow(QMainWindow):
         tab.table.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
         tab.table.setSortingEnabled(True)         # B14: colunas ordenáveis ao fim
         cancelled = tab.worker and tab.worker._cancel
-        icon = "■" if cancelled else "✔"
-        d = self._denied(tab)
-        extra = t("  ·  {d} inaccessible", d=d) if d else ""
+        # H10: a barra DERIVA do funil único. Até aqui a aba de busca mostrava só
+        # o 'denied' — motor_falhou, raiz_invalida, truncado nunca chegavam ao
+        # usuário da GUI: fd com flag inválida virava "✔ 0 resultado(s)". O
+        # diálogo de duplicatas já fazia o certo; a busca, que é o programa, não.
+        stats = tab.worker.stats if tab.worker else {}
+        grave, linhas = self._funil_para_barra(tab, stats)
+        icon = "■" if cancelled else ("⚠" if grave else "✔")
+        extra = ""
+        if linhas:
+            extra = t("  ·  ⚠ incomplete: {what}", what="; ".join(linhas[:3])[:240])
+            if len(linhas) > 3:
+                extra += t(" (+{n} more)", n=len(linhas) - 3)
         cancel = t("   (cancelled)") if cancelled else ""
         # dica: zero resultados COM Conteúdo preenchido = quase sempre o usuário
         # quis buscar por NOME (ex.: digitou "*.mp4" no Conteúdo). Aponta o caminho.
+        # Não quando é GRAVE: aí zero não é "nada encontrado", é "não deu pra olhar".
         tip = ""
-        if tot == 0 and not cancelled and searches.normalize(tab.form)["content"]:
+        if tot == 0 and not cancelled and not grave and searches.normalize(tab.form)["content"]:
             tip = t("   —  tip: “Content” is filled, so this searched INSIDE files; "
                     "clear it to match file/folder names.")
         self._set_status(tab, t("{icon}  {tot} result(s)  ·  {sec}s{extra}{cancel}",
