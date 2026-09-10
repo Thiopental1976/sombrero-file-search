@@ -290,6 +290,13 @@ _TEXTO_PODA = {
         "snapshot tree not searched: the search stopped (cap or cancel) before reaching it",
     ("ostree", "stopped"):
         "ostree deployments not searched: the search stopped (cap or cancel) before reaching them",
+    # Nada sob o dono é extensível (só EXCLUSOES_SEM_FALLBACK): a nota NÃO pode
+    # dizer "teve resultado vivo" nem oferecer --snapshots — com zero achados a
+    # primeira frase seria falsa e a flag não faria nada nesta árvore.
+    ("ostree", "no_fallback"):
+        "the ostree object store (ostree/repo) was not searched and never is: its files are named by hash, and the same bytes are in the deployments",
+    ("snapshot", "no_fallback"):
+        "a pruned tree here is never searched: its files are content-addressed (named by hash)",
 }
 
 # Strings-fonte (EN-US) que este módulo entrega a t() por VARIÁVEL — a guarda
@@ -522,6 +529,8 @@ class Query:
     modified_after: Optional[float] = None # epoch
     modified_before: Optional[float] = None
     max_results: int = 100000
+    rg_threads: Optional[int] = None  # pool DENTRO do rg (booleano por grupo de disco,
+                                      # 09/09/2026); None = padrao do rg (nº de CPUs)
 
 
 @dataclass
@@ -918,6 +927,11 @@ def rg_flags_comuns(q: Query, matching: bool = True):
         # caminho absoluto inteiro como sufixo — exato na prática, e um falso
         # positivo exigiria outro caminho que TERMINE com este inteiro.
         cmd += ["--glob", "!**" + e]
+    if q.rg_threads is not None:
+        # 09/09/2026: o booleano particionado por disco escolhe o pool por
+        # classe (_jobs_para_classe) e o carrega na Query do grupo — antes o
+        # rg do booleano subia sempre com o padrao, ate em rede e gvfs.
+        cmd += ["--threads", str(q.rg_threads)]
     return cmd
 
 
@@ -1363,8 +1377,11 @@ def _plano_extensao(q, roots, counts, parou, stats, on_event, excluidos=()):
         por_dono.setdefault(a["dono"], []).append((a, modo))
     for dono, lst in por_dono.items():
         tipo = "ostree" if all(a["padrao"] in _PADROES_OSTREE for a, _m in lst) else "snapshot"
-        modos = {m for a, m in lst if a["fallback"]} or {"skipped"}
-        modo = next((m for m in ("requested", "searched", "stopped") if m in modos), "skipped")
+        modos = {m for a, m in lst if a["fallback"]}
+        # sem NENHUMA árvore extensível não há decisão de "vivo primeiro" a
+        # relatar: só existe o fato de que aquela árvore nunca é varrida
+        modo = ("no_fallback" if not modos else
+                next((m for m in ("requested", "searched", "stopped") if m in modos), "skipped"))
         motivo = "snapshots_searched" if modo in ("requested", "searched") else "snapshots_skipped"
         anota_incompleto(stats, motivo, onde=dono, detalhe=_TEXTO_PODA[(tipo, modo)])
         on_event(motivo, {"path": dono, "ostree": tipo == "ostree",
@@ -1726,20 +1743,8 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
     return live
 
 
-# ------------------------------------------- F11: paralelismo de I/O por disco
-# Um `fd`/`rg` só, recebendo os 10 roots, tem pool de threads GLOBAL e CEGO à
-# montagem: os resultados saem por um iterador serial e os discos rápidos ficam
-# reféns do mais lento. Medido no acervo (padrão "Kevlyn", 10 montagens): nove
-# discos entregavam tudo em menos de 1,4 s enquanto o 4TB-Portable (USB numa
-# placa de expansão PCIe) levava 168 s sozinho — e a GUI só via o primeiro
-# resultado quando o iterador serial chegasse nele.
-# Aqui a busca é PARTICIONADA por dispositivo (st_dev): um processo por disco,
-# rodando em paralelo, e um consumidor único que repassa cada achado assim que
-# chega. Regra da casa: UMA thread por ponto de montagem, nunca mais que isso
-# (cabeça de HDD não se divide; em SMR é pior) — por isso cada processo recebe
-# um pool enxuto (_JOBS_POR_DISCO) em vez do padrão do fd, que é nº de CPUs.
-_FILA_MAX = 4096             # contrapressão: o produtor espera se a GUI não drena
-
+# F11b: pool por classe de disco (o cabecalho da secao F11 esta acima de
+# _chave_de_disco, junto do codigo que descreve)
 # F11b — quantas threads DENTRO de cada fd/rg, por classe de disco. Medido em
 # 08/09/2026 (drop_caches antes de cada passada, máquina quiescida): no NVMe,
 # `--threads 1` custa 12,5x contra o padrão do fd; num SMR de 1,15 milhão de
@@ -1817,6 +1822,33 @@ def _jobs_para_classe(classes_do_grupo, conteudo: bool = False):
     return min(concretos) if concretos else None
 
 
+# ------------------------------------------- F11: paralelismo de I/O por disco
+# Um `fd`/`rg` só, recebendo os 10 roots, tem pool de threads GLOBAL e CEGO à
+# montagem: os resultados saem por um iterador serial e os discos rápidos ficam
+# reféns do mais lento. Medido no acervo (padrão "Kevlyn", 10 montagens): nove
+# discos entregavam tudo em menos de 1,4 s enquanto o 4TB-Portable (USB numa
+# placa de expansão PCIe) levava 168 s sozinho — e a GUI só via o primeiro
+# resultado quando o iterador serial chegasse nele.
+#
+# O código, na ordem em que roda:
+#   _chave_de_disco    identidade do DISCO FÍSICO de um root (conjunto de
+#                      discos, via disks._sys_disks; st_dev é só o reserva)
+#   _grupos_por_disco  roots do mesmo prato no mesmo grupo; grupos cujos
+#                      conjuntos se cruzam (VG em 2 PVs) se fundem
+#   _iter_particionado uma thread por grupo, um consumidor que repassa cada
+#                      achado assim que chega
+#   _rodada            quem decide serial × particionado e monta a fábrica
+#
+# Pool DENTRO de cada processo: _jobs_para_classe (F11b, acima). A regra "um
+# cabeçote, uma thread" vale pra busca por NOME; busca por CONTEÚDO ganha pool
+# cheio até em disco mecânico (medido em 09/09/2026, ver _jobs_para_classe).
+# Rede tem teto por montagem. O fallback Python entra no MESMO particionado
+# (09/09/2026): a espera de I/O do os.walk solta o GIL, e o serial deixava o
+# ganho entre discos só pra quem tinha fd/rg.
+#
+# Histórico: este bloco dizia "partição por st_dev", "uma thread por
+# montagem, nunca mais" e citava _JOBS_POR_DISCO, que não existia — descrevia
+# a versão de 08/09 e morava longe do código (achado do Rodrigo, 09/09/2026).
 def _chave_de_disco(root):
     """Identidade do DISCO FÍSICO do root. st_dev sozinho não serve (Fable 5):
     btrfs com subvolumes @/@home — o padrão de Ubuntu e Fedora — e LVM com duas
@@ -1844,9 +1876,9 @@ def _chave_de_disco(root):
             # /sysroot, /var e /etc. Sem isto "/" caía no reserva (st_dev) e
             # virava grupo próprio: dois processos no mesmo disco.
             dev = disks._backing_dev(ent)
-            pai = disks._sys_disk(dev) if dev else None
-            if pai:
-                return ("disco", pai)
+            pais = disks._sys_disks(dev) if dev else None
+            if pais:
+                return ("disco", frozenset(pais))   # conjunto: VG em 2 PVs = 2 discos
         except Exception:
             pass
     return ("dev", os.stat(root).st_dev)
@@ -1854,18 +1886,43 @@ def _chave_de_disco(root):
 
 def _grupos_por_disco(paths):
     """Agrupa roots por disco físico. Roots do mesmo disco vão juntos no mesmo
-    processo — o ganho é entre discos, não dentro de um."""
-    grupos, ordem = {}, []
+    processo — o ganho é entre discos, não dentro de um.
+
+    Chave ("disco", frozenset): dois grupos cujos conjuntos se CRUZAM são o
+    mesmo prato em algum lugar (LV em sda+sdb e uma montagem direta em sdb) e
+    se fundem, transitivamente. Qualquer outra chave agrupa por igualdade."""
+    grupos = []                               # [chave, roots], na ordem de chegada
     for r in paths:
         try:
             chave = _chave_de_disco(r)
         except OSError:
             chave = ("?", r)                  # não deu stat: fica sozinho
-        if chave not in grupos:
-            grupos[chave] = []
-            ordem.append(chave)
-        grupos[chave].append(r)
-    return [grupos[k] for k in ordem]
+        conj = chave[1] if (isinstance(chave, tuple) and len(chave) == 2
+                            and chave[0] == "disco"
+                            and isinstance(chave[1], frozenset)) else None
+        alvo = None
+        if conj is not None:
+            cruzam = [g for g in grupos
+                      if isinstance(g[0], tuple) and g[0][0] == "disco"
+                      and isinstance(g[0][1], frozenset) and g[0][1] & conj]
+            if cruzam:
+                alvo = cruzam[0]
+                uniao = alvo[0][1] | conj
+                for outro in cruzam[1:]:      # o root novo é a ponte entre eles
+                    uniao |= outro[0][1]
+                    alvo[1].extend(outro[1])
+                    grupos.remove(outro)
+                alvo[0] = ("disco", uniao)
+        else:
+            for g in grupos:
+                if g[0] == chave:
+                    alvo = g
+                    break
+        if alvo is None:
+            grupos.append([chave, [r]])
+        else:
+            alvo[1].append(r)
+    return [g[1] for g in grupos]
 
 
 def _funde_stats(dst, src):
@@ -1889,6 +1946,9 @@ def _funde_stats(dst, src):
             dst[k] = dst.get(k, 0) + v
         else:
             dst.setdefault(k, v)
+
+
+_FILA_MAX = 4096             # contrapressão: o produtor espera se a GUI não drena
 
 
 def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None,
@@ -2036,9 +2096,11 @@ def _rodada(q, roots, classes, cancel, stats, on_event, entrega, origem_de=None,
     # F11b: a classe do disco escolhe o pool de cada processo (SSD solto, SMR
     # numa thread só). Vale TAMBÉM no caminho serial: um único SMR ganhava o
     # padrão do fd, nº de CPUs, que era a maior violação da regra da casa aqui.
-    # 1 disco só (ou fallback Python, que já é os.walk por root) → nada a ganhar
-    # abrindo threads: mantém o caminho serial de sempre.
-    paralelo = len(grupos) > 1 and (FD or (q.content and (RG or (q.documents and RGA))))
+    # 1 disco só → nada a ganhar abrindo threads: caminho serial de sempre.
+    # 09/09/2026: o fallback Python TAMBÉM particiona. "os.walk por root" era
+    # os.walk por root EM SEQUÊNCIA — o disco rápido esperava o lento igual ao
+    # fd único de antes. As esperas de I/O soltam o GIL; o ganho é o mesmo.
+    paralelo = len(grupos) > 1
     pendentes = set(roots)
     if paralelo:
         def _grupo_terminou(paths, meu=None):

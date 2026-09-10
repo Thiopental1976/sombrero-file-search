@@ -183,6 +183,10 @@ _PT = {
         "nada na árvore viva, então as implantações ostree também foram varridas; os resultados delas vêm marcados (o repositório de objetos ostree/repo nunca é varrido, os arquivos dele têm nome de hash)",
     "ostree deployments searched as requested; results from them are marked (the object store ostree/repo is never searched, its files are named by hash)":
         "implantações ostree varridas como pedido; os resultados delas vêm marcados (o repositório de objetos ostree/repo nunca é varrido, os arquivos dele têm nome de hash)",
+    "the ostree object store (ostree/repo) was not searched and never is: its files are named by hash, and the same bytes are in the deployments":
+        "o repositório de objetos do ostree (ostree/repo) não foi varrido e nunca é: os arquivos dele têm nome de hash, e os mesmos bytes estão nas implantações",
+    "a pruned tree here is never searched: its files are content-addressed (named by hash)":
+        "uma árvore podada aqui nunca é varrida: os arquivos dela são endereçados por conteúdo (nome de hash)",
     "snapshot tree not searched: the search stopped (cap or cancel) before reaching it":
         "árvore de snapshot não varrida: a busca parou (teto ou cancelamento) antes de chegar nela",
     "ostree deployments not searched: the search stopped (cap or cancel) before reaching them":

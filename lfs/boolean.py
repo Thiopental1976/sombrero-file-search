@@ -616,26 +616,59 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     pos = positive_terms(ast)
     # opt#4: passos = termos distintos (positivos e negados) + 1 (extração de linhas)
     n_terms = len(dict.fromkeys(_all_terms(ast)))
-    phase = _Phase(on_phase, n_terms + (1 if pos else 0), bool(pos))
+    # opt#4: uma _Phase por RODADA, não uma por busca. `_Phase.term` só conta
+    # cada termo UMA vez (é o que mantém a numeração sã com o OR em paralelo e
+    # com um grupo de disco por thread) — e era isso que deixava a rodada de
+    # EXTENSÃO aos snapshots totalmente MUDA: os termos já tinham sido vistos na
+    # rodada viva. Extensão por conteúdo em disco de backup leva minutos
+    # (medido: ≈2,7 min no SSD com Timeshift); barra parada ali parece travamento.
+    _total_fase = n_terms + (1 if pos else 0)
+    fase_da_rodada = [_Phase(on_phase, _total_fase, bool(pos))]
     # 09/09/2026: o dedup e o teto moram no funil de ENTREGA do engine — o
     # booleano vê o mesmo resultado que a busca simples, a CLI e a GUI
     entrega = engine._Entrega(on_result, on_progress, stats, q.max_results, on_event)
 
-    def rodada(qq, paths, _classes, cancel, stats, _on_event, entrega_, origem_de=None,
+    def rodada(qq, paths, classes_, cancel, stats, _on_event, entrega_, origem_de=None,
                dono_de=None, counts=None, eventos_por_grupo=True, **_kw):
         """Uma rodada booleana sobre `paths` (vivas, ou as árvores podadas na
         extensão): avalia a expressão, extrai linhas e entrega pelo funil.
         Mesma assinatura da engine._rodada para _estende_snapshots chamar as
-        duas sem saber qual é. Devolve True se parou (teto/cancel)."""
+        duas sem saber qual é. Devolve True se parou (teto/cancel).
+
+        09/09/2026 — PARTICIONADA POR DISCO, como a busca simples: a expressão
+        é avaliada por grupo de `engine._grupos_por_disco` e os conjuntos são
+        unidos. É correto porque os grupos são uma partição do universo e
+        AND/OR/NOT distribuem sobre partição disjunta: (X∘Y) = ∪ᵢ (Xᵢ∘Yᵢ), com
+        o universo do NOT computado por grupo (senão o complemento de um disco
+        vazava pros outros). Antes um `rg -l` só recebia todas as raízes e o
+        disco rápido esperava o lento; e a trava SMR (`_max_workers`) olhava
+        TODAS as raízes, então um SSD ao lado de um SMR sob /mnt também era
+        serializado. Cada grupo ganha o pool do rg pela classe do disco
+        (`rg_threads`), a mesma tabela da busca simples."""
         qq = replace(qq, paths=list(paths))
-        cache: dict = {}
-        universe_box = [None]
-        workers = _max_workers(qq)           # opt#2: paraleliza OR fora de /mnt
-        if workers > 1:
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                files = _eval(ast, qq, cancel, cache, universe_box, pool=pool, phase=phase, stats=stats)
+        grupos = engine._grupos_por_disco(qq.paths)
+        phase = fase_da_rodada[0]
+
+        def _avalia(grupo):
+            jobs = engine._jobs_para_classe(
+                [classes_.get(r, "unknown") for r in grupo], conteudo=True)
+            qg = replace(qq, paths=list(grupo), rg_threads=jobs)
+            cache: dict = {}
+            universe_box = [None]
+            workers = _max_workers(qg)       # opt#2: paraleliza OR fora de /mnt
+            if workers > 1:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    return _eval(ast, qg, cancel, cache, universe_box, pool=pool, phase=phase, stats=stats)
+            return _eval(ast, qg, cancel, cache, universe_box, phase=phase, stats=stats)
+
+        if len(grupos) > 1:
+            # um thread por disco; dentro de cada um, o pool do OR é próprio
+            # (sem pool compartilhado não há fome de workers entre grupos)
+            with ThreadPoolExecutor(max_workers=len(grupos),
+                                    thread_name_prefix="sfs-bool-disco") as pool_g:
+                files = set().union(*pool_g.map(_avalia, grupos))
         else:
-            files = _eval(ast, qq, cancel, cache, universe_box, phase=phase, stats=stats)
+            files = _avalia(grupos[0]) if grupos else set()
         # B3: filtro de nome por REGEX (o glob já vai pro rg; regex é pós-filtro no basename)
         if qq.name_is_regex and qq.name_patterns:
             nrx = re.compile(qq.name_patterns[0], 0 if qq.case_sensitive else re.IGNORECASE)
@@ -672,6 +705,10 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
         atribui(fp)                          # o atribuidor conta; None = não contar 2x
         return None
 
+    def _nova_fase():
+        """Chamado entre rodadas: a extensão às podadas recomeça a numeração."""
+        fase_da_rodada[0] = _Phase(on_phase, _total_fase, bool(pos))
+
     # rodada viva SEMPRE podada (idem engine.search): --snapshots = estender depois
     parou = rodada(replace(q, skip_snapshots=True), roots, classes, cancel, stats, on_event,
                    entrega, dono_de=_dono_vivo, counts=counts)
@@ -679,6 +716,7 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
         on_event("root_done", {"path": r, "found": counts[r]})
     # 09/09/2026: vivo primeiro, podadas só se faltar — a MESMA extensão da
     # busca simples (engine._estende_snapshots), com a rodada booleana
+    _nova_fase()                 # a extensão reporta progresso próprio, não fica muda
     engine._estende_snapshots(replace(q, paths=q_digitada.paths, excluded_paths=q.excluded_paths),
                               roots, classes, counts, parou, cancel, stats, on_event,
                               entrega, forca_one_fs, rodada)

@@ -295,8 +295,8 @@ def _rotational(dev: str):
     servidor:/export), ZFS (pool/dataset), overlay de container, e qualquer
     sistema sem /sys/block — todos degradam para a política conservadora.
     """
-    base = _sys_disk(dev)
-    if not base:
+    discos = _sys_disks(dev)
+    if not discos:
         return None
     # NAO ha ramo especial para vd*/xvd* (virtio/xen). Chegou a existir em
     # 08/09/2026 com o argumento "o convidado nao sabe o que o hospedeiro tem
@@ -305,8 +305,25 @@ def _rotational(dev: str):
     # QEMU futuro disser "0" (rotation_rate) a regra jogaria fora informacao
     # correta e rebaixaria um SSD virtual. So podia nao fazer nada ou piorar —
     # politica sem medicao, exatamente o que este arquivo evita.
+    #
+    # Varios discos (VG em 2 PVs, lvmcache, LUKS sobre eles — 09/09/2026): a
+    # resposta e a do PIOR. Um cabecote em qualquer lugar do volume ja e
+    # "rotacional" (a regra da casa protege o cabecote, nao a media); "0" so
+    # quando TODOS sao SSD; se algum nao soube dizer, nao sei — e "nao sei"
+    # degrada para a politica conservadora de quem chama.
+    vals = [_le_rotational(d) for d in discos]
+    if "1" in vals:
+        return "1"
+    if vals and all(v == "0" for v in vals):
+        return "0"
+    return None
+
+
+def _le_rotational(disco: str):
+    """'1'/'0' de /sys/block/<disco>/queue/rotational, None se nao der. Hook
+    injetavel: os testes de topologia trocam por um dict."""
     try:
-        with open("/sys/block/%s/queue/rotational" % base, encoding="ascii") as f:
+        with open("/sys/block/%s/queue/rotational" % disco, encoding="ascii") as f:
             return f.read().strip()
     except OSError:
         return None
@@ -587,6 +604,15 @@ def mounts_under(root: str, mounts=None):
     return sorted(set(out))
 
 
+class _Prof:
+    """Adaptador mínimo: deixa `_ident` ler is_network/fstype de uma entrada já
+    montada do preview, sem refazer o search_profile (que pode ser injetado)."""
+    __slots__ = ("is_network", "fstype")
+    def __init__(self, e):
+        self.is_network = e["is_network"]
+        self.fstype = e["fstype"]
+
+
 def list_search_targets(paths, probe_timeout=3.0, mounts=None,
                         _profile=None, _alive=None):
     """§2.3 — VISIBILIDADE DE FRONTEIRA. Dado os roots de uma busca, diz quais
@@ -598,26 +624,70 @@ def list_search_targets(paths, probe_timeout=3.0, mounts=None,
     Cada root vira uma entrada; se um root contém montagens (ex.: '/', '/mnt'),
     elas entram TAMBÉM (o usuário vê o NAS que mora sob o caminho pedido). Dedup
     por ponto de montagem. `alive` só é sondado p/ rede (custo do watchdog); em
-    montagem local fica None (não faz sentido)."""
+    montagem local fica None (não faz sentido).
+
+    10/09/2026 — BIND MOUNT NÃO CONTA DUAS VEZES. O preview dizia "vai tocar N
+    montagens" contando por ponto de montagem, mas `engine.planejar_raizes`
+    junta as montagens expandidas que são o MESMO diretório ((st_dev, st_ino) do
+    ponto de montagem). No ostree /var é bind de /sysroot/ostree/deploy/…/var:
+    duas montagens, um diretório — o motor varria uma vez e o painel prometia
+    duas. Mesma identidade e MESMA regra de vencedora (o que o usuário digitou
+    tem precedência; entre expandidas, o caminho mais curto), para o painel
+    nomear a montagem pelo mesmo caminho que a busca usa. O stat só é feito em
+    disco LOCAL de bloco: em rede/FUSE quem decide é a sonda do gate, e um stat
+    aqui poderia travar a chamada."""
     prof = _profile or search_profile
     alive = _alive or mount_alive
     out, seen = [], set()
-    def add(path):
+    def _ident(path, p):
+        if p.is_network or (p.fstype or "").lower().startswith("fuse"):
+            return None
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_dev, st.st_ino)
+    def entrada(path):
         ap = os.path.abspath(os.path.expanduser(path))
         p = prof(ap, mounts) if mounts is not None else prof(ap)
         key = p.mountpoint or ap
         if key in seen:
-            return
+            return None
         seen.add(key)
         live = alive(p.mountpoint or ap, timeout=probe_timeout) if p.is_network else None
-        out.append({"path": ap, "mountpoint": p.mountpoint, "klass": p.klass,
-                    "fstype": p.fstype, "is_network": p.is_network,
-                    "serialize": p.serialize, "enumerate_default": p.enumerate_default,
-                    "alive": live})
+        return {"path": ap, "mountpoint": p.mountpoint, "klass": p.klass,
+                "fstype": p.fstype, "is_network": p.is_network,
+                "serialize": p.serialize, "enumerate_default": p.enumerate_default,
+                "alive": live}
+    digitadas, expandidas = [], []
     for root in paths:
-        add(root)
+        e = entrada(root)
+        if e is not None:
+            digitadas.append(e)
         for mp in mounts_under(root, mounts):
-            add(mp)
+            e = entrada(mp)
+            if e is not None:
+                expandidas.append(e)
+    ids_digitadas = set()
+    for e in digitadas:
+        i = _ident(e["path"], _Prof(e))
+        if i is not None:
+            ids_digitadas.add(i)
+    vencedora = {}
+    for e in expandidas:
+        i = _ident(e["path"], _Prof(e))
+        e["_ident"] = i
+        if i is None or i in ids_digitadas:
+            continue
+        atual = vencedora.get(i)
+        if atual is None or (len(e["path"]), e["path"]) < (len(atual), atual):
+            vencedora[i] = e["path"]
+    out = list(digitadas)
+    for e in expandidas:
+        i = e.pop("_ident", None)
+        if i is not None and (i in ids_digitadas or vencedora.get(i) != e["path"]):
+            continue          # mesmo diretório que outra entrada: o motor varre uma vez
+        out.append(e)
     return out
 
 
@@ -852,10 +922,15 @@ def is_removable(dev: str) -> bool:
     Lê /sys/block/<disco>/removable, e trata USB como removível mesmo quando a
     flag é 0 — gaveta USB com disco comum responde 0, e o que nos interessa aqui
     não é "pode arrancar", é "escrever nisso é lento e o cache de página do
-    kernel vira uma bomba-relógio"."""
-    disco = _sys_disk(dev)
-    if not disco:
-        return False
+    kernel vira uma bomba-relógio".
+
+    Volume em varios discos: removivel se QUALQUER um for — metade de um VG
+    numa gaveta USB e o VG inteiro na velocidade da gaveta."""
+    return any(_disco_removivel(d) for d in _sys_disks(dev))
+
+
+def _disco_removivel(disco: str) -> bool:
+    """Um disco de /sys/block: flag removable=1 ou barramento USB. Hook injetavel."""
     d = "/sys/block/%s" % disco
     try:
         with open(d + "/removable") as f:
@@ -890,6 +965,50 @@ def _sys_disk(dev: str) -> str:
     return disco if os.path.isdir("/sys/block/%s" % disco) else ""
 
 
+def _slaves_de(base: str) -> list:
+    """Nomes em /sys/block/<base>/slaves ([] se nao ha). Hook injetavel: os
+    testes de topologia trocam por um dict de VG/RAID fingidos."""
+    try:
+        return sorted(os.listdir("/sys/block/%s/slaves" % base))
+    except OSError:
+        return []
+
+
+def _sys_disks(dev: str) -> list:
+    """TODOS os discos inteiros (/sys/block) que sustentam o no `dev`.
+
+    `_sys_disk` descia de dm-N pelos slaves pegando so o PRIMEIRO (sorted[0]):
+    um VG em dois PVs, um lvmcache (SSD na frente do HD) ou LUKS sobre eles
+    viravam, pro programa, o disco de nome menor — e `_rotational` lia o SSD
+    do cache enquanto o volume morava no HD (achado do Rodrigo, 09/09/2026).
+    Aqui a descida e em largura por TODOS os slaves, de dm-* e tambem de md*
+    (RAID), sem ciclo infinito; cada folha resolve pelo `_sys_disk`, que segue
+    sendo o ponto que os testes mockam. Ordenado, sem repeticao. Sem sysfs
+    (container, mock) cai em [_sys_disk(dev)]."""
+    base = os.path.basename(os.path.realpath(dev or ""))
+    if not base:
+        return []
+    fila, vistos, discos = [base], set(), set()
+    while fila:
+        b = fila.pop(0)
+        if b in vistos:
+            continue
+        vistos.add(b)
+        filhos = _slaves_de(b) if (b.startswith("dm-") or b.startswith("md")) else []
+        if filhos:
+            fila.extend(filhos)
+            continue
+        # folha: o proprio dev quando e a raiz (preserva o mock exato de
+        # _sys_disk("/dev/vda3")); senao o no do slave
+        d = _sys_disk(dev if b == base else "/dev/" + b)
+        if d:
+            discos.add(d)
+    if not discos:
+        d = _sys_disk(dev)
+        return [d] if d else []
+    return sorted(discos)
+
+
 def link_speed(dev: str):
     """Velocidade NEGOCIADA do barramento, em Mbit/s, ou None se não for USB.
 
@@ -900,10 +1019,17 @@ def link_speed(dev: str):
 
     É o teto do LINK, não do dispositivo: um pendrive lento em porta rápida
     continua lento. Serve para dizer "não adianta trocar de porta" ou o
-    contrário."""
-    disco = _sys_disk(dev)
-    if not disco:
-        return None
+    contrário.
+
+    Volume em varios discos: a MENOR velocidade entre os que tem uma — o link
+    mais lento e o teto do volume inteiro."""
+    vels = [v for v in (_velocidade_do_disco(d) for d in _sys_disks(dev)) if v is not None]
+    return min(vels) if vels else None
+
+
+def _velocidade_do_disco(disco: str):
+    """Velocidade USB negociada (Mbit/s) de UM disco de /sys/block, ou None se
+    nao for USB. Hook injetavel."""
     caminho = os.path.realpath("/sys/block/%s/device" % disco)
     # sobe a árvore até achar o nó USB que carrega 'speed'
     for _ in range(8):
