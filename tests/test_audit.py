@@ -7,7 +7,7 @@ Rode:  python3 tests/test_audit.py      (ou via pytest)
 Cada teste constrói sua própria árvore sintética em tempdir — não toca no acervo.
 """
 from __future__ import annotations
-import os, sys, time, subprocess, tempfile, shutil, errno
+import os, re, sys, time, subprocess, tempfile, shutil, errno
 
 RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(RAIZ, "lfs"))
@@ -2149,6 +2149,17 @@ def test_appimage_recipe_is_coherent():
     assert "GPL-3.0-or-later" in recipe, "AppStream sem a licença do projeto"
     for chave in ("appimagetool", "python-build-standalone"):
         assert chave in recipe
+    # 09/09/2026: rg e fd EMBUTIDOS — sem eles o motor cai no fallback Python,
+    # serial, e o particionamento por disco não chega no usuário do AppImage.
+    # As versões têm que ser as MESMAS que o install.sh baixa: um canal com rg
+    # 15 e outro com 14 é o tipo de divergência que ninguém percebe até doer.
+    for chave in ("embute_motor", "RGURL", "FDURL", "ripgrep-$RGV", "fd-$FDV"):
+        assert chave in recipe, f"receita sem {chave}: rg/fd não estão embutidos"
+    inst = open(os.path.join(RAIZ, "install.sh"), encoding="utf-8").read()
+    rgv_inst = re.search(r'rgv="([^"]+)"', inst).group(1)
+    fdv_inst = re.search(r'fdv="([^"]+)"', inst).group(1)
+    assert f'RGV="{rgv_inst}"' in recipe, f"rg do AppImage != rg do install.sh ({rgv_inst})"
+    assert f'FDV="{fdv_inst}"' in recipe, f"fd do AppImage != fd do install.sh ({fdv_inst})"
     # O binário construído, se existir, tem que rodar a CLI.
     imgs = [f for f in os.listdir(os.path.join(RAIZ, "dist"))
             if f.endswith(".AppImage")] if os.path.isdir(os.path.join(RAIZ, "dist")) else []
@@ -2157,7 +2168,23 @@ def test_appimage_recipe_is_coherent():
         r = subprocess.run([img, "--cli", "--version"], capture_output=True, text=True,
                            env={"HOME": os.environ.get("HOME", "/tmp"), "PATH": "/usr/bin:/bin"})
         assert r.returncode == 0 and "GPL" in r.stdout, r.stdout + r.stderr
-        print(f"ok  F6   AppImage coerente e executável ({os.path.basename(img)})")
+        # Sem rg/fd no PATH, os embutidos têm que aparecer na linha "# engine:".
+        # PATH mínimo: o que o AppRun usa (sh, dirname, readlink) e o que o
+        # runtime do AppImage usa para se montar (fusermount) — num sistema com
+        # rg instalado o teste passaria por engano com /usr/bin.
+        with tempfile.TemporaryDirectory() as vazio:
+            for t in ("sh", "dirname", "readlink", "fusermount", "fusermount3"):
+                if shutil.which(t):
+                    os.symlink(shutil.which(t), os.path.join(vazio, t))
+            open(os.path.join(vazio, "sonda.txt"), "w").close()
+            r = subprocess.run([img, "--cli", vazio, "-n", "sonda"], capture_output=True,
+                               text=True, env={"HOME": os.environ.get("HOME", "/tmp"),
+                                               "PATH": vazio})
+        m = re.search(r"# engine: rg=(\S+) fd=(\S+)", r.stderr)
+        assert m, "CLI do AppImage não imprimiu a linha do motor: " + r.stderr[-300:]
+        assert m.group(1).endswith("/usr/bin/rg") and m.group(2).endswith("/usr/bin/fd"), \
+            f"AppImage sem rg/fd no PATH não usou os embutidos: {m.group(0)}"
+        print(f"ok  F6   AppImage coerente, executável e com rg/fd embutidos ({os.path.basename(img)})")
     else:
         print("ok  F6   receita do AppImage coerente (binário não construído)")
 

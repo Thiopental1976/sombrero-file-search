@@ -6,7 +6,13 @@
 # instalar nada. É o complemento do .deb, não um substituto:
 #
 #   .deb      -> magro, integra com o apt, GUI depende do PySide6 do usuário
-#   AppImage  -> gordo (~200 MB), traz Python e PySide6 dentro, não depende de nada
+#   AppImage  -> gordo (~200 MB), traz Python, PySide6, rg e fd dentro; não depende de nada
+#
+# rg e fd EMBUTIDOS (09/09/2026, decisão do Rodrigo): sem eles o motor cai no
+# fallback Python, que é serial e não recebe nada do particionamento por disco —
+# a otimização inteira sumia justamente no canal em que ninguém passa por
+# instalador. São ~6 MB estáticos (musl) dentro de ~200; o "tamanho" não segurava.
+# Mesmas versões que o install.sh baixa, das mesmas URLs de release.
 #
 # Por que AppImage e não Flatpak: o Flatpak roda em sandbox e este programa
 # existe para varrer o disco INTEIRO. Concedê-lo `--filesystem=host` é anular a
@@ -28,6 +34,10 @@ PYVER="3.12.13"
 PYTAG="20260718"
 PYURL="https://github.com/astral-sh/python-build-standalone/releases/download/$PYTAG/cpython-$PYVER%2B$PYTAG-x86_64-unknown-linux-gnu-install_only.tar.gz"
 AIURL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+RGV="15.2.0"     # manter em sincronia com install.sh (install_static_engines)
+FDV="v10.4.2"
+RGURL="https://github.com/BurntSushi/ripgrep/releases/download/$RGV/ripgrep-$RGV-x86_64-unknown-linux-musl.tar.gz"
+FDURL="https://github.com/sharkdp/fd/releases/download/$FDV/fd-$FDV-x86_64-unknown-linux-musl.tar.gz"
 
 say() { printf '\033[1;36m%s\033[0m\n' "$*"; }
 ok()  { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -47,6 +57,8 @@ fetch() {   # url destino
 }
 fetch "$AIURL" "$CACHE/appimagetool.AppImage"; chmod +x "$CACHE/appimagetool.AppImage"
 fetch "$PYURL" "$CACHE/python-standalone.tar.gz"
+fetch "$RGURL" "$CACHE/ripgrep-$RGV.tar.gz"
+fetch "$FDURL" "$CACHE/fd-$FDV.tar.gz"
 
 # --------------------------------------------------------------- AppDir
 appdir="$(mktemp -d)/$APP.AppDir"
@@ -54,12 +66,12 @@ trap 'rm -rf "$(dirname "$appdir")"' EXIT
 mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" "$appdir/usr/share/applications" \
          "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/usr/share/metainfo"
 
-say "[1/4] Python embutido"
+say "[1/5] Python embutido"
 tar -xzf "$CACHE/python-standalone.tar.gz" -C "$appdir/usr/lib"   # cria python/
 PY="$appdir/usr/lib/python/bin/python3"
 "$PY" -V
 
-say "[2/4] PySide6 (Essentials — sem QtWebEngine, que dobraria o tamanho)"
+say "[2/5] PySide6 (Essentials — sem QtWebEngine, que dobraria o tamanho)"
 "$PY" -m pip install --no-cache-dir --upgrade pip >/dev/null
 "$PY" -m pip install --no-cache-dir PySide6-Essentials >/dev/null
 "$PY" -c 'import PySide6; from PySide6.QtWidgets import QApplication; print("  PySide6", PySide6.__version__)'
@@ -75,7 +87,7 @@ done
 find "$appdir/usr/lib/python" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
 find "$appdir/usr/lib/python" -name 'tests' -path '*/lib/python3*' -prune -exec rm -rf {} + 2>/dev/null || true
 
-say "[3/4] Aplicativo"
+say "[3/5] Aplicativo"
 mkdir -p "$appdir/usr/lib/$APP/lfs" "$appdir/usr/lib/$APP/assets"
 install -m 644 "$SRC/lfs/"*.py "$appdir/usr/lib/$APP/lfs/"
 install -m 644 "$SRC/assets/"* "$appdir/usr/lib/$APP/assets/"
@@ -99,18 +111,39 @@ StartupNotify=true
 EOF
 cp "$appdir/$APP.desktop" "$appdir/usr/share/applications/"
 
+say "[4/5] Motores rg e fd (estáticos)"
+# Um binário de cada tarball, e só ele: o tarball do rg traz manpage/completions
+# que não fazem falta aqui. `find -name` em vez de caminho fixo porque a pasta
+# de topo carrega a versão no nome.
+embute_motor() {   # tarball nome
+  local tmp; tmp="$(mktemp -d)"
+  tar -xzf "$1" -C "$tmp" --no-same-owner
+  local f; f="$(find "$tmp" -type f -name "$2" | head -1)"
+  [ -n "$f" ] || { echo "$2 não veio no tarball $(basename "$1")" >&2; rm -rf "$tmp"; exit 1; }
+  install -m 755 "$f" "$appdir/usr/bin/$2"
+  rm -rf "$tmp"
+  # Estático de verdade? Um binário que dependesse da glibc do host trairia a
+  # promessa "roda em qualquer distro" no pior lugar: dentro do AppImage.
+  if ldd "$appdir/usr/bin/$2" 2>&1 | grep -q '=>'; then
+    echo "$2 não é estático (ldd lista dependências)" >&2; exit 1
+  fi
+  ok "$2 $("$appdir/usr/bin/$2" --version | head -1)"
+}
+embute_motor "$CACHE/ripgrep-$RGV.tar.gz" rg
+embute_motor "$CACHE/fd-$FDV.tar.gz" fd
+
 # AppRun: o ponto de entrada. Duas responsabilidades além de chamar o Python —
 #   1) `--cli`, para que UM arquivo sirva a GUI e a linha de comando;
-#   2) achar rg/fd: o AppImage NÃO os embute (são binários grandes e o motor tem
-#      fallback), então usa os do sistema quando existem. É a mesma política do
-#      resto do projeto: motor externo se houver, degradação limpa se não.
+#   2) achar rg/fd: os do SISTEMA primeiro, se existirem; senão os embutidos em
+#      usr/bin. O AppImage não sequestra as ferramentas da máquina, mas também
+#      não deixa o usuário no fallback Python por falta delas.
 cat > "$appdir/AppRun" <<'APPRUN'
 #!/bin/sh
 HERE="$(dirname "$(readlink -f "$0")")"
 APPDIR_LIB="$HERE/usr/lib/sombrero-file-search"
 PY="$HERE/usr/lib/python/bin/python3"
 # PATH do sistema PRIMEIRO: se o usuário tem rg/fd instalados, são os dele que
-# valem; o AppImage não sequestra as ferramentas da máquina.
+# valem. Os embutidos ficam atrás, como rede de segurança.
 export PATH="$PATH:$HERE/usr/bin"
 case "${1:-}" in
   --cli|cli) shift; exec "$PY" "$APPDIR_LIB/lfs/cli.py" "$@" ;;
@@ -140,7 +173,7 @@ cat > "$appdir/usr/share/metainfo/$APP.appdata.xml" <<EOF
 </component>
 EOF
 
-say "[4/4] Montando"
+say "[5/5] Montando"
 mkdir -p "$OUT"
 img="$OUT/Sombrero_File_Search-$ver-x86_64.AppImage"
 # ARCH: o appimagetool não adivinha em build sem desktop integration.
@@ -152,6 +185,22 @@ ok "$img  ($(du -h "$img" | cut -f1))"
 
 say "== Conferindo =="
 "$img" --cli --version
+# Sem rg/fd no PATH o AppImage tem que achar os SEUS. O PATH mínimo abaixo só
+# tem o que o AppRun precisa (sh, dirname, readlink) e o que o runtime do
+# AppImage precisa para se montar (fusermount); num sistema com rg instalado o
+# teste passaria por engano sem isto. A CLI imprime "# engine: rg=… fd=…" no
+# stderr de toda busca — é a prova.
+vazio="$(mktemp -d)"
+for t in sh dirname readlink fusermount fusermount3; do
+  p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$vazio/$t"
+done
+: > "$vazio/sonda.txt"
+motor="$(PATH="$vazio" "$img" --cli "$vazio" -n sonda 2>&1 >/dev/null || true)"
+rm -rf "$vazio"
+case "$motor" in
+  *"rg=/"*"/usr/bin/rg "*"fd=/"*"/usr/bin/fd"*) ok "motores embutidos encontrados sem nada no PATH" ;;
+  *) echo "AppImage não achou os motores embutidos:" >&2; printf '%s\n' "$motor" >&2; exit 1 ;;
+esac
 echo
 echo "  GUI :  $img"
 echo "  CLI :  $img --cli ~/pasta -n '*.pdf'"
