@@ -39,7 +39,7 @@ Exemplo real: `(laudo OR relatório) AND paciente NOT rascunho`.
 
 **Dentro de documentos.** Com o modo *docs* liga o [ripgrep-all](https://github.com/phiresky/ripgrep-all)
 (`rga`), que busca **dentro** de PDF, docx, epub, odt e zip. Precisa do `rga`
-instalado (o AppImage já traz; no `.deb`/`install.sh` é opcional).
+instalado (opcional em todos os canais; o `install.sh` baixa, o AppImage não embute).
 
 **Filtros** (valem para nome, conteúdo e booleano):
 
@@ -56,6 +56,16 @@ instalado (o AppImage já traz; no `.deb`/`install.sh` é opcional).
 
 **Não cruzar montagens** (`--one-file-system`) é útil para buscar só no disco atual
 sem entrar em pendrives/HDs externos montados debaixo da pasta.
+
+**Snapshots: árvore viva primeiro, snapshots só se faltar.** Timeshift, snapper, ZFS,
+shadow copies do Samba e implantações ostree são cópias do sistema que podem multiplicar
+a varredura por dez, então ficam podados enquanto a árvore viva é varrida. Se uma pasta
+que você digitou voltar vazia, a busca se estende sozinha às árvores de snapshot
+debaixo dela e avisa; os resultados de lá vêm marcados (tooltip na GUI, `snapshot` nas
+exportações e no `--json`). Cópias idênticas — mesmo arquivo, ou mesmo caminho + tamanho
++ mtime entre a árvore viva e um snapshot — colapsam numa linha só, cópia viva na frente,
+com "+N cópias". *Incluir snapshots* / `--snapshots` estende sem esperar o resultado
+vazio. Estender por nome é barato; por conteúdo é ler cada snapshot inteiro.
 
 ---
 
@@ -108,14 +118,26 @@ No menu **Buscas ▾** (ao lado de *Discos*):
 
 Abrir uma busca salva **abre outra aba** — não substitui a que você está vendo.
 
+Busca salva com *incluir snapshots* marcado se comporta de outro jeito desde
+setembro de 2026: a caixa não quer mais dizer "uma varredura sem poda", quer
+dizer "estender sempre às árvores de snapshot depois da viva". Os arquivos são
+os mesmos, agora deduplicados, com as cópias de snapshot dobradas na linha viva.
+
 ### Exportar resultados *(F5)*
 **Buscas ▾ → Exportar** (`Ctrl+E`) grava o que está na tela, **na ordem em que
 está** (se você ordenou por tamanho, o arquivo sai por tamanho):
 
 - **CSV** — uma linha por trecho casado, com cabeçalho e separador `;` (abre no
-  LibreOffice pt-BR com dois cliques). Colunas: `path;folder;name;size;modified;matches;line;text`.
+  LibreOffice pt-BR com dois cliques). Colunas:
+  `path;folder;name;size;modified;matches;snapshot;copies;line;text` (`snapshot` = a
+  árvore de snapshot de onde o arquivo veio, vazio para a árvore viva; `copies` = cópias
+  idênticas colapsadas naquela linha).
 - **JSON** — um objeto por **arquivo**, com os trechos aninhados (`jq -r '.[].path'`
-  continua trivial).
+  continua trivial) e os mesmos campos `snapshot` / `copies`.
+
+> **Mudança de colunas (setembro de 2026).** `snapshot` e `copies` entraram
+> **antes** de `line` e `text`. Script que lê o CSV por *posição* de coluna
+> precisa de ajuste; quem lê pelo nome do cabeçalho, não.
 
 O formato é escolhido pela extensão do arquivo que você nomear (`.json` → JSON,
 qualquer outra → CSV).
@@ -131,6 +153,13 @@ Antes de copiar, o LFS faz uma **pré-checagem do destino**: espaço livre, limi
 está de fato montada. Em **pendrive/removível**, a escrita é feita **em ritmo**
 (sincroniza a cada 16 MiB) para não sequestrar o cache do sistema e travar a máquina —
 num disco interno isso não acontece, o kernel administra bem.
+
+> **Quando dois arquivos colapsam num.** Dois resultados são tratados como o
+> mesmo arquivo quando compartilham o inode (hard link, bind mount, `rsync`
+> entre snapshots) ou quando o caminho vivo, o tamanho e o segundo inteiro do
+> mtime coincidem. O lado ruim, declarado: dois arquivos realmente diferentes
+> no mesmo caminho vivo, com o mesmo tamanho e o mesmo segundo, colapsariam
+> numa linha. Na prática é o mesmo arquivo.
 
 > **Nunca destrói a origem.** O LFS lê e copia; jamais move, renomeia ou apaga o
 > arquivo de origem. Se a cópia for cancelada, o destino parcial é removido.
@@ -171,6 +200,10 @@ Sem nenhum critério, lista tudo sob a(s) pasta(s) (como um `ls -R` com filtros)
 | | `--one-fs` | não cruza pontos de montagem |
 | | `--min-size N` | tamanho mínimo (`10M`, `1G`, ou bytes) |
 | | `--days N` | modificado nos últimos N dias |
+| | `--snapshots` | SEMPRE varre também as árvores de snapshot (por padrão só quando a árvore viva não dá nada para aquela pasta) |
+| | `--json` | NDJSON para automação: um objeto por achado, avisos no mesmo fluxo |
+| | `--nice-io` | baixa a prioridade de CPU + I/O (nice 19 + ionice idle) para buscas de cron/fundo |
+| | `--index` | busca por nome pelo índice do `plocate`; recusa se o índice tem buracos, cada achado é conferido ao vivo |
 | `-0` | `--print0` | separa caminhos por NUL (para `xargs -0`) |
 | `-l` | `--files-only` | só o caminho (sem as linhas casadas) |
 | `-V` | `--version` | versão + licença |
@@ -184,6 +217,14 @@ Sem nenhum critério, lista tudo sob a(s) pasta(s) (como um `ls -R` com filtros)
   `caminho:linha:texto`.
 - Com `-0` os caminhos vêm separados por NUL — o jeito seguro de passar nomes com
   espaços/quebras de linha para o `xargs -0`.
+- Com `--json` cada linha é um objeto: um achado (`path`, `size`, `mtime`, `is_dir`,
+  `nmatch`, `lines[]`, `snapshot`, `copies[]`), um `{"copy","of","snapshot"}` para uma
+  duplicata absorvida depois de o dono já ter saído, ou um aviso
+  `{"warn"|"error": "incomplete", "reason", "where", "detail"}` — os identificadores de
+  `reason` estão no README.
+- Quando a busca não conseguiu olhar em algum lugar, o `stderr` recebe `# incomplete: …`;
+  se o resultado pode estar *errado* (raiz inexistente, disco não montado, motor falhou),
+  o código de saída é 2.
 
 ### Exemplos
 
@@ -212,8 +253,10 @@ lfs ~ -n '*.md' -l 2>/dev/null | fzf
 
 ### Observações
 - A busca é **insensível à caixa por padrão**; use `-s` quando a diferença importar.
-- O **código de saída é 0** mesmo sem resultados (não use o exit code como "achou/
-  não achou" — conte as linhas do `stdout`).
+- **Código de saída:** `0` achou algo, `1` não achou nada, `2` o resultado pode estar
+  errado (raiz que não existe, disco que deveria estar montado e não está, motor falhou)
+  — como o grep. Perdas que só deixam o resultado *incompleto* (uma pasta que negou
+  leitura) não o mudam.
 - `-n` usa glob por padrão; para expressão regular no nome, junte `--name-regex`
   (ex.: `--name-regex -n 'IMG_\d{4}\.jpg$'`).
 
@@ -223,8 +266,8 @@ lfs ~ -n '*.md' -l 2>/dev/null | fzf
 
 | | quando usar | GUI |
 |---|---|---|
-| **AppImage** | qualquer distro, nada a instalar (Python + PySide6 e `rga` embutidos) | sim |
-| **.deb** | Debian/Ubuntu/Mint, integrado ao apt | precisa de PySide6 |
+| **AppImage** | qualquer distro, nada a instalar (Python + PySide6 + `rg` + `fd` embutidos; `rga` não) | sim |
+| **.deb** | Debian/Ubuntu/Mint, integrado ao apt | precisa de PySide6 (`--setup-gui`) e de `libgl1` em sistemas mínimos |
 | **install.sh** | qualquer distro, instala no `~`, sem root | usa o do sistema ou cria um venv |
 
 Detalhes de cada caminho e das dependências opcionais (`rg`, `fd`, `rga`) estão no

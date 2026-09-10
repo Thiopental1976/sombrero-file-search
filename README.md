@@ -66,7 +66,8 @@ The `reason` identifiers are a contract for scripts (stable, English):
 | `read_error` | no | the engine could not read something (I/O error, not a directory…) |
 | `stat_failed` | no | the engine listed or matched a file that vanished before it could be stat'ed |
 | `truncated` | no | stopped at the internal result cap; there may be more |
-| `snapshots_skipped` | no | a system snapshot tree (Timeshift, snapper, ZFS, Samba shadow copies) was not searched — `--snapshots` / "include snapshots" to include it |
+| `snapshots_skipped` | no | a snapshot tree (Timeshift, snapper, ZFS, Samba shadow copies, ostree deployments) was not searched because the live tree already had results for that root — `--snapshots` / "include snapshots" to always search it |
+| `snapshots_searched` | no | the live tree gave nothing for that root, so its snapshot trees were searched too; results from them carry `snapshot` |
 | `dead_mount` | no | a mount under the search did not answer, or answered broken (ENOTCONN/ESTALE), and was skipped |
 | `empty_mountpoint` | no | the root is an empty folder where disks are mounted (`/mnt/X`, `/media/<user>/X`) and is not a mount point — is the disk mounted? |
 | `mount_not_entered` | no | a gvfs (phone) or autofs mount under the root was not entered by default; search it by its own path |
@@ -85,8 +86,8 @@ system folder denied reading.
 This is not a slogan; it is a test. `tests/test_honestidade.py` provokes each loss for real
 (chmod 000, an invalid flag injected into the engine's command line, a fake fstab, a root that
 is a file…) in **each backend** — fd/name, rg/content, Python/name, Python/content, boolean,
-boolean without rg — and demands the right reason in the funnel. **6 backends × 11 losses,
-53 applicable cells, all green.** The table is a ratchet in both directions: it fails if a
+boolean without rg — and demands the right reason in the funnel. **6 backends × 12 losses,
+59 applicable cells, all green.** The table is a ratchet in both directions: it fails if a
 green cell regresses *and* if a pinned known gap starts working without being un-pinned.
 
 ## Disk-aware, and measured
@@ -129,11 +130,22 @@ above, whole, with one thread, **had not finished after an hour**. Content searc
 of large binaries is one seek per file; that is physics, not a bug, and the status bar will be
 honest about how far it got.
 
-**Snapshot trees are pruned by default.** One archive disk hosted five Timeshift snapshots:
-2.4 M inodes against 175 k on the next disk, and it alone took 1 264 s. With the pruning,
-**95 s, identical results, 13.3× faster**. The pruning is *said* (`snapshots_skipped`, a
-checkbox in the GUI, `--snapshots` on the CLI), and it switches itself off when you point the
-search *into* a snapshot — that is where you wanted to look.
+**Snapshot trees: live first, snapshots only if nothing.** One archive disk hosted five
+Timeshift snapshots: 2.4 M inodes against 175 k on the next disk, and it alone took 1 264 s.
+Pruning them gives **95 s, identical results, 13.3× faster** — but a file searcher that returns
+nothing for a file that *is* on the disk, inside a snapshot, is lying. So the live tree is
+searched first, and for every root you typed that came back empty the search **extends itself**
+to the snapshot trees pruned under it (Timeshift, snapper, ZFS, Samba shadow copies, ostree
+deployments — one mechanism for all of them, nothing keyed on the distro's name). Results from
+there are marked (`snapshot` in `--json` and in the CSV, a tooltip in the GUI), and identical
+copies collapse into one row: same inode, or same relative path + size + mtime between the live
+tree and a snapshot, live copy first, "+N copies" on the row. `--snapshots` / "include
+snapshots" extends without waiting for zero; pointing the search *into* a snapshot searches it
+outright — that is where you wanted to look. Both outcomes are *said*: `snapshots_skipped` when
+the live tree had results, `snapshots_searched` when the extension ran. Measured on a Timeshift
+disk (5 rsync snapshots, 788 k inodes): live name search 0.11 s; the extension by name adds
+≈9 s; by **content** it costs ≈2.7 min, because `rg` reads every hard link once per snapshot.
+The ostree object store (`ostree/repo`) is never searched: its files are named by hash.
 
 ## Mounts, dead and alive
 
@@ -187,7 +199,7 @@ to search explicitly.
 
 | | when to use | GUI? |
 |---|---|---|
-| **AppImage** | any distro, nothing to install | yes — Python and PySide6 bundled |
+| **AppImage** | any distro, nothing to install | yes — Python, PySide6, `rg` and `fd` bundled |
 | **.deb** | Debian/Ubuntu/Mint | needs PySide6 (`sombrero-file-search --setup-gui` builds a venv in your home) |
 | **install.sh** | any distro, installs into `~/.local`, no root, immutable distros included | yes |
 
@@ -206,6 +218,9 @@ cd sombrero-file-search && ./install.sh
 
 The `.deb` is deliberately thin: `Depends: python3`, with `ripgrep` and `fd-find` as
 *Recommends* — there is a pure-Python fallback, so declaring them mandatory would be a lie.
+The GUI needs PySide6 and, on minimal installs (cloud images, containers), `libgl1`: Qt loads
+`libGL.so.1` even off-screen, and without it `import PySide6` fails. `--setup-gui` and
+`install.sh` say so when it is missing.
 There is no Flatpak on purpose: this program exists to sweep the whole disk, and the sandbox is
 the wrong model for that.
 
@@ -220,8 +235,11 @@ sfs /mnt -n '*.iso' --json                    # NDJSON, one object per match + w
 sfs / -n laudo --snapshots                    # include snapshot trees
 ```
 
-`--json` emits one object per match (`path`, `size`, `mtime`, `is_dir`, `nmatch`, `lines[]`)
-and, in the same stream, `{"warn":"incomplete",…}` / `{"error":"incomplete",…}` with the
+`--json` emits one object per match (`path`, `size`, `mtime`, `is_dir`, `nmatch`, `lines[]`,
+`snapshot` — the pruned tree it came from, `null` for the live tree — and `copies[]`, the
+identical copies collapsed into it so far), `{"copy": path, "of": owner, "snapshot": tree}` for
+a duplicate absorbed after its owner was already printed, and, in the same stream,
+`{"warn":"incomplete",…}` / `{"error":"incomplete",…}` with the
 `reason` table above, `{"warn":"mount_dead",…}`, `{"warn":"denied",…}`, and
 `{"error":"boolean_expression",…}` for a malformed expression. Exit code: 0 / 1 / 2.
 

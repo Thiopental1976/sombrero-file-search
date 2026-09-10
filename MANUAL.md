@@ -40,7 +40,7 @@ Real example: `(invoice OR receipt) AND client NOT draft`.
 
 **Inside documents.** The *docs* mode enables [ripgrep-all](https://github.com/phiresky/ripgrep-all)
 (`rga`), which searches **inside** PDF, docx, epub, odt and zip files. Requires
-`rga` (bundled in the AppImage; optional in the `.deb`/`install.sh`).
+`rga` (optional in every channel; `install.sh` downloads it, the AppImage does not bundle it).
 
 **Filters** (apply to name, content and boolean searches):
 
@@ -57,6 +57,16 @@ Real example: `(invoice OR receipt) AND client NOT draft`.
 
 **Don't cross mounts** (`--one-file-system`) is handy to search only the current
 disk without entering USB drives/external disks mounted below the folder.
+
+**Snapshots: live tree first, snapshot trees only if nothing.** Timeshift, snapper,
+ZFS, Samba shadow copies and ostree deployments are copies of the system that can
+multiply a walk tenfold, so they are pruned while the live tree is searched. If a
+folder you typed comes back empty, the search extends itself to the snapshot trees
+under it and says so; results from there are marked (tooltip in the GUI, `snapshot`
+in exports and `--json`). Identical copies — same file, or same path + size + mtime
+between the live tree and a snapshot — collapse into one row, live copy first, with
+"+N copies". *Include snapshots* / `--snapshots` extends without waiting for an empty
+result. Extending by name is cheap; by content it means reading each snapshot in full.
 
 ---
 
@@ -109,14 +119,26 @@ In the **Searches ▾** menu (next to *Disks*):
 
 Opening a saved search **opens a new tab** — it doesn't replace what you're viewing.
 
+A search saved with *include snapshots* ticked behaves differently since
+September 2026: the box no longer means "one sweep with no pruning", it means
+"always extend to the snapshot trees after the live one". The results are the
+same files, now deduplicated, with the snapshot copies folded into the live row.
+
 ### Export results *(F5)*
 **Searches ▾ → Export** (`Ctrl+E`) writes what's on screen, **in the order shown**
 (if you sorted by size, the file comes out by size):
 
 - **CSV** — one row per matched snippet, with a header and `;` delimiter (opens in
-  a spreadsheet with two clicks). Columns: `path;folder;name;size;modified;matches;line;text`.
+  a spreadsheet with two clicks). Columns:
+  `path;folder;name;size;modified;matches;snapshot;copies;line;text` (`snapshot` = the
+  snapshot tree the file came from, empty for the live tree; `copies` = identical copies
+  collapsed into that row).
 - **JSON** — one object per **file**, with the snippets nested (`jq -r '.[].path'`
-  stays trivial).
+  stays trivial) and the same `snapshot` / `copies` fields.
+
+> **Column change (September 2026).** `snapshot` and `copies` were inserted
+> **before** `line` and `text`. A script that reads the CSV by column *position*
+> needs updating; one that reads it by header name does not.
 
 The format is chosen by the filename's extension (`.json` → JSON, anything else → CSV).
 
@@ -131,6 +153,13 @@ file limit, filenames illegal on the destination filesystem, and whether the mou
 is actually mounted. On a **USB stick / removable** drive the write is **paced**
 (synced every 16 MiB) so it doesn't hijack the system's page cache and freeze the
 machine — on an internal disk this doesn't happen, the kernel handles it well.
+
+> **When two files collapse into one.** Two results are treated as the same file
+> when they share an inode (hard link, bind mount, `rsync` between snapshots) or
+> when the live path, the size and the whole second of the mtime all match. The
+> declared trade-off: two genuinely different files at the same live path, with
+> the same size and the same second, would collapse into one row. In practice
+> that is the same file.
 
 > **Never destroys the source.** LFS reads and copies; it never moves, renames or
 > deletes the source. If a copy is cancelled, the partial destination is removed.
@@ -171,6 +200,10 @@ With no criteria, it lists everything under the folder(s) (like `ls -R` with fil
 | | `--one-fs` | don't cross mount points |
 | | `--min-size N` | minimum size (`10M`, `1G`, or bytes) |
 | | `--days N` | modified within the last N days |
+| | `--snapshots` | ALWAYS search snapshot trees too (by default only when the live tree gives nothing for that folder) |
+| | `--json` | NDJSON for automation: one object per match, warnings in the same stream |
+| | `--nice-io` | lower CPU + I/O priority (nice 19 + ionice idle) for cron/background searches |
+| | `--index` | name search through the `plocate` index; refuses if the index has holes, every hit verified live |
 | `-0` | `--print0` | separate paths with NUL (for `xargs -0`) |
 | `-l` | `--files-only` | path only (no match lines) |
 | `-V` | `--version` | version + license |
@@ -183,6 +216,13 @@ With no criteria, it lists everything under the folder(s) (like `ls -R` with fil
   `path:line:text`.
 - With `-0` paths are NUL-separated — the safe way to pass names with spaces or
   newlines to `xargs -0`.
+- With `--json` every line is one object: a match (`path`, `size`, `mtime`, `is_dir`,
+  `nmatch`, `lines[]`, `snapshot`, `copies[]`), a `{"copy","of","snapshot"}` for a
+  duplicate absorbed after its owner was printed, or a warning
+  `{"warn"|"error": "incomplete", "reason", "where", "detail"}` — the `reason`
+  identifiers are listed in the README.
+- When the search could not look somewhere, `stderr` gets `# incomplete: …`; if the
+  result may be *wrong* (root missing, disk not mounted, engine failed) the exit code is 2.
 
 ### Examples
 
@@ -211,8 +251,10 @@ lfs ~ -n '*.md' -l 2>/dev/null | fzf
 
 ### Notes
 - Search is **case-insensitive by default**; use `-s` when case matters.
-- The **exit code is 0** even with no results (don't use the exit code as
-  "found / not found" — count the `stdout` lines instead).
+- **Exit code:** `0` found something, `1` nothing found, `2` the result may be wrong
+  (a root that does not exist, a disk that should be mounted and is not, the engine
+  failed) — grep-style. Losses that only make the result *incomplete* (a folder that
+  denied reading) do not change it.
 - `-n` uses globs by default; for a regular expression on the name, add
   `--name-regex` (e.g. `--name-regex -n 'IMG_\d{4}\.jpg$'`).
 
@@ -222,8 +264,8 @@ lfs ~ -n '*.md' -l 2>/dev/null | fzf
 
 | | when to use | GUI |
 |---|---|---|
-| **AppImage** | any distro, nothing to install (Python + PySide6 and `rga` bundled) | yes |
-| **.deb** | Debian/Ubuntu/Mint, apt-integrated | needs PySide6 |
+| **AppImage** | any distro, nothing to install (Python + PySide6 + `rg` + `fd` bundled; `rga` not) | yes |
+| **.deb** | Debian/Ubuntu/Mint, apt-integrated | needs PySide6 (`--setup-gui`) and `libgl1` on minimal systems |
 | **install.sh** | any distro, installs into `~`, no root | uses the system's or builds a venv |
 
 Details for each path and the optional dependencies (`rg`, `fd`, `rga`) are in

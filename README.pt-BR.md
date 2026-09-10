@@ -66,7 +66,8 @@ Os identificadores de `reason` são contrato para scripts (estáveis, em inglês
 | `read_error` | não | o motor não conseguiu ler algo (erro de I/O, não é diretório…) |
 | `stat_failed` | não | o motor listou ou casou um arquivo que sumiu antes do `stat` |
 | `truncated` | não | parou no teto interno de resultados; pode haver mais |
-| `snapshots_skipped` | não | uma árvore de snapshot do sistema (Timeshift, snapper, ZFS, shadow copies do Samba) não foi varrida — `--snapshots` / "incluir snapshots" para incluir |
+| `snapshots_skipped` | não | uma árvore de snapshot (Timeshift, snapper, ZFS, shadow copies do Samba, implantações ostree) não foi varrida porque a árvore viva já tinha resultado para aquela raiz — `--snapshots` / "incluir snapshots" para varrer sempre |
+| `snapshots_searched` | não | a árvore viva não deu nada para aquela raiz, então as árvores de snapshot dela foram varridas também; os resultados de lá trazem `snapshot` |
 | `dead_mount` | não | uma montagem sob a busca não respondeu, ou respondeu quebrada (ENOTCONN/ESTALE), e foi pulada |
 | `empty_mountpoint` | não | a raiz é uma pasta vazia onde discos são montados (`/mnt/X`, `/media/<user>/X`) e não é ponto de montagem — o disco está montado? |
 | `mount_not_entered` | não | uma montagem gvfs (celular) ou autofs sob a raiz não foi varrida por padrão; busque pelo caminho dela |
@@ -85,8 +86,8 @@ a falhar porque uma pasta do sistema negou leitura.
 Isso não é slogan; é um teste. `tests/test_honestidade.py` provoca cada perda de verdade
 (chmod 000, uma flag inválida injetada na linha de comando do motor, um fstab falso, uma raiz
 que é arquivo…) em **cada backend** — fd/nome, rg/conteúdo, Python/nome, Python/conteúdo,
-booleano, booleano sem rg — e exige o motivo certo no funil. **6 backends × 11 perdas,
-53 células aplicáveis, todas verdes.** A tabela é uma catraca nos dois sentidos: falha se uma
+booleano, booleano sem rg — e exige o motivo certo no funil. **6 backends × 12 perdas,
+59 células aplicáveis, todas verdes.** A tabela é uma catraca nos dois sentidos: falha se uma
 célula verde regride *e* se uma lacuna conhecida, pinada, passa a funcionar sem ser despinada.
 
 ## Consciente do disco, e medido
@@ -130,11 +131,23 @@ acima, inteiro, com uma thread, **não tinha terminado depois de uma hora**. Bus
 num disco de binários grandes é um seek por arquivo; isso é física, não bug, e a barra de status
 vai ser honesta sobre até onde chegou.
 
-**Árvores de snapshot são podadas por padrão.** Um disco do acervo hospedava cinco snapshots do
-Timeshift: 2,4 M inodes contra 175 k no disco seguinte, e ele sozinho levava 1 264 s. Com a
-poda, **95 s, resultado idêntico, 13,3× mais rápido**. A poda é *dita* (`snapshots_skipped`, uma
-caixa na GUI, `--snapshots` na CLI) e se desliga sozinha quando você aponta a busca *para dentro*
-de um snapshot — ali era onde você queria olhar.
+**Árvores de snapshot: vivo primeiro, snapshots só se faltar.** Um disco do acervo hospedava
+cinco snapshots do Timeshift: 2,4 M inodes contra 175 k no disco seguinte, e ele sozinho levava
+1 264 s. Podá-los dá **95 s, resultado idêntico, 13,3× mais rápido** — mas um buscador de
+arquivos que devolve nada para um arquivo que *está* no disco, dentro de um snapshot, está
+mentindo. Então a árvore viva é varrida primeiro e, para cada raiz digitada que voltou vazia, a
+busca **se estende sozinha** às árvores de snapshot podadas debaixo dela (Timeshift, snapper,
+ZFS, shadow copies do Samba, implantações ostree — um mecanismo só para todas, nada amarrado ao
+nome da distro). Os resultados de lá vêm marcados (`snapshot` no `--json` e no CSV, tooltip na
+GUI), e cópias idênticas colapsam numa linha só: mesmo inode, ou mesmo caminho relativo + tamanho
++ mtime entre a árvore viva e um snapshot, cópia viva na frente, "+N cópias" na linha.
+`--snapshots` / "incluir snapshots" estende sem esperar o zero; apontar a busca *para dentro* de
+um snapshot varre-o direto — ali era onde você queria olhar. Os dois desfechos são *ditos*:
+`snapshots_skipped` quando a árvore viva teve resultado, `snapshots_searched` quando a extensão
+rodou. Medido num disco com Timeshift (5 snapshots rsync, 788 k inodes): busca viva por nome
+0,11 s; a extensão por nome soma ≈9 s; por **conteúdo** custa ≈2,7 min, porque o `rg` lê cada
+hard link uma vez por snapshot. O repositório de objetos do ostree (`ostree/repo`) nunca é
+varrido: os arquivos dele têm nome de hash.
 
 ## Montagens, mortas e vivas
 
@@ -190,7 +203,7 @@ buscar explicitamente.
 
 | | quando usar | GUI? |
 |---|---|---|
-| **AppImage** | qualquer distro, nada a instalar | sim — Python e PySide6 embutidos |
+| **AppImage** | qualquer distro, nada a instalar | sim — Python, PySide6, `rg` e `fd` embutidos |
 | **.deb** | Debian/Ubuntu/Mint | precisa do PySide6 (`sombrero-file-search --setup-gui` cria um venv no seu home) |
 | **install.sh** | qualquer distro, instala em `~/.local`, sem root, distros imutáveis incluídas | sim |
 
@@ -209,6 +222,9 @@ cd sombrero-file-search && ./install.sh
 
 O `.deb` é deliberadamente magro: `Depends: python3`, com `ripgrep` e `fd-find` como
 *Recommends* — existe um fallback em Python puro, então declará-los obrigatórios seria mentira.
+A GUI precisa do PySide6 e, em instalações mínimas (imagens cloud, contêineres), da `libgl1`:
+o Qt carrega a `libGL.so.1` mesmo sem abrir janela, e sem ela o `import PySide6` falha. O
+`--setup-gui` e o `install.sh` avisam quando ela falta.
 Não há Flatpak de propósito: este programa existe para varrer o disco inteiro, e o sandbox é o
 modelo errado para isso.
 
@@ -223,8 +239,11 @@ sfs /mnt -n '*.iso' --json                    # NDJSON, um objeto por achado + a
 sfs / -n laudo --snapshots                    # inclui árvores de snapshot
 ```
 
-`--json` emite um objeto por achado (`path`, `size`, `mtime`, `is_dir`, `nmatch`, `lines[]`)
-e, no mesmo fluxo, `{"warn":"incomplete",…}` / `{"error":"incomplete",…}` com a tabela de
+`--json` emite um objeto por achado (`path`, `size`, `mtime`, `is_dir`, `nmatch`, `lines[]`,
+`snapshot` — a árvore podada de origem, `null` para a árvore viva — e `copies[]`, as cópias
+idênticas colapsadas nele até ali), `{"copy": caminho, "of": dono, "snapshot": árvore}` para
+uma duplicata absorvida depois de o dono já ter saído, e, no mesmo fluxo,
+`{"warn":"incomplete",…}` / `{"error":"incomplete",…}` com a tabela de
 `reason` acima, `{"warn":"mount_dead",…}`, `{"warn":"denied",…}` e
 `{"error":"boolean_expression",…}` para expressão malformada. Código de saída: 0 / 1 / 2.
 

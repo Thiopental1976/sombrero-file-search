@@ -290,6 +290,26 @@ ensure_qt_xcb() {
   if $INSTALL "$p"; then ok "$p instalado"; else wn "falhou instalar $p — a GUI pode não abrir em X11"; fi
 }
 
+# O PySide6 carrega a libGL.so.1 já no `import`, mesmo sem abrir janela: imagem
+# mínima (cloud, contêiner) não a tem e a GUI morre com ImportError — visto em
+# Debian 12 e Ubuntu 20.04 cloud na matriz de VMs (09/09/2026). Mesma política
+# do xcb: garantir pela distro quando dá, avisar quando não dá.
+ensure_qt_gl() {
+  ldconfig -p 2>/dev/null | grep 'libGL\.so\.1' >/dev/null && return 0
+  if [ -z "$PM" ]; then
+    wn "libGL.so.1 ausente — sem ela o PySide6 não importa e a GUI não abre; instale pela sua distro"
+    return 1
+  fi
+  local p; case "$PM" in
+    dnf)    p=mesa-libGL;;
+    pacman) p=libglvnd;;
+    zypper) p=Mesa-libGL1;;
+    *)      p=libgl1;;               # apt
+  esac
+  c "Instalando $p (libGL p/ o PySide6 da GUI)…"
+  if $INSTALL "$p"; then ok "$p instalado"; else wn "falhou instalar $p — a GUI pode não abrir"; fi
+}
+
 # venv de verdade exige o ensurepip, que em Debian/Mint vem em pacote SEPARADO
 # (python3.X-venv). Atenção: `python3 -m venv --help` funciona mesmo SEM ele, e o
 # binário `python3` sempre existe — nenhum dos dois serve de teste. Quem falta é o
@@ -328,6 +348,7 @@ setup_python() {
     wn "PySide6 do sistema não ficou disponível — caindo para venv."
   fi
   ensure_qt_xcb || true            # PySide6 do pip: garante o xcb do sistema (GUI)
+  ensure_qt_gl || true             # ... e a libGL, que o import do PySide6 exige
   # venv anterior que já funciona: reaproveita (re-rodar o instalador não deve
   # rebaixar ~250 MB de PySide6 à toa)
   if [ -x "$PREFIX/venv/bin/python" ] && "$PREFIX/venv/bin/python" -c "import PySide6" >/dev/null 2>&1; then

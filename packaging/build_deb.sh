@@ -99,6 +99,14 @@ setup_gui() {
     echo "AVISO: falta libxcb-cursor0 (o Qt do pip não a traz)."
     echo "       sudo apt install libxcb-cursor0"
   fi
+  # O PySide6 carrega a libGL.so.1 já no import, mesmo sem abrir janela: imagem
+  # mínima (cloud, contêiner) não a tem e a GUI morre com ImportError (visto em
+  # Debian 12 e Ubuntu 20.04 cloud na matriz de VMs de 09/09/2026).
+  if ! ldconfig -p | grep 'libGL\.so\.1' >/dev/null 2>&1; then
+    echo
+    echo "AVISO: falta libgl1 (o PySide6 não importa sem a libGL.so.1)."
+    echo "       sudo apt install libgl1"
+  fi
   echo "pronto — rode 'sombrero-file-search' de novo."
 }
 
@@ -244,7 +252,7 @@ Maintainer: Rodrigo Toledo <rrdtoledo@gmail.com>
 Installed-Size: $size_kb
 Depends: python3 (>= 3.10)
 Recommends: ripgrep, fd-find
-Suggests: ripgrep-all, python3-venv, libxcb-cursor0
+Suggests: ripgrep-all, python3-venv, libxcb-cursor0, libgl1
 Homepage: https://github.com/Thiopental1976/sombrero-file-search
 Description: broad file search by name and content
  Searches a whole filesystem by file name, by content, by boolean expression
