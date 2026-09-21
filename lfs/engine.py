@@ -550,9 +550,19 @@ def _reap(proc, errf=None, stats=None):
                 # falha de motor: chamar de falha faria a CLI sair 2 e um script
                 # concluir que a busca quebrou. (Achado pelo proprio funil, no
                 # primeiro teste real depois de liga-lo — 08/09/2026.)
+                # 21/09/2026 (--follow na CLI): "File system loop found: X points
+                # to an ancestor Y" também é queixa BENIGNA. Com --follow, o
+                # fd/rg acha um link para uma pasta ANCESTRAL, recusa entrar e
+                # segue — mas o rg sai 2 e o fd fala no stderr. Medido: busca de
+                # conteúdo com um laço virava "search engine failed" + exit 2,
+                # e a de nome, "read error". Nada ficou de fora (o ancestral é
+                # varrido nesta mesma busca), então não é incompleto: é o mesmo
+                # corte que o walker Python faz calado (E4, seen_dirs).
+                benigna = lambda L: "ermission denied" in L or "File system loop found" in L
+                lacos = sum(1 for L in linhas if "File system loop found" in L)
                 motivo = next((L.strip() for L in linhas
-                               if L.strip() and "ermission denied" not in L), "")
-                so_permissao = bool(d) and not motivo
+                               if L.strip() and not benigna(L)), "")
+                so_permissao = bool(d or lacos) and not motivo
                 morto_por_nos = nos_matamos and rc is not None and (rc < 0 or rc in (137, 143))
                 if (rc is not None and rc not in (0, 1, -15, 143)
                         and not so_permissao and not morto_por_nos):
@@ -573,7 +583,7 @@ def _reap(proc, errf=None, stats=None):
                     # com o do gate se ele já a conhecia — e não "read error".
                     outras = 0
                     for L in linhas:
-                        if not L.strip() or "ermission denied" in L:
+                        if not L.strip() or benigna(L):
                             continue
                         morta = _linha_de_montagem_morta(L)
                         if morta:

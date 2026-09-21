@@ -66,7 +66,34 @@ def main():
                          "ostree deployments). By default they are searched only when the "
                          "live tree gives nothing for that path (they are copies of the OS "
                          "and can multiply the walk by 10x); results from them are marked")
-    ap.add_argument("--min-size", type=str, default=None, help="e.g. 10M, 1G")
+    # 21/09/2026: tamanho inválido é ERRO (exit 2). Antes `--min-size 10X` virava
+    # None no parse_size e a busca rodava SEM filtro, calada — o usuário concluía
+    # que o filtro valera.
+    def _tamanho(s):
+        n = engine.parse_size(s)
+        if n is None:
+            raise argparse.ArgumentTypeError(f"invalid size {s!r} (e.g. 500K, 10M, 1.5G)")
+        return n
+
+    def _profundidade(s):
+        try:
+            n = int(s)
+        except ValueError:
+            n = 0
+        if n < 1:
+            raise argparse.ArgumentTypeError(f"invalid depth {s!r} (1 = only the folder given)")
+        return n
+
+    ap.add_argument("--min-size", type=_tamanho, default=None, metavar="SIZE",
+                    help="at least this size, e.g. 10M, 1G")
+    ap.add_argument("--max-size", type=_tamanho, default=None, metavar="SIZE",
+                    help="at most this size, e.g. 500K, 2G")
+    ap.add_argument("--depth", type=_profundidade, default=None, metavar="N",
+                    help="descend at most N levels (1 = only the folder given, 2 = one "
+                         "level of subfolders…)")
+    ap.add_argument("--follow", action="store_true",
+                    help="follow symbolic links into the folders they point to "
+                         "(link loops are cut)")
     ap.add_argument("--days", type=int, default=0, help="modified within the last N days")
     ap.add_argument("-0", "--print0", action="store_true", help="separate paths with NUL (for xargs -0)")
     ap.add_argument("-l", "--files-only", action="store_true", help="path only (no match lines)")
@@ -83,6 +110,9 @@ def main():
                          "index date). Refuses if any part of the path is pruned from the index "
                          "(would hide a subtree silently) — then use the live search.")
     args = ap.parse_args()
+    if (args.min_size is not None and args.max_size is not None
+            and args.min_size > args.max_size):
+        ap.error("--min-size is larger than --max-size: nothing could match")
 
     if args.nice_io:                          # F9b §3.5: busca de fundo cede a vez
         try:
@@ -97,8 +127,6 @@ def main():
             except OSError:
                 pass
 
-    parse_size = engine.parse_size            # §5: single source (was duplicated)
-
     # plain text = "contains" (same semantics as the GUI); explicit globs are respected
     names = [engine.as_name_glob(p) for p in args.name.replace(";", ",").split(",")
              if p.strip()] if not args.name_regex else ([args.name] if args.name else [])
@@ -108,7 +136,8 @@ def main():
         case_sensitive=args.case_sensitive, whole_word=args.word,
         include_hidden=args.hidden, respect_gitignore=args.gitignore,
         one_file_system=args.one_fs, skip_snapshots=not args.snapshots,
-        min_size=parse_size(args.min_size),
+        min_size=args.min_size, max_size=args.max_size,       # já em bytes (_tamanho)
+        max_depth=args.depth, follow_symlinks=args.follow,
         modified_after=(time.time()-args.days*86400) if args.days > 0 else None,
         documents=args.docs,
     )
@@ -182,6 +211,12 @@ def main():
         if args.boolexpr or args.content:
             print("# error: --index speeds up NAME search only; for content/boolean use the live search",
                   file=sys.stderr)
+            sys.exit(2)
+        if args.follow:
+            # o updatedb não atravessa symlink: o que só se alcança por link sumiria
+            # do resultado em silêncio — a mentira que o --index existe para não contar
+            print("# error: --index cannot follow symlinks (the index does not go through "
+                  "them); drop --follow or use the live search", file=sys.stderr)
             sys.exit(2)
         idate = indexed.index_date()
         if not indexed.index_available():
