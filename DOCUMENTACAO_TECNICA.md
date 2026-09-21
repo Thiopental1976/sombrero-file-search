@@ -56,7 +56,7 @@ linux_file_search/
 ├── sombrero-file-search  # lançador (aponta pro venv com PySide6)
 ├── README.md          # documentação de usuário
 ├── DOCUMENTACAO_TECNICA.md  # este arquivo
-├── LICENSE            # MIT
+├── LICENSE            # GNU GPL v3 ou posterior
 ├── requirements.txt   # PySide6 (motores são pacotes de sistema)
 └── .gitignore
 ```

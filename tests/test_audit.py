@@ -1792,7 +1792,7 @@ def test_indexed_search_coverage_and_staleness():
                                         conf=conf_vazia, _run=run))
             assert False, "conteúdo deveria RECUSAR no índice"
         except indexed.IndexError_ as e:
-            assert "CONTEÚDO" in str(e) or "conteúdo" in str(e).lower(), str(e)
+            assert "content" in str(e).lower(), str(e)
 
         # (e) o parse do updatedb.conf real: aspas agrupam, então dividimos DENTRO
         conf = indexed.parse_updatedb_conf('PRUNEFS="nfs CIFS fuse.sshfs"\nPRUNEPATHS="/mnt /tmp"')

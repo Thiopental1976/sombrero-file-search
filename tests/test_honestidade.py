@@ -47,6 +47,15 @@ LACUNAS_CONHECIDAS = {
 
 REAL_POPEN = subprocess.Popen
 
+if os.geteuid() == 0:
+    # As colunas "pasta negada"/"arquivo negado" dependem de chmod 000 NEGAR, e
+    # para o root ele não nega nada: a tabela sairia com 9 células vermelhas que
+    # são do ambiente, não do programa (medido num contêiner de CI). Melhor dizer
+    # alto que não dá para julgar do que acusar regressão falsa — ou passar calado.
+    print("PULADO: test_honestidade precisa de usuário comum (root ignora chmod 000).\n"
+          "        Rode:  su <usuario> -c 'python3 tests/test_honestidade.py'")
+    sys.exit(0)
+
 
 # ---------------------------------------------------------------- fixture
 class Arvore:

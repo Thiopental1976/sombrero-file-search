@@ -196,13 +196,40 @@ def _fadvise_dontneed(fd: int):
 
 
 def _head_digest(path: str) -> Optional[str]:
+    r = _head_and_full(path)
+    return r[0] if r is not None else None
+
+
+def _head_and_full(path: str) -> Optional[Tuple[str, Optional[str]]]:
+    """(digest da cabeça, digest COMPLETO ou None).
+
+    Revisão Fable 21/09/2026 — medido: 64 arquivos, 128 aberturas. Todo arquivo
+    que sobrevivia à triagem era aberto DUAS vezes (cabeça, depois completo), com
+    fadvise(DONTNEED) no meio — a segunda leitura voltava ao DISCO. Para arquivo
+    que cabe na cabeça (< 64 KiB: documento, miniatura, legenda — a maioria dos
+    arquivos de um acervo em CONTAGEM) a cabeça já É o arquivo inteiro: o digest
+    completo sai dos mesmos bytes, sem reabrir. Num SMR são dois seeks virando um.
+
+    "Cabe" = a leitura veio MENOR que HEAD_BYTES, isto é, bateu no EOF. Não se
+    confia no st_size do walk (o arquivo pode ter crescido desde então); e o
+    laço cobre leitura curta, que o read() cru (buffering=0) pode devolver."""
     try:
         with open(path, "rb", buffering=0) as f:
-            data = f.read(HEAD_BYTES)
+            partes, falta = [], HEAD_BYTES
+            while falta > 0:
+                blk = f.read(falta)
+                if not blk:
+                    break
+                partes.append(blk)
+                falta -= len(blk)
             _fadvise_dontneed(f.fileno())
     except OSError:
         return None
-    return hashlib.blake2b(data, digest_size=_HEAD_DIGEST).hexdigest()
+    data = b"".join(partes)
+    head = hashlib.blake2b(data, digest_size=_HEAD_DIGEST).hexdigest()
+    full = (hashlib.blake2b(data, digest_size=_FULL_DIGEST).hexdigest()
+            if len(data) < HEAD_BYTES else None)
+    return head, full
 
 
 def _full_digest(path: str, cancel: CancelFn,
@@ -284,20 +311,27 @@ def _dedup(cands, cancel, on_progress, on_phase, stats) -> List[DupGroup]:
     on_phase("head")
     survivors: List[Candidate] = []      # candidatos que passam p/ o hash completo
     head_of: Dict[int, str] = {}         # id(cand) -> head digest (agrupa com o tamanho)
-    for g in size_groups:
+    full_known: Dict[int, str] = {}      # id(cand) -> digest completo já obtido da cabeça
+    # Mesma disciplina do estágio 3: UM disco de cada vez, em ordem de caminho.
+    # Antes a cabeça era lida grupo-de-tamanho a grupo-de-tamanho — com o acervo
+    # espalhado em vários discos, cada grupo fazia o cabeçote de TODOS passear.
+    fila = sorted((c for g in size_groups for c in g), key=lambda c: (c.dev, c.path))
+    heads: Dict[Tuple[int, str], List[Candidate]] = {}
+    for c in fila:
         if cancel():
             return []
-        heads: Dict[str, List[Candidate]] = {}
-        for c in g:
-            d = _head_digest(c.path)
-            if d is None:
-                stats["denied"] += 1
-                continue
-            heads.setdefault(d, []).append(c)
-            head_of[id(c)] = d
-        for sub in heads.values():
-            if len(sub) > 1:
-                survivors.extend(sub)
+        r = _head_and_full(c.path)
+        if r is None:
+            stats["denied"] += 1
+            continue
+        d, full = r
+        heads.setdefault((c.size, d), []).append(c)
+        head_of[id(c)] = d
+        if full is not None:
+            full_known[id(c)] = full
+    for sub in heads.values():
+        if len(sub) > 1:
+            survivors.extend(sub)
 
     # Estágio 3 — completo (sequencial por dispositivo, progresso em bytes) ----
     on_phase("full")
@@ -315,7 +349,11 @@ def _dedup(cands, cancel, on_progress, on_phase, stats) -> List[DupGroup]:
     for c in survivors:
         if cancel():
             return []
-        d = _full_digest(c.path, cancel, on_chunk)
+        d = full_known.get(id(c))
+        if d is not None:
+            on_chunk(c.size)             # já lido por inteiro na triagem: só contabiliza
+        else:
+            d = _full_digest(c.path, cancel, on_chunk)
         if d is None:
             if cancel():
                 return []

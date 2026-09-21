@@ -6,7 +6,7 @@ medido está no comentário do bloco. Tudo em tempdir, sem tocar no acervo, sem
 display, sem rede. Rode:  python3 tests/test_revisao_fable_2026_09_21.py
 """
 from __future__ import annotations
-import io, json, os, stat, subprocess, sys, tempfile, shutil, threading, time
+import os, stat, subprocess, sys, tempfile, shutil, threading, time
 
 RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(RAIZ, "lfs"))
@@ -279,6 +279,111 @@ r = subprocess.run(f'"{sys.executable}" "{_CLI}" "{_d}" -n "*.txt" | head -1',
 ok(b"Traceback" not in r.stderr and b"BrokenPipe" not in r.stderr and r.stdout.count(b"\n") == 1,
    "`sfs … | head -1`: sem traceback de BrokenPipeError")
 shutil.rmtree(_d, ignore_errors=True)
+
+
+# =====================================================================
+# 8) --index: raiz com [ ] * ? virava GLOB no plocate — medido com plocate
+#    real: "/acervo/[2019] Laudos" devolvia ZERO, com cara de zero confiável.
+#    E arquivo visível dentro de pasta OCULTA saía do índice; a busca viva não
+#    desce em pasta oculta.
+# =====================================================================
+ok(indexed._padrao_plocate("/mnt/DiscoQ/filmes") == "/mnt/DiscoQ/filmes",
+   "raiz comum segue como substring (caminho de sempre, intocado)")
+ok(indexed._padrao_plocate("/a/[2019] Laudos") == r"/a/\[2019\] Laudos/*"
+   and indexed._padrao_plocate("/a/que?*") == r"/a/que\?\*/*",
+   "raiz com metacaractere de glob é escapada e vira '<raiz>/*'")
+
+_pedidos = []
+def _plocate_falso(args):
+    _pedidos.append(args)
+    base = "/acervo/[2019] Laudos"
+    return b"\0".join(os.fsencode(p) for p in (
+        base + "/laudo_a.txt", base + "/.oculta/laudo_b.txt", base + "/vis/.laudo_c.txt",
+        base + "/vis/laudo_d.txt")) + b"\0"
+class _St:
+    st_size = 1; st_mtime = 0.0; st_mode = stat.S_IFREG | 0o644
+_qi = Query(paths=["/acervo/[2019] Laudos"], name_patterns=["*laudo*"])
+_mt = [("/dev/x", "/", "ext4")]
+_r = sorted(os.path.basename(m.path) for m in indexed.search_indexed(
+    _qi, conf={}, mounts=_mt, _run=_plocate_falso, _lstat=lambda p: _St()))
+ok(_pedidos[-1][-1] == r"/acervo/\[2019\] Laudos/*", f"o plocate recebe o padrão escapado: {_pedidos[-1]}")
+ok(_r == ["laudo_a.txt", "laudo_d.txt"],
+   f"sem --hidden: nada de DENTRO de pasta oculta nem arquivo oculto (paridade com o fd): {_r}")
+_r = sorted(os.path.basename(m.path) for m in indexed.search_indexed(
+    Query(paths=["/acervo/[2019] Laudos"], name_patterns=["*laudo*"], include_hidden=True),
+    conf={}, mounts=_mt, _run=_plocate_falso, _lstat=lambda p: _St()))
+ok(len(_r) == 4, f"com --hidden os quatro aparecem: {_r}")
+
+if shutil.which("plocate") and shutil.which("updatedb"):
+    _ix = tempfile.mkdtemp(prefix="sfs_ix_")
+    _raiz = os.path.join(_ix, "[2019] Laudos"); os.makedirs(os.path.join(_raiz, "sub"))
+    for n in ("laudo_a.txt", "sub/laudo_b.txt"):
+        open(os.path.join(_raiz, n), "w").close()
+    _db = os.path.join(_ix, "i.db")
+    rc = subprocess.run(["updatedb", "-l", "0", "-o", _db, "-U", _ix], capture_output=True)
+    if rc.returncode == 0:
+        _run = lambda a: subprocess.run(["plocate", "-d", _db, *a], stdout=subprocess.PIPE).stdout
+        _ri = sorted(m.path for m in indexed.search_indexed(
+            Query(paths=[_raiz], name_patterns=["*laudo*"]), conf={}, mounts=_mt, _run=_run))
+        _rv = []
+        engine.search(Query(paths=[_raiz], name_patterns=["*laudo*"]), _rv.append)
+        ok(_ri == sorted(m.path for m in _rv) and len(_ri) == 2,
+           f"plocate REAL: raiz com colchetes — índice == busca viva ({len(_ri)} achados; era 0)")
+    else:
+        pulado("updatedb não conseguiu criar o banco de teste")
+    shutil.rmtree(_ix, ignore_errors=True)
+else:
+    pulado("sem plocate/updatedb: a prova com índice real (a injetada acima cobre a lógica)")
+
+
+# =====================================================================
+# 9) duplicatas: arquivo que cabe na cabeça (< 64 KiB) era lido DUAS vezes, com
+#    fadvise(DONTNEED) no meio — medido: 64 arquivos, 128 aberturas. E a
+#    triagem de cabeça não seguia ordem de dispositivo.
+# =====================================================================
+import builtins as _bi, hashlib as _hl
+_dd = tempfile.mkdtemp(prefix="sfs_dup_")
+for i in range(20):
+    corpo = (b"%04d" % i) * 2560                       # 10 KiB
+    for lado in "ab":
+        os.makedirs(os.path.join(_dd, lado), exist_ok=True)
+        open(os.path.join(_dd, lado, f"p{i}.bin"), "wb").write(corpo)
+_grande = os.urandom(300 * 1024)
+for lado in "ab":
+    open(os.path.join(_dd, lado, "grande.bin"), "wb").write(_grande)
+open(os.path.join(_dd, "a", "quase.bin"), "wb").write(_grande[:200 * 1024] + b"X" * 1024)
+open(os.path.join(_dd, "b", "quase.bin"), "wb").write(_grande[:200 * 1024] + b"Y" * 1024)
+_exato = os.path.join(_dd, "a", "exato64k.bin")        # fronteira: EXATAMENTE HEAD_BYTES
+open(_exato, "wb").write(b"Z" * dupes.HEAD_BYTES)
+shutil.copy(_exato, os.path.join(_dd, "b", "exato64k.bin"))
+
+_abertos = []
+def _espiao(p, *a, **k):
+    if isinstance(p, str) and p.startswith(_dd):
+        _abertos.append(p)
+    return _bi.open(p, *a, **k)
+dupes.open = _espiao
+try:
+    _sd = dupes.new_stats(); _prog = []
+    _g = dupes.find_duplicates([_dd], stats=_sd, on_progress=lambda a, b: _prog.append((a, b)))
+finally:
+    del dupes.open
+_n_arq = 20 * 2 + 2 + 2 + 2
+ok(len(_g) == 22 and not any("quase" in p for g in _g for p in g.paths),
+   f"mesmos grupos de sempre (20 pequenos + grande + exato64k; 'quase' de fora): {len(_g)}")
+_peq = [p for p in _abertos if os.path.basename(p).startswith("p")]
+ok(len(_peq) == 40, f"arquivo pequeno é aberto UMA vez, não duas ({len(_peq)} aberturas p/ 40 arquivos)")
+ok(_abertos.count(_exato) == 2,
+   "arquivo de EXATAMENTE 64 KiB ainda passa pelo hash completo (a leitura não provou o EOF)")
+_gd = next(g for g in _g if g.size == 10240)
+ok(_gd.digest == _hl.blake2b(open(_gd.paths[0], "rb").read(), digest_size=32).hexdigest(),
+   "o digest do atalho é o MESMO blake2b-256 do conteúdo inteiro (export/oráculo não mudam)")
+ok(_prog and _prog[-1][0] == _prog[-1][1] == _sd["hashed_bytes"],
+   f"progresso fecha em 100% e hashed_bytes conta os pequenos também: {_prog[-1]}")
+_cab = _abertos[:_n_arq]
+_lados = [os.path.basename(os.path.dirname(p)) for p in _cab]
+ok(_lados == sorted(_lados), "triagem de cabeça em ordem de (dispositivo, caminho), não por grupo de tamanho")
+shutil.rmtree(_dd, ignore_errors=True)
 
 
 shutil.rmtree(_tmp, ignore_errors=True)

@@ -1513,7 +1513,6 @@ class DuplicatesPanel(QWidget):
             top.setExpanded(True)
 
     def _fill_tree(self, groups):
-        pal = THEMES[self.main.theme]
         mono = QFont("monospace"); mono.setStyleHint(QFont.Monospace)
         for g in groups:
             top = QTreeWidgetItem([
@@ -1524,8 +1523,6 @@ class DuplicatesPanel(QWidget):
             top.setFirstColumnSpanned(True)
             for c in g.members:
                 disk = self.main._disk_badge(c.path)
-                names = " ⇄ ".join(os.path.basename(p) for p in c.names) \
-                    if len(c.names) > 1 else c.path
                 child = QTreeWidgetItem([c.path, human_size(c.size), disk])
                 child.setToolTip(0, "\n".join(c.names))
                 child.setData(0, Qt.UserRole, c.path)

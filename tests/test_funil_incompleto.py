@@ -171,7 +171,13 @@ try:
         st, out = {}, []
         E.search(E.Query(paths=[raiz], content="laudo"), out.append, stats=st)
         grave, _ = E.resumo_incompleto(st)
-        ok("permission_denied" in motivos(st), "pasta proibida vira sem_permissao no funil")
+        if os.geteuid() == 0:
+            # root ignora chmod 000: a pasta NÃO nega nada e o teste acusaria o
+            # programa de um defeito do ambiente (CI em contêiner roda como root)
+            print("--    (pulado) pasta proibida -> funil: rodando como ROOT, chmod 000 não nega; "
+                  "rode como usuário comum para exercitar isto")
+        else:
+            ok("permission_denied" in motivos(st), "pasta proibida vira sem_permissao no funil")
         ok("engine_failed" not in motivos(st),
            "o rg saindo 2 SO por permissao nao e falha de motor")
         ok(not grave, "busca com pasta proibida nao e grave (exit code preservado)")

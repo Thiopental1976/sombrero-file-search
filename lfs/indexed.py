@@ -154,6 +154,25 @@ def _plocate_run(args) -> bytes:
     return proc.stdout or b""
 
 
+_GLOB_META = "\\*?[]"
+
+
+def _padrao_plocate(real: str) -> str:
+    """Padrão que delimita o subtree de `real` no plocate.
+
+    Revisão Fable 21/09/2026 (medido com plocate real): se o padrão contém
+    * ? [ ], o plocate o trata como GLOB que casa o caminho INTEIRO. Uma raiz
+    como "/acervo/[2019] Laudos" — nome comuníssimo em acervo de mídia — virava
+    classe de caracteres, casava nada, e o `--index` devolvia ZERO com cara de
+    "zero confiável": exatamente a mentira que a checagem de cobertura existe
+    para impedir. Com metacaractere na raiz, escapa-se cada um e pede-se
+    "<raiz>/*" (glob de caminho inteiro); sem, segue a substring de sempre."""
+    if not any(c in _GLOB_META for c in real):
+        return real
+    esc = "".join("\\" + c if c in _GLOB_META else c for c in real)
+    return esc.rstrip("/") + "/*"
+
+
 def index_available(db_path: str = PLOCATE_DB) -> bool:
     return bool(engine._which("plocate")) and os.path.exists(db_path)
 
@@ -201,7 +220,7 @@ def search_indexed(q: engine.Query, conf=None, mounts=None,
         translate = real != given            # root (ou ancestral) é symlink
         # plocate: casa o root como substring (delimita o subtree); -0 NUL p/ nome
         # com \n; sem -i pra não alargar (o casamento fino é do _name_matcher).
-        out = _run(["-0", "--", real])
+        out = _run(["-0", "--", _padrao_plocate(real)])
         for chunk in out.split(b"\x00"):
             if not chunk:
                 continue
@@ -210,7 +229,14 @@ def search_indexed(q: engine.Query, conf=None, mounts=None,
             if not _under(path, real):
                 continue
             base = os.path.basename(path)
-            if not q.include_hidden and base.startswith("."):
+            # Revisão Fable 21/09/2026: só o BASENAME era testado — arquivo visível
+            # dentro de pasta oculta (~/.cache/x/laudo.txt) saía do índice, e a
+            # busca viva (fd sem --hidden não DESCE em pasta oculta) não o devolve.
+            # A docstring promete "idêntico à busca por nome", e a regra de
+            # PRUNENAMES acima se apoia nessa paridade. Vale para todo componente
+            # ABAIXO da raiz; a raiz em si o usuário escolheu, oculta ou não.
+            if not q.include_hidden and any(
+                    c.startswith(".") for c in path[len(real.rstrip("/")) + 1:].split("/") if c):
                 continue
             if not match_name(base):
                 continue
