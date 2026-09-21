@@ -475,9 +475,15 @@ def export(groups: List[DupGroup], path: str, fmt: str = "csv"):
             json.dump(data, f, indent=2, ensure_ascii=False)
     else:
         import csv
+        try:                    # pacote (GUI) e flat (cli.py/testes)
+            from .searches import celula_csv
+        except ImportError:
+            from searches import celula_csv
         with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
             w = csv.writer(f)
             w.writerow(["group", "hash", "size", "path"])
             for i, g in enumerate(groups, 1):
                 for p in g.paths:
-                    w.writerow([i, g.digest, g.size, p])
+                    # anti-fórmula (21/09/2026): o caminho hoje é sempre absoluto
+                    # ("/…", inofensivo), mas a regra vale por célula, não por fé
+                    w.writerow([i, g.digest, g.size, celula_csv(p)])

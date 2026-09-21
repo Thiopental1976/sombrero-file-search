@@ -3472,6 +3472,55 @@ def test_dupes_no_delete_api():
     print("ok  F10c linha-vermelha: dupes.py não tem API destrutiva (só acha/exporta)")
 
 
+def test_csv_formula_injection():
+    """CSV à prova de fórmula (21/09/2026, decisão do Rodrigo: = + - @, o padrão
+    OWASP). Medido no LibreOffice 26.8: `=1+1` e `=HYPERLINK(...)` numa linha
+    casada viravam FÓRMULA ao abrir o CSV; o Excel também avalia + - @. Célula
+    de TEXTO que começa com = + - @ TAB CR ganha um ' na frente. Números (size,
+    line, matches, copies) não mudam; o JSON não muda (é para scripts). Vale
+    para os dois exportadores: busca e duplicatas."""
+    import io, json, csv as _csv, types
+    perigosas = ["=HYPERLINK(\"http://x\";\"clique\")", "+5+5", "-2+3+cmd|' /C calc'!A0",
+                 "@SUM(1;2)", "\tcoisa", "\rcoisa", "=1+1"]
+    ms = [_M("/tmp/=RESUMO.txt", size=100, mtime=1_000_000, nmatch=len(perigosas) + 1,
+             lines=[(i, t) for i, t in enumerate(perigosas, 1)] + [(99, "laudo normal")])]
+    buf = io.StringIO(); searches.export_csv(ms, buf)
+    buf.seek(0); linhas = list(_csv.DictReader(buf, delimiter=";"))
+    textos = [r["text"] for r in linhas]
+    for original, saiu in zip(perigosas, textos):
+        assert saiu == "'" + original.rstrip("\n"), f"não protegeu {original!r}: {saiu!r}"
+    assert textos[-1] == "laudo normal", "texto inofensivo não pode ganhar apóstrofo"
+    assert linhas[0]["name"] == "'=RESUMO.txt", linhas[0]["name"]
+    assert linhas[0]["path"] == "/tmp/=RESUMO.txt", "caminho começa com / — não mexe"
+    assert linhas[0]["folder"] == "/tmp"
+    assert linhas[0]["size"] == "100" and linhas[0]["line"] == "1", "coluna numérica mudou"
+    # JSON é contrato de script: sai cru
+    jbuf = io.StringIO(); searches.export_json(ms, jbuf)
+    jbuf.seek(0); dados = json.load(jbuf)
+    assert dados[0]["lines"][0]["text"] == perigosas[0], "o JSON não pode ganhar apóstrofo"
+    assert dados[0]["path"] == "/tmp/=RESUMO.txt"
+    # a função em si: vazio, None e número passam intactos
+    assert searches.celula_csv("") == "" and searches.celula_csv(None) is None
+    assert searches.celula_csv(-5) == -5, "número de verdade não é texto"
+    # duplicatas: mesmo tratamento no CSV, JSON cru
+    d = tempfile.mkdtemp(prefix="lfs_csvinj_")
+    try:
+        g = types.SimpleNamespace(digest="ab12", size=3, wasted=3,
+                                  paths=["=cmd|x.bin", "/ok/copia.bin"])
+        p = os.path.join(d, "dup.csv")
+        dupes.export([g], p, "csv")
+        with open(p, encoding="utf-8", errors="surrogateescape") as f:
+            rows = list(_csv.reader(f))
+        assert rows[1][3] == "'=cmd|x.bin", rows[1]
+        assert rows[2][3] == "/ok/copia.bin" and rows[1][2] == "3", rows
+        pj = os.path.join(d, "dup.json")
+        dupes.export([g], pj, "json")
+        assert json.load(open(pj))[0]["paths"][0] == "=cmd|x.bin", "JSON das duplicatas mudou"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("ok  CSV  à prova de fórmula (= + - @ TAB CR) na busca e nas duplicatas; JSON cru")
+
+
 def test_dupes_export_csv_json_hostile_names():
     """F10c — exportação CSV/JSON com caminhos hostis (bytes não-UTF-8): grava sem
     estourar (surrogateescape) e as colunas certas (group, hash, size, path)."""
@@ -4039,6 +4088,7 @@ def main():
            test_dupes_same_head_different_tail_separates,
            test_dupes_cancel_leaves_no_state, test_dupes_denied_counted,
            test_dupes_symlinks_and_zero_excluded, test_dupes_no_delete_api,
+           test_csv_formula_injection,
            test_dupes_export_csv_json_hostile_names,
            test_dupes_in_files_matches_walk,
            test_dupes_name_verdicts_copy_version_mixed,

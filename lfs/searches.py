@@ -167,9 +167,26 @@ def _rows_of(m):
     return [dict(base, line=n, text=txt.rstrip("\n")) for n, txt in linhas]
 
 
+_CSV_GATILHOS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def celula_csv(v):
+    """Célula de CSV à prova de fórmula (21/09/2026). Medido no LibreOffice 26.8:
+    uma linha casada `=HYPERLINK(...)` virava link clicável ao abrir o CSV; o
+    Excel avalia também + - @. Texto que começa com um desses (padrão OWASP,
+    decisão do Rodrigo) ganha um ' na frente — aparece na célula, que é o preço
+    de ele ser texto em qualquer planilha. Só o CSV: o JSON é para scripts e sai
+    cru. Número não é texto e passa intacto (-5 no `size` seria impossível, mas
+    a regra é por tipo, não por coluna)."""
+    if isinstance(v, str) and v.startswith(_CSV_GATILHOS):
+        return "'" + v
+    return v
+
+
 def export_csv(matches, fp) -> int:
     """CSV com cabeçalho, separador ';' e aspas quando preciso (é o que o
-    LibreOffice pt-BR abre com dois cliques). Devolve o número de linhas."""
+    LibreOffice pt-BR abre com dois cliques). Célula de texto passa por
+    celula_csv (anti-fórmula). Devolve o número de linhas."""
     campos = ["path", "folder", "name", "size", "modified", "matches", "snapshot", "copies",
               "line", "text"]
     w = csv.DictWriter(fp, fieldnames=campos, delimiter=";",
@@ -178,7 +195,7 @@ def export_csv(matches, fp) -> int:
     n = 0
     for m in matches:
         for r in _rows_of(m):
-            w.writerow(r)
+            w.writerow({k: celula_csv(v) for k, v in r.items()})
             n += 1
     return n
 
