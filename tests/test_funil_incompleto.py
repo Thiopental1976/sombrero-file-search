@@ -62,9 +62,16 @@ ok(alvos == {"/mnt/Disco", "/mnt/Com Espaco", "/tmp"},
 mounts = [("/dev/sda1", "/mnt/Disco", "ext4"), ("/dev/sdb1", "/media/rodrigo/Pen", "vfat")]
 ok(D.is_mountpoint("/mnt/Disco/", mounts) and not D.is_mountpoint("/mnt/Disco/sub", mounts)
    and not D.is_mountpoint("/mnt/Outro", mounts), "is_mountpoint é EXATO, não 'sob um mount'")
+# Revisão Fable 21/09/2026: este teste consultava o `pwd` DE VERDADE — só passava
+# numa máquina com um usuário chamado "rodrigo" (o ServidorCedro) e falhava em
+# qualquer outra (CI, contribuidor, contêiner). A regra testada é "/media/<user>
+# é a PASTA das vagas, não uma vaga"; quem é usuário entra por injeção.
+_eh_usuario_real = D._eh_usuario
+D._eh_usuario = lambda nome: nome == "rodrigo"
 ok(all(D.is_mount_slot(p) for p in ("/mnt/X", "/var/mnt/X", "/media/X", "/media/rodrigo/X", "/run/media/rodrigo/X/"))
    and not any(D.is_mount_slot(p) for p in ("/mnt", "/media/rodrigo", "/home/rodrigo/X", "/mnt/X/sub", "/run/media")),
    "is_mount_slot: /mnt/X, /media/[user/]X, /run/media/user/X — e só isso")
+D._eh_usuario = _eh_usuario_real
 
 # gate: fstab diz que há disco e não há -> grave, raiz pulada; vaga vazia -> indício, busca segue
 _orig = (E._fstab_alvos, E._eh_mountpoint, E._eh_vaga_de_montagem)

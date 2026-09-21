@@ -19,6 +19,7 @@ pra interface nunca travar (foi o defeito do menu do Cinnamon: busca síncrona).
 """
 from __future__ import annotations
 import os, re, fnmatch, shutil, subprocess, json, stat, time, tempfile
+import base64, codecs, threading
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
@@ -389,11 +390,128 @@ def _linha_de_montagem_morta(linha: str):
     return None
 
 
+# ------------------------------------------------ campos do `rg --json` (bytes)
+# Revisão Fable 21/09/2026. O rg --json só entrega {"text": ...} quando o dado é
+# UTF-8 válido; senão entrega {"bytes": <base64>}. O código lia só .get("text"):
+#   - CAMINHO não-UTF-8 (foto de câmera, arquivo vindo do Windows): o achado de
+#     conteúdo era DESCARTADO em silêncio — sem funil, e divergindo da busca por
+#     nome, que acha o mesmo arquivo pelo fd (E2);
+#   - LINHA em codificação legada (cp1252/latin-1 — o "arquivo velho do Windows"
+#     que o público do SFS traz na migração): a linha casada aparecia VAZIA no
+#     preview, na CLI e no export.
+def _cp1252_resgata(exc):
+    """Handler de erro de decodificação: o trecho que não é UTF-8 é lido como
+    cp1252 (superset prático do latin-1; bytes sem definição viram U+FFFD). O
+    resto da linha segue UTF-8 — arquivo misto continua legível."""
+    if not isinstance(exc, UnicodeDecodeError):
+        raise exc
+    ruim = exc.object[exc.start:exc.end]
+    return ruim.decode("cp1252", errors="replace"), exc.end
+
+codecs.register_error("sfs-cp1252", _cp1252_resgata)
+
+
+def texto_legivel(raw: bytes) -> str:
+    """Bytes de uma LINHA -> texto para exibir. UTF-8 onde for UTF-8; o que não
+    for, cp1252. É só EXIBIÇÃO: o casamento já foi decidido pelo motor."""
+    return raw.decode("utf-8", errors="sfs-cp1252")
+
+
+def _linha_py(line: str) -> str:
+    """Linha lida pelo fallback Python (open(..., errors="surrogateescape")) ->
+    o MESMO texto que o lado rg exibe. Bytes que não eram UTF-8 chegam como
+    substitutos U+DC80–DCFF; voltam a bytes e passam por texto_legivel. Antes
+    o fallback abria com errors="ignore", que COMIA os acentos de um arquivo
+    cp1252 ("Joo  avaliao") — e ainda fazia "Joo" casar onde o rg não casa."""
+    if not any(0xDC80 <= ord(c) <= 0xDCFF for c in line):
+        return line
+    return texto_legivel(line.encode("utf-8", errors="surrogateescape"))
+
+
+def _rg_caminho(campo) -> Optional[str]:
+    """`data.path` do rg --json -> str utilizável em os.stat (surrogateescape
+    para nome não-UTF-8, igual ao os.fsdecode que o leitor do fd já usa)."""
+    if not campo:
+        return None
+    txt = campo.get("text")
+    if txt is not None:
+        return txt
+    b64 = campo.get("bytes")
+    if b64 is None:
+        return None
+    try:
+        return os.fsdecode(base64.b64decode(b64))
+    except (ValueError, TypeError):
+        return None
+
+
+def _rg_linha(campo) -> str:
+    """`data.lines` do rg --json -> texto da linha (ver texto_legivel)."""
+    if not campo:
+        return ""
+    txt = campo.get("text")
+    if txt is not None:
+        return txt
+    b64 = campo.get("bytes")
+    if b64 is None:
+        return ""
+    try:
+        return texto_legivel(base64.b64decode(b64))
+    except (ValueError, TypeError):
+        return ""
+
+
+def _vigia_cancel(proc, cancel, intervalo: float = 0.2):
+    """Faz o CANCELAR valer mesmo com o motor calado (revisão Fable, 21/09/2026).
+
+    Os leitores do fd/rg só olham `cancel()` ENTRE leituras, e a leitura do pipe
+    bloqueia: num disco lento em que o motor não tem nada a dizer (nome raro num
+    SMR de 1 milhão de inodes) o cancelamento só era visto quando a caminhada
+    inteira terminava — medido com um motor surdo: cancel pedido aos 0,5 s,
+    search() de volta aos 20 s. O particionado já resolvia isso matando os
+    processos (F11 bug1); o caminho SERIAL — um disco só, o caso mais comum — e
+    todo o booleano não. Na GUI o efeito era pior que a espera: fechar a aba
+    caía no QThread.terminate() depois de 8 s, que mata a thread SEM rodar o
+    finally/_reap, e o fd/rg ficava órfão martelando o disco com o programa
+    já fechado.
+
+    Uma thread daemon por processo-motor: acorda a cada `intervalo`, e quando
+    `cancel()` vira True dá terminate() no processo — o read devolve EOF e o
+    leitor sai pelo caminho normal (finally -> _reap). Devolve o Event que o
+    chamador DEVE setar no finally, para a vigia morrer junto com o processo.
+    `cancel` precisa ser barato e seguro entre threads (é uma flag nos três
+    chamadores: GUI, CLI e o `parar` do particionado)."""
+    fim = threading.Event()
+
+    def vigia():
+        while not fim.wait(intervalo):
+            try:
+                if proc.poll() is not None:
+                    return
+                if cancel():
+                    proc.terminate()
+                    return
+            except Exception:
+                return
+
+    threading.Thread(target=vigia, daemon=True, name="sfs-vigia-cancel").start()
+    return fim
+
+
 def _reap(proc, errf=None, stats=None):
     """Encerra o subprocesso SEM deixar órfão (B1) e conta 'inacessíveis' do
     stderr capturado (B8). Idempotente e à prova de exceção."""
+    # Revisão Fable 21/09/2026: se o processo ainda estava vivo AQUI, quem o mata
+    # somos nós (cancelamento / teto de resultados). Quando o terminate() não
+    # basta em 1 s — processo em D-state num disco que não responde, justamente
+    # o cenário do cancelamento — vem o kill(), e o rc vira -9. A lista de
+    # códigos legítimos só tinha -15/143: um Cancelar num disco lento virava
+    # "search engine failed" na barra e exit 2 na CLI. Morte por sinal que NÓS
+    # mandamos nunca é falha de motor.
+    nos_matamos = False
     try:
         if proc.poll() is None:
+            nos_matamos = True
             proc.terminate()
             try:
                 proc.wait(1)
@@ -435,8 +553,9 @@ def _reap(proc, errf=None, stats=None):
                 motivo = next((L.strip() for L in linhas
                                if L.strip() and "ermission denied" not in L), "")
                 so_permissao = bool(d) and not motivo
+                morto_por_nos = nos_matamos and rc is not None and (rc < 0 or rc in (137, 143))
                 if (rc is not None and rc not in (0, 1, -15, 143)
-                        and not so_permissao):
+                        and not so_permissao and not morto_por_nos):
                     msg = (motivo or f"o motor saiu com codigo {rc}")[:200]
                     stats.setdefault("engine_errors", []).append({"rc": rc, "erro": msg})
                     anota_incompleto(stats, "engine_failed",
@@ -836,6 +955,7 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
             anota_incompleto(stats, "engine_missing",
                              detalhe="fd could not be run; using the Python walker")
             yield from _iter_names_python(q, stats, cancel); return
+        vigia = _vigia_cancel(proc, cancel)       # Cancelar solta mesmo com o fd calado
         try:
             buf = b""
             read1 = getattr(proc.stdout, "read1", proc.stdout.read)
@@ -877,6 +997,7 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
                 if not chunk:
                     break
         finally:
+            vigia.set()
             _reap(proc, errf, stats)              # B1/B8: mata processo + conta inacessíveis
 
 
@@ -974,6 +1095,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
         yield from _iter_content_python(q, cancel, stats); return
 
     cur = None
+    vigia = _vigia_cancel(proc, cancel)           # Cancelar solta mesmo com o rg calado
     try:
         for line in proc.stdout:
             if cancel():
@@ -984,7 +1106,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
                 continue
             t = ev.get("type")
             if t == "begin":
-                path = ev["data"]["path"].get("text")
+                path = _rg_caminho(ev["data"].get("path"))   # text OU bytes (nome não-UTF-8)
                 if path is None or (name_rx and not name_rx.search(os.path.basename(path))):
                     cur = None
                     continue
@@ -1004,7 +1126,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
                 cur = Match(path, st.st_size, st.st_mtime, ident=ident)
             elif t == "match" and cur is not None:
                 ln = ev["data"].get("line_number")
-                txt = ev["data"]["lines"].get("text", "")
+                txt = _rg_linha(ev["data"].get("lines"))     # text OU bytes (cp1252…)
                 cur.nmatch += len(ev["data"].get("submatches", []))
                 if len(cur.lines) < 200:
                     cur.lines.append((ln or 0, _logical_line(txt)))
@@ -1012,6 +1134,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
                 yield cur
                 cur = None
     finally:
+        vigia.set()
         _reap(proc, errf, stats)                    # B1/B8
 
 
@@ -1040,17 +1163,21 @@ def _iter_content_python(q: Query, cancel, stats=None):
             anota_incompleto(stats, "stat_failed", onde=m.path)   # H5: o walker listou
             continue                                            # e o arquivo sumiu
         try:
-            with open(m.path, "r", errors="ignore") as fh:
+            with open(m.path, "r", errors="surrogateescape") as fh:
                 hit = None
                 for i, line in enumerate(fh, 1):
                     if "\x00" in line:      # provável binário
                         hit = None; break
+                    # arquivo-texto gigante (log de GBs): sem isto o Cancelar só
+                    # era visto no fim do arquivo
+                    if (i & 0x3FFF) == 0 and cancel():
+                        return
                     if rx.search(line):
                         if hit is None:
                             hit = m
                         m.nmatch += 1
                         if len(m.lines) < 200:
-                            m.lines.append((i, _logical_line(line)))
+                            m.lines.append((i, _logical_line(_linha_py(line))))
                 if hit is not None:
                     yield m
         except PermissionError:

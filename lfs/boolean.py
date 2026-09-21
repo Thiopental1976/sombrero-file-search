@@ -209,6 +209,34 @@ def _rg_base(q: engine.Query, matching: bool = True):
     return cmd
 
 
+def _le_caminhos_nul(proc, cancel) -> set:
+    """Lê a saída de `rg -l --null`: caminhos separados por NUL, em BYTES.
+
+    Revisão Fable 21/09/2026: a saída era lida como TEXTO (errors="replace"),
+    uma linha por caminho. Nome não-UTF-8 virava "laudo_m\ufffddico.txt" — caminho
+    que não existe: o arquivo sumia do resultado e, pior, o caminho mutilado
+    seguia como `restrict` para o rg do termo seguinte, que saía com código 2
+    ("No such file") e pintava um `engine_failed` GRAVE (exit 2 na CLI) por
+    causa de um nome de arquivo. Nome com '\n' rachava em dois. NUL + fsdecode
+    é a mesma disciplina do leitor do fd (E1/E2)."""
+    out = set()
+    buf = b""
+    read1 = getattr(proc.stdout, "read1", proc.stdout.read)
+    while True:
+        if cancel():
+            break
+        chunk = read1(65536)
+        buf += chunk
+        partes = buf.split(b"\0")
+        buf = partes.pop() if chunk else b""
+        for raw in partes:
+            if raw:
+                out.add(os.path.abspath(os.fsdecode(raw)))
+        if not chunk:
+            break
+    return out
+
+
 _BATCH = 400   # caminhos por invocação do rg (evita estourar ARG_MAX — B4 e opt#1)
 
 
@@ -223,7 +251,7 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
     if not _content_binary(q):
         res = _files_with_term_py(term, q, cancel, stats)
         return res & set(restrict) if restrict is not None else res
-    base = _rg_base(q) + ["-l"]
+    base = _rg_base(q) + ["-l", "--null"]         # --null: ver _le_caminhos_nul
     if not q.content_is_regex: base.append("--fixed-strings")
     base += ["-e", term]
     if restrict is None:
@@ -238,8 +266,7 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
         cmd = base + ["--"] + roots
         errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr p/ contar denied
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                    stderr=errf, text=True, errors="replace")
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
         except OSError:
             errf.close()
             if restrict is None:
@@ -253,12 +280,11 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
                    detalhe="{n} file(s) could not be read in this batch",
                    args={"n": len(roots)})
             continue                              # lote isolado falhou; segue os outros
+        vigia = engine._vigia_cancel(proc, cancel)   # Cancelar solta com o rg calado
         try:
-            for line in proc.stdout:
-                if cancel(): break
-                fp = line.rstrip("\n")
-                if fp: out.add(os.path.abspath(fp))
+            out |= _le_caminhos_nul(proc, cancel)
         finally:
+            vigia.set()
             _reap_stats(proc, errf, stats)        # B1 + N2: mata órfão e conta inacessíveis
     return out
 
@@ -296,11 +322,10 @@ def _universe(q: engine.Query, cancel, stats=None) -> set[str]:
         # PDF/docx/odt/… — senão `NOT termo` despejaria todo documento, inclusive
         # os que CONTÊM o termo, que agora entram nos conjuntos positivos.
         # matching=False remove --word-regexp (quebraria o padrão vazio).
-        cmd = _rg_base(q, matching=False) + ["-l", "-e", "", "--"] + q.paths
+        cmd = _rg_base(q, matching=False) + ["-l", "--null", "-e", "", "--"] + q.paths
         errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                    stderr=errf, text=True, errors="replace")
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
         except OSError:
             errf.close(); proc = None
             # H8b: o mesmo aviso que _files_with_term já dava — aqui o universo
@@ -309,12 +334,11 @@ def _universe(q: engine.Query, cancel, stats=None) -> set[str]:
                    detalhe="rg could not be run; the Python walker does not read UTF-16/UTF-32 with BOM")
         if proc:
             out = set()
+            vigia = engine._vigia_cancel(proc, cancel)
             try:
-                for line in proc.stdout:
-                    if cancel(): break
-                    fp = line.rstrip("\n")
-                    if fp: out.add(os.path.abspath(fp))
+                out = _le_caminhos_nul(proc, cancel)
             finally:
+                vigia.set()
                 _reap_stats(proc, errf, stats)    # B1 + N2
             return out
     local = {} if stats is not None else None
@@ -750,21 +774,23 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
                    detalhe="{n} file(s) were left without their lines",
                    args={"n": len(files[i:i + _BATCH])})
             continue
+        vigia = engine._vigia_cancel(proc, cancel)
         try:
             for line in proc.stdout:
                 if cancel(): break
                 try: ev = json.loads(line)
                 except ValueError: continue
                 if ev.get("type") == "match":
-                    path = ev["data"]["path"].get("text")
+                    path = engine._rg_caminho(ev["data"].get("path"))   # text OU bytes
                     if path is None: continue
                     path = os.path.abspath(path)
                     lst = res.setdefault(path, [])
                     if len(lst) < 200:
                         ln = ev["data"].get("line_number") or 0
-                        txt = engine._logical_line(ev["data"]["lines"].get("text", ""))
+                        txt = engine._logical_line(engine._rg_linha(ev["data"].get("lines")))
                         lst.append((ln, txt))
         finally:
+            vigia.set()
             _reap_stats(proc, errf, stats)        # B1 + N2: mata órfão e conta inacessíveis
     return res
 
@@ -781,13 +807,13 @@ def _display_lines_py(pos_terms, files, q: engine.Query, cancel) -> dict:
         try:
             if not stat.S_ISREG(os.stat(fp, follow_symlinks=q.follow_symlinks).st_mode):
                 continue
-            with open(fp, "r", errors="ignore") as fh:
+            with open(fp, "r", errors="surrogateescape") as fh:   # ver engine._linha_py
                 lst: list = []
                 for i, line in enumerate(fh, 1):
                     if "\x00" in line:            # binário: descarta o arquivo inteiro
                         lst = []; break
                     if any(rx.search(line) for rx in rxs) and len(lst) < 200:
-                        lst.append((i, engine._logical_line(line)))
+                        lst.append((i, engine._logical_line(engine._linha_py(line))))
                 if lst:
                     res[os.path.abspath(fp)] = lst
         except OSError:
