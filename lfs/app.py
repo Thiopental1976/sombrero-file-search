@@ -3385,23 +3385,37 @@ class MainWindow(QMainWindow):
         if not self._safe_eject:
             return
         mp, dev = self._safe_eject
-        cmd = disks.eject_command(mp, dev)
-        if cmd is None:
+        passos = disks.eject_command(mp, dev)
+        if passos is None:
             return
         import subprocess
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.SubprocessError) as e:
-            self.status.setText(humane.human_error(e, context="eject", target=mp))
-            return
-        if r.returncode == 0:
+        desmontou = False
+        for cmd in passos:            # 21/09/2026: desmonta -> [tranca LUKS] -> desliga
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.SubprocessError) as e:
+                erro = humane.human_error(e, context="eject", target=mp)
+                break
+            if r.returncode != 0:
+                # a montagem pode estar ocupada por outro app — dá o motivo, não o code
+                erro = (r.stderr or r.stdout).strip() or t("Could not eject the disk.")
+                break
+            if cmd[:2] == ["udisksctl", "unmount"]:
+                desmontou = True
+        else:
             self.status.setText(t("Safe to unplug now."))
             self._safe_eject = None
             self.copy_bar.setVisible(False)
+            return
+        if desmontou:
+            # desmontado = gravado e fechado: tirar já é seguro, mesmo sem o
+            # power-off (disco com outra partição montada, hub que não desliga…)
+            self.status.setText(t("Unmounted — safe to unplug, but the drive could not "
+                                  "be powered off: {err}", err=erro))
+            self._safe_eject = None
+            self.copy_bar.setVisible(False)
         else:
-            # a montagem pode estar ocupada por outro app — dá o motivo, não o code
-            msg = (r.stderr or r.stdout).strip() or t("Could not eject the disk.")
-            self.status.setText(msg)
+            self.status.setText(erro)
 
     def _notify(self, title, body):
         """Notificação de desktop sem dependência: notify-send se existir, senão

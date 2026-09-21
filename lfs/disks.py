@@ -1094,19 +1094,46 @@ def removable_dest(path: str, mounts=None):
     return is_removable(dev), mp, dev
 
 
-def eject_command(mountpoint: str, dev: str = "", *, which=None):
-    """Comando (argv) para ejetar com segurança o volume em `mountpoint`, ou None
-    quando nenhuma ferramenta existe — aí o botão simplesmente não aparece (sem
-    dependência nova; F10b #4).
+def luks_backing(dev: str, sysfs: str = "/sys/class/block") -> "str | None":
+    """Se `dev` é um volume LUKS ABERTO (dm-crypt), a partição cifrada por baixo
+    (/dev/sdX1); senão None. Pelo sysfs: dm/uuid "CRYPT-…" + slaves/ com um só
+    membro. `sysfs` injetável para os testes."""
+    try:
+        nome = os.path.basename(os.path.realpath(dev))      # /dev/mapper/x -> dm-3
+        base = os.path.join(sysfs, nome)
+        with open(os.path.join(base, "dm", "uuid")) as f:
+            if not f.read().startswith("CRYPT-"):
+                return None
+        slaves = os.listdir(os.path.join(base, "slaves"))
+    except OSError:
+        return None
+    return "/dev/" + slaves[0] if len(slaves) == 1 else None
 
-    Prefere `gio mount -e` (desmonta pelo gvfs/udisks e faz o flush certo, é o que
-    o Nemo faz), cai para `udisksctl power-off -b <dev>` (desliga o barramento — o
-    "pode arrancar o pendrive" de verdade). `which` injetável para os testes."""
+
+def eject_command(mountpoint: str, dev: str = "", *, which=None, backing=None):
+    """PASSOS (lista de argv, em ordem) para ejetar com segurança o volume em
+    `mountpoint`, ou None quando nenhuma ferramenta existe — aí o botão
+    simplesmente não aparece (sem dependência nova; F10b #4).
+
+    Prefere `gio mount -e` (um passo só: desmonta pelo gvfs/udisks, faz o flush,
+    tranca o LUKS e desliga — é o que o Nemo faz). Sem gio, udisksctl em passos:
+      unmount -b <dev>             o flush e a desmontagem (21/09/2026: antes o
+                                   fallback ia DIRETO ao power-off, cortando a
+                                   energia de um volume ainda montado)
+      lock -b <partição>           só se <dev> é LUKS aberto — como o 4TB do
+                                   Rodrigo: o power-off num /dev/mapper falharia
+      power-off -b <partição>      o "pode arrancar" de verdade
+    `which` e `backing` (-> luks_backing) injetáveis para os testes."""
     which = which or shutil.which
     if which("gio"):
-        return ["gio", "mount", "-e", mountpoint]
+        return [["gio", "mount", "-e", mountpoint]]
     if dev and which("udisksctl"):
-        return ["udisksctl", "power-off", "-b", dev]
+        cifrada = (backing or luks_backing)(dev)
+        passos = [["udisksctl", "unmount", "-b", dev]]
+        if cifrada:
+            passos.append(["udisksctl", "lock", "-b", cifrada])
+        passos.append(["udisksctl", "power-off", "-b", cifrada or dev])
+        return passos
     return None
 
 

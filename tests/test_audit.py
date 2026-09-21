@@ -3837,22 +3837,100 @@ def test_dupes_parity_with_oracle():
 
 
 # ---------------------------------------------------------------- F10b #4/#5
+def test_eject_dest_runs_steps_in_order():
+    """21/09/2026 — _eject_dest executa os PASSOS em ordem e diz a verdade:
+    tudo ok -> "Safe to unplug"; desmontou mas o power-off falhou -> já pode
+    tirar (desmontado = gravado), com o motivo; a desmontagem falhou -> NÃO
+    tenta desligar e mostra o motivo. subprocess.run simulado: nada é ejetado."""
+    try:
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        print("--  GUI  ejetar em passos: pulado (sem PySide6)")
+        return
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    sys.path.insert(0, os.path.join(RAIZ, "lfs"))
+    import app as lfsapp, subprocess, types
+    _ = QApplication.instance() or QApplication([])
+    i18n.set_lang("en")
+    orig_save, orig_run, orig_cmd = lfsapp.save_cfg, subprocess.run, disks.eject_command
+    lfsapp.save_cfg = lambda d: None
+    chamados = []
+    def fake_run(falha_em):
+        def run(cmd, **kw):
+            chamados.append(cmd[1])
+            rc = 1 if cmd[1] == falha_em else 0
+            return types.SimpleNamespace(returncode=rc, stdout="",
+                                         stderr=f"{cmd[1]} recusou: alvo ocupado" if rc else "")
+        return run
+    luks = [["udisksctl", "unmount", "-b", "/dev/mapper/luks-a"],
+            ["udisksctl", "lock", "-b", "/dev/sdc1"],
+            ["udisksctl", "power-off", "-b", "/dev/sdc1"]]
+    disks.eject_command = lambda mp, dev: [list(c) for c in luks]
+    win = lfsapp.MainWindow()
+    try:
+        for falha_em, espera_msg, espera_chamados, limpa in (
+                (None, "Safe to unplug now.", ["unmount", "lock", "power-off"], True),
+                ("power-off", "Unmounted — safe to unplug", ["unmount", "lock", "power-off"], True),
+                ("unmount", "unmount recusou", ["unmount"], False)):
+            chamados.clear()
+            subprocess.run = fake_run(falha_em)
+            win._safe_eject = ("/media/4TB", "/dev/mapper/luks-a")
+            win._eject_dest()
+            msg = win.status.text()
+            assert espera_msg in msg, f"falha em {falha_em}: {msg!r}"
+            assert chamados == espera_chamados, f"falha em {falha_em}: chamou {chamados}"
+            assert (win._safe_eject is None) == limpa, f"falha em {falha_em}: _safe_eject"
+            if falha_em == "power-off":
+                assert "power-off recusou" in msg, "o motivo do power-off tem de aparecer"
+    finally:
+        subprocess.run, disks.eject_command, lfsapp.save_cfg = orig_run, orig_cmd, orig_save
+        i18n.set_lang(None)
+        win.close()
+    print("ok  GUI  ejetar em passos: ordem, parada na falha e mensagem honesta")
+
+
 def test_eject_command_prefers_gio_then_udisks():
-    """F10b #4 — o comando de ejeção é puro e escolhe a ferramenta existente:
-    gio primeiro (o que o Nemo faz), udisksctl power-off como reserva, None quando
-    nenhuma existe (aí o botão nem aparece — sem dependência nova)."""
-    gio = disks.eject_command("/media/USB", "/dev/sdb1",
-                              which=lambda n: "/usr/bin/gio" if n == "gio" else None)
-    assert gio == ["gio", "mount", "-e", "/media/USB"], gio
-    ud = disks.eject_command("/media/USB", "/dev/sdb1",
-                             which=lambda n: "/bin/udisksctl" if n == "udisksctl" else None)
-    assert ud == ["udisksctl", "power-off", "-b", "/dev/sdb1"], ud
+    """F10b #4 — os PASSOS de ejeção são puros e escolhem a ferramenta existente:
+    gio primeiro (um passo: o que o Nemo faz), udisksctl como reserva, None quando
+    nenhuma existe (aí o botão nem aparece — sem dependência nova).
+    21/09/2026: a reserva ia DIRETO ao power-off, sem desmontar; e num LUKS aberto
+    (o 4TB do Rodrigo) desligava o /dev/mapper, que não é um disco. Agora:
+    unmount -> [lock da partição cifrada] -> power-off da partição."""
+    so_gio = lambda n: "/usr/bin/gio" if n == "gio" else None
+    so_ud = lambda n: "/bin/udisksctl" if n == "udisksctl" else None
+    sem_luks = lambda dev: None
+    gio = disks.eject_command("/media/USB", "/dev/sdb1", which=so_gio)
+    assert gio == [["gio", "mount", "-e", "/media/USB"]], gio
+    ud = disks.eject_command("/media/USB", "/dev/sdb1", which=so_ud, backing=sem_luks)
+    assert ud == [["udisksctl", "unmount", "-b", "/dev/sdb1"],
+                  ["udisksctl", "power-off", "-b", "/dev/sdb1"]], ud
+    # LUKS aberto: desmonta o mapper, TRANCA e desliga a partição de verdade
+    lk = disks.eject_command("/media/4TB", "/dev/mapper/luks-abc", which=so_ud,
+                             backing=lambda dev: "/dev/sdc1")
+    assert lk == [["udisksctl", "unmount", "-b", "/dev/mapper/luks-abc"],
+                  ["udisksctl", "lock", "-b", "/dev/sdc1"],
+                  ["udisksctl", "power-off", "-b", "/dev/sdc1"]], lk
     # udisksctl sem dev conhecido não tem como desligar o barramento
-    assert disks.eject_command("/media/USB", "",
-                               which=lambda n: "/bin/udisksctl" if n == "udisksctl" else None) is None
+    assert disks.eject_command("/media/USB", "", which=so_ud) is None
     # nenhuma ferramenta → None
     assert disks.eject_command("/media/USB", "/dev/sdb1", which=lambda n: None) is None
-    print("ok  F10b#4 eject_command: gio → udisksctl → None")
+    # luks_backing lê o sysfs: CRYPT- com um membro -> partição; LVM ou disco comum -> None
+    d = tempfile.mkdtemp(prefix="lfs_sysfs_")
+    try:
+        for nome, uuid, membros in (("dm-3", "CRYPT-LUKS2-abc-luks-abc", ["sdc1"]),
+                                    ("dm-4", "LVM-xyz", ["sdd1"])):
+            os.makedirs(os.path.join(d, nome, "dm"))
+            os.makedirs(os.path.join(d, nome, "slaves"))
+            open(os.path.join(d, nome, "dm", "uuid"), "w").write(uuid + "\n")
+            for m in membros:
+                open(os.path.join(d, nome, "slaves", m), "w").close()
+        assert disks.luks_backing("/dev/dm-3", sysfs=d) == "/dev/sdc1"
+        assert disks.luks_backing("/dev/dm-4", sysfs=d) is None, "LVM não é LUKS"
+        assert disks.luks_backing("/dev/sdb1", sysfs=d) is None, "disco comum não é LUKS"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("ok  F10b#4 eject_command: gio → udisksctl (desmonta → tranca LUKS → desliga) → None")
 
 
 def test_copyjobs_snapshot_roundtrip():
@@ -4080,6 +4158,7 @@ def main():
            test_gui_errors_go_through_humane,
            # F10b #4/#5 — pós-cópia "seguro remover" + fila de cópia que sobrevive
            test_eject_command_prefers_gio_then_udisks,
+           test_eject_dest_runs_steps_in_order,
            test_copyjobs_snapshot_roundtrip, test_copyjobs_rejects_malformed,
            test_copyjobs_resume_is_idempotent,
            # F10c — caçador de duplicatas NATIVO (acha/mostra/exporta, jamais apaga)

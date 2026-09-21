@@ -410,6 +410,8 @@ _PT = {
     "Copied and synced — safe to remove.":
         "Copiado e sincronizado — seguro remover.",
     "Copy finished.": "Cópia concluída.",
+    "Unmounted — safe to unplug, but the drive could not be powered off: {err}":
+        "Desmontado — já pode remover, mas não foi possível desligar o disco: {err}",
     "Safe to unplug now.": "Pode remover com segurança agora.",
     "Could not eject the disk.": "Não deu para ejetar o disco.",
 
