@@ -158,6 +158,30 @@ def path_to_uri(path: str) -> str:
     return "file://" + quote(os.fsencode(os.path.abspath(path)), safe="/")
 
 
+def nota_nome_antigo() -> str:
+    """Tooltip de nome não-UTF-8 (ver engine.nome_exibivel). Função, não
+    constante: o test_i18n_no_stale_keys exige o literal dentro de t(...)."""
+    return t("(name stored in an old encoding (Windows-1252); shown as its likely "
+             "reading — the name on disk is not exactly this text)")
+
+
+def _marca_nome_antigo(item, path: str):
+    """Árvore das duplicatas: mesmo sinal da tabela (itálico + tooltip)."""
+    if engine.tem_bytes_crus(path):
+        f = item.font(0); f.setItalic(True); item.setFont(0, f)
+        item.setToolTip(0, (item.toolTip(0) or engine.nome_exibivel(path))
+                        + "\n" + nota_nome_antigo())
+
+
+def url_local(path: str) -> QUrl:
+    """QUrl de um arquivo local que CHEGA no arquivo certo — a regra do
+    path_to_uri acima. 21/09/2026: Abrir, Abrir pasta (último recurso) e o
+    player de mídia usavam QUrl.fromLocalFile, exatamente o que aquela
+    docstring proíbe; medido: nome "laudo_m\\xe9dico.txt" -> URL de um arquivo
+    que não existe. Toda QUrl de arquivo local passa por aqui."""
+    return QUrl.fromEncoded(QByteArray(path_to_uri(path).encode("ascii")))
+
+
 def build_paths_mime(paths) -> QMimeData:
     """Carga de clipboard/arrasto que os gerenciadores de arquivo entendem.
 
@@ -169,10 +193,9 @@ def build_paths_mime(paths) -> QMimeData:
       application/x-kde-cutselection   Dolphin — '0' = é cópia, não recorte
     O LFS nunca escreve 'cut' nem lê o clipboard: não existe Colar aqui."""
     md = QMimeData()
-    urls = [QUrl.fromEncoded(QByteArray(path_to_uri(p).encode("ascii")))
-            for p in paths]
-    md.setUrls(urls)                                   # text/uri-list
-    md.setText("\n".join(paths))                       # soltar em terminal/editor
+    md.setUrls([url_local(p) for p in paths])          # text/uri-list
+    # soltar em terminal/editor: nome não-UTF-8 vai na forma que o shell entende
+    md.setText("\n".join(engine.caminho_para_shell(p) for p in paths))
     enc = "\n".join(path_to_uri(p) for p in paths)
     md.setData("x-special/gnome-copied-files",
                QByteArray(("copy\n" + enc).encode("ascii")))
@@ -307,7 +330,7 @@ class ResultModel(QAbstractTableModel):
         quanto pelo lessThan do proxy — o proxy chama este helper DIRETO (sem o dispatch
         do data()), que é o ganho de perf do A1. Pura."""
         base = os.path.basename(path) if col == 0 else os.path.dirname(path)
-        return base.casefold()
+        return engine.nome_exibivel(base).casefold()   # ordena pelo que se LÊ
 
     def __init__(self):
         super().__init__()
@@ -331,25 +354,36 @@ class ResultModel(QAbstractTableModel):
         c = idx.column()
         if role == Qt.DisplayRole:
             if c == 0:
-                nome = os.path.basename(m.path) + ("/" if m.is_dir else "")
+                nome = engine.nome_exibivel(os.path.basename(m.path)) + ("/" if m.is_dir else "")
                 # 09/09/2026: o dedup do motor colapsou cópias idênticas neste
                 # resultado — a lista delas mora no tooltip (expansível sem
                 # coluna nova); o filtro e a ordenação seguem lendo m.path
                 cp = len(m.copies)
                 return f"{nome}   {t('+{n} copies', n=cp)}" if cp else nome
-            if c == 1: return os.path.dirname(m.path)
+            if c == 1: return engine.nome_exibivel(os.path.dirname(m.path))
             if c == 2: return str(m.nmatch) if m.nmatch else ""
             if c == 3: return "" if m.is_dir else human_size(m.size)
             if c == 4: return time.strftime("%Y-%m-%d %H:%M", time.localtime(m.mtime)) if m.mtime else ""
         elif role == Qt.TextAlignmentRole and c in (2, 3):
             return int(Qt.AlignRight | Qt.AlignVCenter)
+        elif role == Qt.FontRole and c in (0, 1):
+            # 21/09/2026 (decisão do Rodrigo): nome gravado em codificação antiga
+            # sai legível (cp1252) mas em ITÁLICO — a leitura provável não se
+            # passa pelo nome real; o tooltip diz o porquê
+            parte = os.path.basename(m.path) if c == 0 else os.path.dirname(m.path)
+            if engine.tem_bytes_crus(parte):
+                f = QFont(); f.setItalic(True)
+                return f
+            return None
         elif role == Qt.ToolTipRole:
-            tip = m.path
+            tip = engine.nome_exibivel(m.path)
+            if engine.tem_bytes_crus(m.path):
+                tip += "\n" + nota_nome_antigo()
             if m.snapshot:
                 tip += "\n" + t("found in snapshot tree: {tree}", tree=m.snapshot)
             if m.copies:
                 tip += ("\n" + t("identical copies (same file, or same path + size + mtime):")
-                        + "".join("\n  " + c for c in m.copies[:40]))
+                        + "".join("\n  " + engine.nome_exibivel(c) for c in m.copies[:40]))
                 if len(m.copies) > 40:
                     tip += "\n  …"
             return tip
@@ -434,8 +468,9 @@ class ResultFilterProxy(QSortFilterProxyModel):
         if self._pred is None:
             return True
         m = self.sourceModel().rows[row]     # Match; sem I/O — dados em memória
-        name = os.path.basename(m.path)
-        return self._pred(name, m.path, m.mtime)
+        # filtra pelo que se LÊ: digitar "médico" acha "laudo_m\\xe9dico.txt"
+        return self._pred(engine.nome_exibivel(os.path.basename(m.path)),
+                          engine.nome_exibivel(m.path), m.mtime)
 
     def lessThan(self, left, right):
         """Ordenação NATURAL nas colunas de texto (Arquivo=0, Pasta=1) — como os
@@ -753,7 +788,7 @@ class ConflictDialog(QDialog):
         self.setWindowTitle(t("File already exists"))
         v = QVBoxLayout(self)
         v.addWidget(QLabel(t("“{name}” already exists in the destination.",
-                             name=os.path.basename(dst))))
+                             name=engine.nome_exibivel(os.path.basename(dst)))))
         form = QFormLayout()
         form.addRow(t("Source:"), QLabel(self._desc(src)))
         form.addRow(t("Destination:"), QLabel(self._desc(dst)))
@@ -876,12 +911,12 @@ class PreflightDialog(QDialog):
         if pf.too_big:
             warn.append(t("{n} file(s) exceed the {fs} size limit and will be SKIPPED:",
                           n=len(pf.too_big), fs=pf.caps.label))
-            warn += ["    %s  (%s)" % (os.path.basename(p), human_size(s))
+            warn += ["    %s  (%s)" % (engine.nome_exibivel(os.path.basename(p)), human_size(s))
                      for p, s in pf.too_big[:20]]
         if pf.bad_names:
             warn.append(t("{n} name(s) are invalid on {fs}:", n=len(pf.bad_names),
                           fs=pf.caps.label))
-            warn += ["    %s  — %s" % (os.path.basename(p), self.reason_text(why))
+            warn += ["    %s  — %s" % (engine.nome_exibivel(os.path.basename(p)), self.reason_text(why))
                      for p, why in pf.bad_names[:20]]
         if pf.links_degraded:
             warn.append(t("{n} symlink(s) will be copied as real files "
@@ -955,8 +990,11 @@ class PropertiesDialog(QDialog):
         self._sizer = None
         v = QVBoxLayout(self)
         form = QFormLayout()
-        form.addRow(t("Name:"), self._sel(os.path.basename(m.path)))
-        form.addRow(t("Folder:"), self._sel(os.path.dirname(m.path)))
+        form.addRow(t("Name:"), self._sel(engine.nome_exibivel(os.path.basename(m.path))))
+        form.addRow(t("Folder:"), self._sel(engine.nome_exibivel(os.path.dirname(m.path))))
+        if engine.tem_bytes_crus(m.path):          # a leitura provável não se passa pela real
+            nota = QLabel(nota_nome_antigo()); nota.setWordWrap(True)
+            form.addRow("", nota)
         form.addRow(t("Type:"), self._sel(xdg.mime_for(m.path)))
         self.lbl_size = self._sel("…")
         form.addRow(t("Size:"), self.lbl_size)
@@ -969,7 +1007,7 @@ class PropertiesDialog(QDialog):
             form.addRow(t("Permissions:"), self._sel(oct(st.st_mode & 0o7777)[2:]))
             form.addRow(t("Owner:"), self._sel("%d:%d" % (st.st_uid, st.st_gid)))
             if os.path.islink(m.path):
-                form.addRow(t("Symlink to:"), self._sel(os.readlink(m.path)))
+                form.addRow(t("Symlink to:"), self._sel(engine.nome_exibivel(os.readlink(m.path))))
             if os.path.isdir(m.path):
                 self._sizer = _DirSizeWorker(m.path)
                 self._sizer.tick.connect(self._on_size)
@@ -1492,11 +1530,11 @@ class DuplicatesPanel(QWidget):
             icon, label = badge[ng.verdict]
             if ng.wasted:
                 head = t("{icon} {name} · {k} files · {label} · {waste} recoverable",
-                         icon=icon, name=ng.name, k=len(ng.members),
+                         icon=icon, name=engine.nome_exibivel(ng.name), k=len(ng.members),
                          label=label, waste=human_size(ng.wasted))
             else:
                 head = t("{icon} {name} · {k} files · {label}",
-                         icon=icon, name=ng.name, k=len(ng.members), label=label)
+                         icon=icon, name=engine.nome_exibivel(ng.name), k=len(ng.members), label=label)
             top = QTreeWidgetItem([head, "", ""])
             top.setFirstColumnSpanned(True)
             for p in ng.members:
@@ -1505,7 +1543,8 @@ class DuplicatesPanel(QWidget):
                 except OSError:
                     sz = "—"
                 disk = self.main._disk_badge(p)
-                child = QTreeWidgetItem([p, sz, disk])
+                child = QTreeWidgetItem([engine.nome_exibivel(p), sz, disk])
+                _marca_nome_antigo(child, p)
                 child.setData(0, Qt.UserRole, p)
                 child.setFont(2, mono)
                 top.addChild(child)
@@ -1523,8 +1562,9 @@ class DuplicatesPanel(QWidget):
             top.setFirstColumnSpanned(True)
             for c in g.members:
                 disk = self.main._disk_badge(c.path)
-                child = QTreeWidgetItem([c.path, human_size(c.size), disk])
-                child.setToolTip(0, "\n".join(c.names))
+                child = QTreeWidgetItem([engine.nome_exibivel(c.path), human_size(c.size), disk])
+                child.setToolTip(0, "\n".join(engine.nome_exibivel(n) for n in c.names))
+                _marca_nome_antigo(child, c.path)
                 child.setData(0, Qt.UserRole, c.path)
                 child.setFont(2, mono)
                 top.addChild(child)
@@ -1555,7 +1595,7 @@ class DuplicatesPanel(QWidget):
     def _copy_paths(self):
         ps = self._sel_paths()
         if ps:
-            QGuiApplication.clipboard().setText("\n".join(ps))
+            QGuiApplication.clipboard().setText("\n".join(engine.caminho_para_shell(p) for p in ps))
 
     def _export(self, fmt):
         if not self.groups:
@@ -1569,7 +1609,7 @@ class DuplicatesPanel(QWidget):
             dupes.export(self.groups, path, fmt)
         except OSError as e:
             QMessageBox.warning(self, t("Duplicate hunter"),
-                                humane.human_error(e, target=os.path.basename(path)))
+                                humane.human_error(e, target=engine.nome_exibivel(os.path.basename(path))))
             return
         self.lbl_head.setText(self.lbl_head.text() + t("   —  exported ✔"))
 
@@ -2807,14 +2847,14 @@ class MainWindow(QMainWindow):
             self._stop_media()
             self.pv_stack.setCurrentIndex(0)
             if m.lines:
-                out = [m.path, "─" * 72]
+                out = [engine.nome_exibivel(m.path), "─" * 72]
                 for ln, txt in m.lines[:200]:
                     loc = f"{ln:>6}: " if ln else "        "
                     out.append(loc + txt)
                 self.preview.setPlainText("\n".join(out))
             else:
                 head = self._peek(m.path)
-                self.preview.setPlainText(m.path + "\n" + "─" * 72 + "\n" + head)
+                self.preview.setPlainText(engine.nome_exibivel(m.path) + "\n" + "─" * 72 + "\n" + head)
             self._apply_highlight()               # B7: realce dos termos positivos
 
     def _apply_highlight(self):
@@ -2853,8 +2893,8 @@ class MainWindow(QMainWindow):
     # ---- mídia
     def _show_media(self, path: str, kind: str):
         self.pv_stack.setCurrentIndex(1)
-        self.lbl_media.setText(os.path.basename(path))
-        self.lbl_media.setToolTip(path)
+        self.lbl_media.setText(engine.nome_exibivel(os.path.basename(path)))
+        self.lbl_media.setToolTip(engine.nome_exibivel(path))
         if kind == "image":
             self._stop_media()
             self._img_path = path
@@ -2866,7 +2906,7 @@ class MainWindow(QMainWindow):
             self._set_transport(playable=True)
             if self.audio_out is not None:
                 self.audio_out.setMuted(self.muted)   # B13: começa MUDO por padrão
-            self.player.setSource(QUrl.fromLocalFile(path))
+            self.player.setSource(url_local(path))
             self.player.play()
 
     def _stop_media(self):
@@ -3044,7 +3084,7 @@ class MainWindow(QMainWindow):
 
     def open_file(self, *a):
         for m in self._sel_matches()[:10]:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(m.path))
+            QDesktopServices.openUrl(url_local(m.path))
 
     def open_folder(self):
         """Abre a pasta COM O ITEM SELECIONADO, via org.freedesktop.FileManager1
@@ -3074,7 +3114,7 @@ class MainWindow(QMainWindow):
             return
         # último recurso: xdg-open pelo Qt (WM exótico, sistema sem associação)
         for d in dirs:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(d))
+            QDesktopServices.openUrl(url_local(d))
 
     def _disk_badge(self, path: str) -> str:
         """Nome amigável do disco onde o arquivo está (label do volume > mountpoint
@@ -3171,7 +3211,9 @@ class MainWindow(QMainWindow):
     def copy_paths(self):
         ms = self._sel_matches()
         if ms:
-            QGuiApplication.clipboard().setText("\n".join(m.path for m in ms))
+            # nome não-UTF-8 sai em $'…\\xNN…': colado no terminal, acha o arquivo
+            QGuiApplication.clipboard().setText("\n".join(engine.caminho_para_shell(m.path)
+                                                          for m in ms))
             self.status.setText(t("{n} path(s) copied.", n=len(ms)))
 
     def copy_selection(self):
@@ -3272,7 +3314,7 @@ class MainWindow(QMainWindow):
         self.pb_copy.setRange(0, 1000)
         frac = (p.done_bytes / p.total_bytes) if p.total_bytes else 0
         self.pb_copy.setValue(int(frac * 1000))
-        self.lbl_copy.setText(t("Copying {name}", name=os.path.basename(p.current_path)))
+        self.lbl_copy.setText(t("Copying {name}", name=engine.nome_exibivel(os.path.basename(p.current_path))))
         self.lbl_copy_rate.setText("%s/s · %s / %s" % (
             human_size(int(p.speed_bps)), human_size(p.done_bytes),
             human_size(p.total_bytes)))
@@ -3315,7 +3357,7 @@ class MainWindow(QMainWindow):
         if res.failed:
             QMessageBox.warning(self, t("Copy finished with errors"),
                                 "\n".join(humane.human_error(e, context="copy",
-                                                             target=os.path.basename(p))
+                                                             target=engine.nome_exibivel(os.path.basename(p)))
                                           for p, e in res.failed[:15]))
 
     def on_copy_all_done(self):

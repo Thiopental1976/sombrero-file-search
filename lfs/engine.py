@@ -417,6 +417,46 @@ def texto_legivel(raw: bytes) -> str:
     return raw.decode("utf-8", errors="sfs-cp1252")
 
 
+def tem_bytes_crus(s: str) -> bool:
+    """Nome/caminho com byte que não é UTF-8 (chega do os.fsdecode como
+    substituto U+DC80–DCFF). O Qt NÃO desenha substituto solitário — some:
+    medido 21/09/2026, "relat\\xf3rio_\\xc7\\xc3O.txt" aparecia "relatrio_O.txt"."""
+    return any(0xDC80 <= ord(c) <= 0xDCFF for c in s)
+
+
+def nome_exibivel(s: str) -> str:
+    """Caminho/nome -> texto para a TELA (21/09/2026, decisão do Rodrigo): o que
+    não é UTF-8 é lido como cp1252, a mesma regra do preview (texto_legivel) —
+    "laudo_m\\xe9dico.txt" aparece "laudo_médico.txt". Só EXIBIÇÃO: abrir, copiar,
+    exportar e o motor seguem com o caminho verdadeiro. A GUI marca esses nomes
+    (itálico + tooltip) para a leitura provável não se passar pelo nome real."""
+    if not tem_bytes_crus(s):
+        return s
+    return texto_legivel(os.fsencode(s))
+
+
+def caminho_para_shell(p: str) -> str:
+    """Caminho -> texto que, COLADO NO TERMINAL, aponta o arquivo certo
+    (21/09/2026, decisão do Rodrigo). Texto de clipboard não carrega byte cru:
+    colar "laudo_mdico.txt" abria nada. Nome com byte não-UTF-8 sai em quoting
+    ANSI-C do bash/zsh — $'/x/laudo_m\\xe9dico.txt' —, com os caracteres UTF-8
+    legíveis como estão. Caminho normal sai INTACTO (nada muda para 99% dos casos)."""
+    if not tem_bytes_crus(p):
+        return p
+    out = []
+    for c in p:
+        o = ord(c)
+        if 0xDC80 <= o <= 0xDCFF:
+            out.append("\\x%02x" % (o - 0xDC00))       # o byte original
+        elif c in "\\'":
+            out.append("\\" + c)
+        elif o < 0x20 or o == 0x7F:
+            out.append("\\x%02x" % o)
+        else:
+            out.append(c)
+    return "$'" + "".join(out) + "'"
+
+
 def _linha_py(line: str) -> str:
     """Linha lida pelo fallback Python (open(..., errors="surrogateescape")) ->
     o MESMO texto que o lado rg exibe. Bytes que não eram UTF-8 chegam como
