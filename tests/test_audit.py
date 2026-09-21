@@ -3066,6 +3066,60 @@ def test_column_widths_persist():
     print("ok  GUI  larguras de coluna persistem no config (grava ao arrastar, restaura na aba nova)")
 
 
+def test_repeat_last_virgin_tab_uses_history():
+    """Ctrl+R (repeat_last) numa aba VIRGEM cai na última busca do histórico,
+    como a docstring promete. Regressão de 21/09/2026: new_tab() guarda em
+    tab.form o form_state() do formulário em branco — um dict cheio, sempre
+    verdadeiro —, então o `tab.form or histórico[0]` nunca chegava ao histórico
+    e o Ctrl+R numa janela recém-aberta repetia a busca vazia. Config falso em
+    memória; start_search interceptado (nada varre o disco)."""
+    try:
+        from PySide6.QtWidgets import QApplication
+    except ImportError:
+        print("--  GUI  Ctrl+R em aba virgem: pulado (sem PySide6)")
+        return
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    sys.path.insert(0, os.path.join(RAIZ, "lfs"))
+    import app as lfsapp
+    import searches
+    _ = QApplication.instance() or QApplication([])
+
+    ultima = searches.normalize({"name": "*.odt", "paths": "/tmp", "snapshots": True})
+    orig_load, orig_save = lfsapp.load_cfg, lfsapp.save_cfg
+    lfsapp.save_cfg = lambda d: None
+    try:
+        lfsapp.load_cfg = lambda: {"history": [dict(ultima)]}
+        win = lfsapp.MainWindow()
+        try:
+            rodou = []
+            win.start_search = lambda: rodou.append(win.form_state())
+            # (a) aba virgem -> última do histórico, com as caixas dela
+            win.repeat_last()
+            assert rodou, "Ctrl+R em aba virgem deveria disparar a busca"
+            assert rodou[-1]["name"] == "*.odt", f"repetiu {rodou[-1]['name']!r}, não o histórico"
+            assert win.ck_snap.isChecked(), "a caixa snapshots da busca do histórico não voltou"
+            # (b) aba com busca PRÓPRIA -> repete a dela, não o histórico
+            win.tab.form = searches.normalize({"name": "*.pdf", "paths": "/tmp"})
+            win.repeat_last()
+            assert rodou[-1]["name"] == "*.pdf", "aba com busca própria deveria repetir a dela"
+        finally:
+            win.close()
+        # (c) aba virgem e histórico vazio -> não faz nada
+        lfsapp.load_cfg = lambda: {}
+        win2 = lfsapp.MainWindow()
+        try:
+            rodou2 = []
+            win2.start_search = lambda: rodou2.append(1)
+            win2.repeat_last()
+            assert not rodou2, "sem histórico, Ctrl+R em aba virgem não deveria buscar"
+        finally:
+            win2.close()
+    finally:
+        lfsapp.load_cfg, lfsapp.save_cfg = orig_load, orig_save
+    print("ok  GUI  Ctrl+R em aba virgem cai na última do histórico (com as caixas dela)")
+
+
 def test_result_filter_predicate():
     """F10a #1: o filtro-nos-resultados é um predicado PURO sobre linhas já
     carregadas (nome, caminho, mtime) — substring casa nome OU caminho, '*.odt'
@@ -3971,6 +4025,7 @@ def main():
            test_natural_sort_names,
            test_main_table_columns_are_resizable,
            test_column_widths_persist,
+           test_repeat_last_virgin_tab_uses_history,
            # F10b — a milha final humana (humane.py: nenhum errno vivo na tela)
            test_humane_maps_errno, test_humane_passthrough_and_context,
            test_gui_errors_go_through_humane,

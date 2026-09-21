@@ -2252,8 +2252,14 @@ class MainWindow(QMainWindow):
 
     def repeat_last(self):
         """Ctrl+R: repetir (F3 passou a navegar o preview no F10a #3). Se a aba já
-        tem uma busca, repete ESSA; aba virgem cai na última do histórico."""
-        f = self.tab.form or (self.cfg.get("history") or [None])[0]
+        tem uma busca, repete ESSA; aba virgem cai na última do histórico.
+        "Virgem" é formulário VAZIO (searches.is_empty), não tab.form falso:
+        new_tab() guarda ali o form_state() do formulário em branco — um dict
+        cheio, sempre verdadeiro —, e com o `or` de antes o histórico nunca era
+        alcançado (Ctrl+R numa janela recém-aberta repetia a busca vazia)."""
+        f = self.tab.form
+        if not f or searches.is_empty(f):
+            f = (self.cfg.get("history") or [None])[0]
         if not f:
             return
         self.apply_form(f)
