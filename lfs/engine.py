@@ -556,7 +556,7 @@ def _reap(proc, errf=None, stats=None):
                 morto_por_nos = nos_matamos and rc is not None and (rc < 0 or rc in (137, 143))
                 if (rc is not None and rc not in (0, 1, -15, 143)
                         and not so_permissao and not morto_por_nos):
-                    msg = (motivo or f"o motor saiu com codigo {rc}")[:200]
+                    msg = (motivo or f"the engine exited with code {rc}")[:200]
                     stats.setdefault("engine_errors", []).append({"rc": rc, "erro": msg})
                     anota_incompleto(stats, "engine_failed",
                                      detalhe="exited with code {rc}: {msg}",
@@ -2263,25 +2263,30 @@ def _rodada(q, roots, classes, cancel, stats, on_event, entrega, origem_de=None,
                       jobs=_jobs_para_classe([classes.get(r, "unknown") for r in roots],
                                              conteudo=bool(q.content)))
     parou = False
-    for m in it:
-        if cancel():
-            parou = True
-            break
-        origem = origem_de(m.path) if origem_de is not None else None
-        if entrega.entrega(m, origem):
-            d = dono_de(m.path) if dono_de is not None else None
-            if d is not None and counts is not None:
-                counts[d] = counts.get(d, 0) + 1
-        if entrega.parou:
-            parou = True
-            break
-    # Fechar o gerador AQUI, não quando o GC quiser: é no finally dele que o
-    # _reap lê o stderr e escreve no funil (e, no particionado, que os stats
-    # dos workers são fundidos). Com o `break` acima, sem isto o funil só
-    # ficaria completo por acidente de ordem de coleta.
-    fechar = getattr(it, "close", None)
-    if fechar is not None:
-        fechar()
+    try:
+        for m in it:
+            if cancel():
+                parou = True
+                break
+            origem = origem_de(m.path) if origem_de is not None else None
+            if entrega.entrega(m, origem):
+                d = dono_de(m.path) if dono_de is not None else None
+                if d is not None and counts is not None:
+                    counts[d] = counts.get(d, 0) + 1
+            if entrega.parou:
+                parou = True
+                break
+    finally:
+        # Fechar o gerador AQUI, não quando o GC quiser: é no finally dele que o
+        # _reap lê o stderr e escreve no funil (e, no particionado, que os stats
+        # dos workers são fundidos). Com o `break` acima, sem isto o funil só
+        # ficaria completo por acidente de ordem de coleta. Em `finally`
+        # (revisão Fable 21/09/2026): exceção no on_result do chamador — pipe
+        # quebrado, Ctrl-C na CLI — também tem de matar o fd/rg JÁ, não quando
+        # a contagem de referências resolver.
+        fechar = getattr(it, "close", None)
+        if fechar is not None:
+            fechar()
     if eventos_por_grupo:
         for r in roots:                   # F11: no modo particionado a maioria já
             if r in pendentes:            # foi anunciada assim que o disco fechou;

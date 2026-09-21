@@ -168,8 +168,8 @@ def search_indexed(q: engine.Query, conf=None, mounts=None,
     (`_name_matcher`/`_passes_meta`), então o resultado é idêntico ao da busca por
     nome menos o que sumiu do disco."""
     if q.content:
-        raise IndexError_("o índice acelera busca por NOME; para CONTEÚDO use a "
-                          "busca viva (sem --index).")
+        raise IndexError_("the index speeds up NAME search only; for CONTENT use the "
+                          "live search (without --index).")
     if conf is None:
         if _conf_text is None:
             try:
@@ -194,8 +194,8 @@ def search_indexed(q: engine.Query, conf=None, mounts=None,
         if holes:
             det = ", ".join(f"{h['path']} ({h['reason']})" for h in holes)
             raise IndexError_(
-                f"'{given}' contém partes fora do índice: {det}. O resultado "
-                f"indexado omitiria esse subtree em silêncio — use a busca viva.")
+                f"'{given}' has parts that are not in the index: {det}. An indexed "
+                f"result would silently leave that subtree out — use the live search.")
         base_depth = real.rstrip("/").count("/")
         eff_max = 1 if not q.recursive else q.max_depth
         translate = real != given            # root (ou ancestral) é symlink

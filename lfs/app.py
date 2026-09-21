@@ -15,7 +15,7 @@ Recursos: nome+conteúdo, booleano (A OR B) AND C NOT D, documentos (PDF/docx/ep
 Desenho: GARIMPO_Desenho_Busca_ripgrep.md (Fable 5) — nome final "Sombrero File Search".
 """
 from __future__ import annotations
-import os, sys, threading, time, queue, re
+import os, sys, threading, time, queue, re, stat
 from urllib.parse import quote
 
 from PySide6.QtCore import (Qt, QThread, Signal, QAbstractTableModel, QModelIndex,
@@ -2282,7 +2282,7 @@ class MainWindow(QMainWindow):
         linhas = [m for m in linhas if m is not None]
         try:
             n = searches.export(linhas, alvo)
-        except OSError as e:
+        except (OSError, ValueError) as e:        # ValueError: UnicodeError e afins
             self.status.setText(t("⚠  Could not write {path}: {err}", path=alvo,
                                   err=humane.human_error(e)))
             return
@@ -2993,20 +2993,45 @@ class MainWindow(QMainWindow):
                 and self.media_view.currentWidget() is self.img_label:
             self._rescale_image()
 
+    _PEEK_BYTES = 256 * 1024
+
     def _peek(self, path, n=80):
+        """Primeiras linhas de um arquivo achado por NOME. Roda na thread da GUI,
+        então tem de ser LIMITADO por construção (revisão Fable 21/09/2026):
+          - só arquivo REGULAR: open() num FIFO bloqueia até aparecer um escritor
+            — ou seja, congela a janela pra sempre (o walker Python lista FIFO, e
+            o fd lista symlink que aponta pra um). Mesma classe do T1 do motor;
+          - lê no máximo _PEEK_BYTES: `for line in f` num arquivo de UMA linha
+            (JSON minificado, dump de 500 MB) trazia o arquivo inteiro pra RAM;
+          - texto legado (cp1252) sai legível, igual ao preview das linhas casadas.
+        """
         try:
-            with open(path, "r", errors="ignore") as f:
-                lines = []
-                for i, line in enumerate(f, 1):
-                    if "\x00" in line:
-                        return t("(binary file — no text preview)")
-                    lines.append(f"{i:>5}: {line.rstrip()}")
-                    if i >= n:
-                        lines.append(t("   … (truncated)"))
-                        break
-                return "\n".join(lines) if lines else t("(empty)")
+            modo = os.stat(path).st_mode
+            if not stat.S_ISREG(modo) and not stat.S_ISDIR(modo):
+                return t("(binary file — no text preview)")   # FIFO/socket/device
+            with open(path, "rb") as f:      # pasta: o open levanta e a frase é a de sempre
+                data = f.read(self._PEEK_BYTES)
         except OSError as e:
             return t("(no preview: {e})", e=humane.human_error(e))
+        if b"\x00" in data:
+            return t("(binary file — no text preview)")
+        if not data:
+            return t("(empty)")
+        cortado = len(data) >= self._PEEK_BYTES
+        brutas = data.split(b"\n")
+        if cortado:
+            brutas = brutas[:-1] or brutas      # a última pode estar pela metade
+        elif brutas and brutas[-1] == b"":
+            brutas = brutas[:-1]                # "a\nb\n" não tem uma 3ª linha vazia
+        lines = []
+        for i, raw in enumerate(brutas, 1):
+            if i > n:
+                cortado = True
+                break
+            lines.append(f"{i:>5}: {engine.texto_legivel(raw).rstrip()[:2000]}")
+        if cortado:
+            lines.append(t("   … (truncated)"))
+        return "\n".join(lines)
 
     # ---- contexto
     def _sel_matches(self):

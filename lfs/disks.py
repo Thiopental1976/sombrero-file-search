@@ -25,10 +25,8 @@ from __future__ import annotations
 import os, re, errno, select, threading, warnings, shutil
 from dataclasses import dataclass
 
-try:                        # pacote (GUI) e flat (cli.py/testes)
-    from . import engine
-except ImportError:
-    import engine
+# (o `import engine` que havia aqui servia só ao mount_ok antigo; sem ele o módulo
+# volta a ser o que o cabeçalho promete: stdlib pura, sem ciclo engine<->disks)
 
 # R2 (achado Fable, revisão 23/07): no Python 3.12+ o os.fork() da sonda de mount
 # (mount_status) emite DeprecationWarning "process is multi-threaded, use of fork()
@@ -702,7 +700,14 @@ def mount_ok(path: str) -> bool:
     mp = _mount_entry(ap)[1]
     if not mp or not _under_mount(mp):
         return False                     # coberto só por / (ou nada): não montado
-    return mp in engine.user_mounts()
+    # Revisão Fable 21/09/2026: aqui havia `return mp in engine.user_mounts()`,
+    # e user_mounts() só lista fontes /dev/* (é o menu "Discos"). NFS, CIFS,
+    # sshfs e dataset ZFS sob /mnt eram reprovados como "destino não montado" —
+    # a cópia pro NAS era barrada ANTES de o F9c (caps e ritmo de rede) entrar
+    # em cena. A pergunta desta função é "há uma montagem ATIVA cobrindo o
+    # destino, que não seja o disco de sistema?", e o _mount_entry acima já a
+    # respondeu: `mp` é uma montagem viva sob /mnt|/media|/run/media|/var/mnt.
+    return True
 
 
 # ------------------------------------------------------------------ capacidades do destino

@@ -41,6 +41,11 @@ DEFAULTS = {
     "hidden": False,
     "gitignore": True,
     "one_fs": False,
+    # Revisão Fable 21/09/2026: a GUI põe "snapshots" no form, mas a chave não
+    # estava AQUI — e normalize() descarta chave desconhecida. Busca salva e
+    # histórico nunca lembravam da caixa (o apply_form lia f.get(..., False)
+    # achando que era compatibilidade com config velho; era sempre o padrão).
+    "snapshots": False,
     "min_size": "",
     "days": 0,
 }
@@ -205,5 +210,25 @@ def export(matches, path: str) -> int:
     """Escolhe o formato pela extensão. `.json` → JSON; qualquer outra → CSV."""
     ext = os.path.splitext(path)[1].lower()
     # newline="" é exigência do módulo csv (senão o Windows/Excel vê linha em branco)
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        return export_json(matches, f) if ext == ".json" else export_csv(matches, f)
+    #
+    # Revisão Fable 21/09/2026 — errors="surrogateescape": nome de arquivo no
+    # Linux é sequência de bytes; o que não é UTF-8 chega aqui como substituto
+    # (U+DC80–DCFF) e o encode estrito ESTOURAVA UnicodeEncodeError no meio da
+    # exportação, deixando um CSV pela metade (e a GUI só capturava OSError:
+    # nem aviso havia). surrogateescape devolve ao disco os bytes ORIGINAIS do
+    # nome — a mesma disciplina do dupes.export e da CLI.
+    # Escreve num temporário ao lado e promove no fim: exportação que falha no
+    # meio (disco cheio) não deixa um arquivo truncado com cara de completo, nem
+    # destrói a exportação anterior de mesmo nome.
+    tmp = path + ".sombrero-part"
+    try:
+        with open(tmp, "w", newline="", encoding="utf-8", errors="surrogateescape") as f:
+            n = export_json(matches, f) if ext == ".json" else export_csv(matches, f)
+        os.replace(tmp, path)
+        return n
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise

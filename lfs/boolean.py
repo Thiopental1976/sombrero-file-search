@@ -623,6 +623,11 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     booleano não emitia nada e a GUI ficava sem painel nessa busca."""
     import time
     t0 = time.time()
+    # Revisão Fable 21/09/2026: o parse vinha DEPOIS do gate. Erro de sintaxe —
+    # o erro mais barato de detectar — só aparecia depois de sondar cada montagem
+    # de rede (até 3 s por NAS morto) e de o painel já ter pintado "varrendo…"
+    # para raízes que nunca seriam varridas. Validar primeiro não custa nada.
+    ast = parse(expr)
     # F9a §2.2 — gate de descida: monta de rede morta é pulada (aviso em stats),
     # nunca congela. Mesmo mecanismo do engine.search().
     mortas: list = []
@@ -636,7 +641,6 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     q_digitada = q
     q = engine._query_planejada(q, roots, forca_one_fs, mortas)
     counts, atribui = engine._atribuidor(roots)          # H12: 'found' por root
-    ast = parse(expr)
     pos = positive_terms(ast)
     # opt#4: passos = termos distintos (positivos e negados) + 1 (extração de linhas)
     n_terms = len(dict.fromkeys(_all_terms(ast)))

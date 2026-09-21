@@ -153,6 +153,134 @@ if engine.RG:
        "booleano: nome de arquivo com '\\n' sobrevive (saída do rg -l é NUL-delimitada)")
 
 
+# =====================================================================
+# 3) mount_ok reprovava NFS/CIFS/sshfs/ZFS sob /mnt: terminava em
+#    `mp in engine.user_mounts()`, e user_mounts só lista fontes /dev/*.
+# =====================================================================
+_linhas = ["/dev/sda2 / ext4 rw 0 0",
+           "nas:/export /mnt/nas nfs4 rw 0 0",
+           "//win11/share /mnt/win cifs rw 0 0",
+           "user@h:/ /media/rodrigo/ssh fuse.sshfs rw 0 0",
+           "tank/midia /mnt/tank zfs rw 0 0",
+           "/dev/sdb1 /mnt/DiscoQ ext4 rw 0 0"]
+_tab = disks._read_mounts(_linhas)
+_rm = disks._read_mounts
+try:
+    disks._read_mounts = lambda src=None: _tab
+    ok(all(disks.mount_ok(p) for p in ("/mnt/nas/filmes", "/mnt/win/x", "/media/rodrigo/ssh/a",
+                                       "/mnt/tank/b", "/mnt/DiscoQ/c")),
+       "mount_ok aceita destino em NFS, CIFS, sshfs, ZFS e disco de bloco sob /mnt|/media")
+    ok(not disks.mount_ok("/mnt/vazio/d") and not disks.mount_ok("/media/rodrigo/nada"),
+       "mount_ok continua reprovando ponto de montagem SEM montagem (a guarda do NVMe cheio)")
+    ok(disks.mount_ok("/home/rodrigo/x") and disks.mount_ok("/tmp/y"),
+       "mount_ok não opina fora dos prefixos de montagem")
+finally:
+    disks._read_mounts = _rm
+
+
+# =====================================================================
+# 4) export CSV/JSON com nome não-UTF-8 — medido: UnicodeEncodeError no meio,
+#    arquivo parcial de 65 bytes, e a GUI só capturava OSError.
+# =====================================================================
+_exp = tempfile.mkdtemp(prefix="sfs_exp_")
+_m = engine.Match(os.fsdecode(b"/acervo/laudo_m\xe9dico.txt"), 10, 1e9,
+                  lines=[(1, "texto")], nmatch=1)
+for ext in (".csv", ".json"):
+    alvo = os.path.join(_exp, "saida" + ext)
+    try:
+        n = searches.export([_m, _m], alvo)
+        bruto = open(alvo, "rb").read()
+        ok(n == 2 and b"laudo_m\xe9dico.txt" in bruto,
+           f"export{ext}: nome não-UTF-8 sai com os bytes ORIGINAIS, sem exceção")
+    except Exception as e:                                   # noqa: BLE001
+        ok(False, f"export{ext} levantou {type(e).__name__}: {e}")
+
+class _Explode:
+    path = "/x"; size = 1; mtime = 0; nmatch = 0; lines = []; is_dir = False
+    snapshot = None
+    @property
+    def copies(self):
+        raise RuntimeError("falha no meio")
+alvo = os.path.join(_exp, "anterior.csv")
+open(alvo, "w").write("exportacao anterior, intacta\n")
+try:
+    searches.export([_m, _Explode()], alvo)
+    ok(False, "export deveria propagar a exceção")
+except RuntimeError:
+    ok(open(alvo).read() == "exportacao anterior, intacta\n"
+       and os.listdir(_exp).count("anterior.csv.sombrero-part") == 0,
+       "export que falha no meio não trunca o arquivo anterior nem deixa .sombrero-part")
+shutil.rmtree(_exp, ignore_errors=True)
+
+
+# =====================================================================
+# 5) buscas salvas/histórico esqueciam a caixa "snapshots" (normalize()
+#    descarta chave que não está em DEFAULTS, e ela não estava).
+# =====================================================================
+cfg = {}
+searches.save_search(cfg, "backup", {"name": "fstab", "snapshots": True})
+ok(dict(searches.saved_list(cfg))["backup"].get("snapshots") is True,
+   "busca salva LEMBRA de 'snapshots'")
+searches.add_history(cfg, {"name": "fstab", "snapshots": True})
+ok(cfg["history"][0].get("snapshots") is True, "histórico lembra de 'snapshots'")
+ok(searches.normalize({"name": "x"})["snapshots"] is False,
+   "config antigo, sem a chave, assume o padrão (desmarcada)")
+
+
+# =====================================================================
+# 6) booleano: erro de SINTAXE aparece ANTES de sondar montagem alguma.
+# =====================================================================
+_gate = []
+_pr = engine.planejar_raizes
+try:
+    engine.planejar_raizes = lambda *a, **k: (_gate.append(1), _pr(*a, **k))[1]
+    try:
+        boolean.search_boolean(Query(paths=["/tmp"]), '(a AND "b', lambda m: None)
+        ok(False, "expressão inválida deveria levantar BooleanError")
+    except boolean.BooleanError:
+        ok(not _gate, "BooleanError sai antes do gate de montagens (nenhuma sonda paga)")
+finally:
+    engine.planejar_raizes = _pr
+
+
+# =====================================================================
+# 7) CLI: toda a saída em INGLÊS (o programa é de alcance mundial); pipe
+#    fechado e Ctrl-C sem traceback.
+# =====================================================================
+_CLI = os.path.join(RAIZ, "lfs", "cli.py")
+import re as _re
+_PT = _re.compile(r"[áéíóúâêôãõçÁÉÍÓÚÂÊÔÃÕÇ]|\b(não|busca|índice|arquivo|pasta|licença)\b", _re.I)
+_d = tempfile.mkdtemp(prefix="sfs_cli_")
+for i in range(40):
+    open(os.path.join(_d, f"f{i}.txt"), "w").write("alfa\n")
+_saidas = []
+for argv in (["-V"], [_d, "-n", "zzz_nada"], [_d, "-c", "alfa", "--index"],
+             [_d, "-n", "f1", "--index"], [os.path.join(_d, "nao_existe"), "-n", "x"],
+             [_d, "-b", "(alfa AND"], ["--help"]):
+    # locale pt_BR de propósito: é onde o i18n.t() do BooleanError vazava português
+    r = subprocess.run([sys.executable, _CLI] + argv, capture_output=True, timeout=60,
+                       env=dict(os.environ, LANG="pt_BR.UTF-8", LC_ALL="pt_BR.UTF-8"))
+    _saidas.append((argv, (r.stdout + r.stderr).decode("utf-8", "replace")))
+_sujas = []
+for argv, txt in _saidas:
+    for L in txt.splitlines():
+        L2 = L.replace(_d, "").replace("nao_existe", "")
+        if _PT.search(L2):
+            _sujas.append((argv, L.strip()[:100]))
+ok(not _sujas, f"nenhuma linha em português na saída da CLI: {_sujas[:3]}")
+
+# 4000 nomes longos: a saída passa MUITO do buffer do pipe (64 KiB) — com 40
+# arquivos tudo cabia antes de o `head` fechar e o teste passava no código velho
+_gordo = os.path.join(_d, "gordo"); os.makedirs(_gordo)
+for i in range(4000):
+    open(os.path.join(_gordo, f"arquivo_de_nome_bem_comprido_para_encher_o_pipe_{i:05d}.txt"), "w").close()
+r = subprocess.run(f'"{sys.executable}" "{_CLI}" "{_d}" -n "*.txt" | head -1',
+                   shell=True, capture_output=True, timeout=60)
+ok(b"Traceback" not in r.stderr and b"BrokenPipe" not in r.stderr and r.stdout.count(b"\n") == 1,
+   "`sfs … | head -1`: sem traceback de BrokenPipeError")
+shutil.rmtree(_d, ignore_errors=True)
+
+
 shutil.rmtree(_tmp, ignore_errors=True)
 print()
 if falhas:

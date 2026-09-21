@@ -1784,7 +1784,7 @@ def test_indexed_search_coverage_and_staleness():
                  name_patterns=["*"]), conf=conf_poda, _run=run))
             assert False, "root com poda dentro deveria RECUSAR"
         except indexed.IndexError_ as e:
-            assert "sub" in str(e) and "busca viva" in str(e), str(e)
+            assert "sub" in str(e) and "live search" in str(e), str(e)
 
         # (d) CONTEÚDO não é indexável => recusa
         try:
@@ -2455,7 +2455,7 @@ def test_gio_strategy_uri_and_runner():
                               _runner=lambda argv, c: (1, "erro X"))
             assert False, "gio copy com rc!=0 deveria levantar"
         except OSError as ex:
-            assert "gio copy falhou" in str(ex), str(ex)
+            assert "gio copy failed" in str(ex), str(ex)
         # cancelamento: rc None no copy -> devolve None e emite um remove (aborta parcial)
         aborts = []
 

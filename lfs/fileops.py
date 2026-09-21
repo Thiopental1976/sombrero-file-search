@@ -489,7 +489,7 @@ def _run_gio(argv, cancel):
                     proc.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                return (None, "cancelado")
+                return (None, "cancelled")
     err = proc.stderr.read().decode("utf-8", "replace") if proc.stderr else ""
     return (proc.returncode, err)
 
@@ -508,7 +508,7 @@ def _gio_copy(src, dst, caps, cancel, tick, prog, overwrite, _runner=None):
         runner(["gio", "remove", "--", uri], None)
         return None
     if rc != 0:
-        raise OSError(errno.EIO, f"gio copy falhou ({rc}): {(err or '').strip()[:200]}")
+        raise OSError(errno.EIO, f"gio copy failed ({rc}): {(err or '').strip()[:200]}")
     try:
         size = os.stat(src).st_size
     except OSError:
@@ -540,7 +540,7 @@ def _write_file(src, dst, strategy, caps, cancel, tick, prog, pace, overwrite,
             os.replace(part, dst)        # troca atômica sobre o alvo
     except OSError as ex:
         # o conteúdo novo está íntegro no part; NÃO apagar — reportar os dois nomes
-        raise OSError(ex.errno, f"{ex.strerror or ex}; conteúdo novo íntegro em "
+        raise OSError(ex.errno, f"{ex.strerror or ex}; the new content is intact in "
                                 f"{os.path.basename(part)}")
     return n
 

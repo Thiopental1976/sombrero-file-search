@@ -18,9 +18,9 @@ from engine import Query
 # (pop-up, lembrete recorrente) não é respeito à licença, é incômodo.
 NOTICE = """Sombrero File Search {release}  {build}
 Copyright (C) 2026 Rodrigo Toledo
-Licença: GNU GPL versão 3 ou posterior <https://gnu.org/licenses/gpl.html>
-Software livre: você pode alterá-lo e redistribuí-lo.
-NÃO HÁ GARANTIA, na extensão permitida por lei."""
+License: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law."""
 
 
 class _PrintNotice(argparse.Action):
@@ -34,6 +34,13 @@ class _PrintNotice(argparse.Action):
 
 
 def main():
+    # A CLI fala INGLÊS em qualquer locale (decisão do Rodrigo, 21/09/2026: o
+    # programa é de alcance mundial). Não é só estética: o `detail` do --json é
+    # contrato de automação, e o BooleanError passa por i18n.t() — numa máquina
+    # pt_BR o mesmo script recebia "aspas sem fechamento" onde outra recebia
+    # "unclosed quote". A GUI segue o locale; a CLI, não.
+    import i18n
+    i18n.set_lang("en")
     ap = argparse.ArgumentParser(description="Broad file search (name + content) over ripgrep/fd.")
     ap.add_argument("path", nargs="+", help="folder(s) to search in")
     ap.add_argument("-V", "--version", action=_PrintNotice, nargs=0,
@@ -119,13 +126,33 @@ def main():
     # primeira foto de câmera com nome quebrado. os.fsencode devolve os bytes
     # originais — que é exatamente o que um pipe para xargs/rm precisa receber.
     wb = sys.stdout.buffer
+    # Revisão Fable 21/09/2026 — `sfs … | head -1` despejava um traceback de
+    # BrokenPipeError: o leitor fechou o pipe e nós seguíamos escrevendo. Quando
+    # isso acontece a busca é CANCELADA (ninguém mais lê; seguir varrendo o disco
+    # é desperdício — num SMR, minutos dele) e as escritas viram no-op.
+    pipe = {"fechado": False}
+    def _escreve(b):
+        if pipe["fechado"]:
+            return
+        try:
+            wb.write(b)
+        except BrokenPipeError:
+            pipe["fechado"] = True
+    def _descarrega():
+        if pipe["fechado"]:
+            return
+        try:
+            wb.flush()
+        except BrokenPipeError:
+            pipe["fechado"] = True
+    def parar():
+        return pipe["fechado"]
     def emit(s):
-        wb.write(os.fsencode(s))
+        _escreve(os.fsencode(s))
     def emit_json(obj):
         # surrogatepass: nomes não-UTF-8 sobrevivem como WTF-8; o json escapa \n
         # DENTRO da string, então um nome com quebra de linha nunca racha o NDJSON.
-        wb.write(json.dumps(obj, ensure_ascii=False).encode("utf-8", "surrogatepass"))
-        wb.write(b"\n")
+        _escreve(json.dumps(obj, ensure_ascii=False).encode("utf-8", "surrogatepass") + b"\n")
     def out_json(m):
         n[0] += 1
         # 09/09/2026: `snapshot` = árvore podada de origem (null = árvore viva);
@@ -148,22 +175,21 @@ def main():
             for ln, txt in m.lines:
                 emit(f"{m.path}:{ln}:{txt}{sep}")
     out = out_json if args.json else out_text
-    err = None
     if args.index:
         # F9b §3.2: aceleração por índice, opt-in. Recusa se a cobertura estiver
         # furada (poda) — nunca degrada em silêncio. Sempre anuncia a data.
         import indexed
         if args.boolexpr or args.content:
-            print("# error: --index acelera busca por NOME; para conteúdo/boolean use a busca viva",
+            print("# error: --index speeds up NAME search only; for content/boolean use the live search",
                   file=sys.stderr)
             sys.exit(2)
         idate = indexed.index_date()
         if not indexed.index_available():
-            print("# error: --index pedido mas o plocate/índice não está disponível — use a busca viva",
+            print("# error: --index requested but plocate (or its database) is not available — use the live search",
                   file=sys.stderr)
             sys.exit(2)
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(idate)) if idate else "?"
-        print(f"# index: resultados conforme o índice de {when} (não é o disco AGORA)",
+        print(f"# index: results as of the index built on {when} (NOT the disk as it is now)",
               file=sys.stderr)
         if args.json:
             emit_json({"warn": "index_used", "index_date": idate})
@@ -171,27 +197,29 @@ def main():
         try:
             for m in indexed.search_indexed(q):
                 out(m)
+                if parar():
+                    break
         except indexed.IndexError_ as e:
             if args.json:
-                emit_json({"error": "index_coverage", "detail": str(e)}); wb.flush()
+                emit_json({"error": "index_coverage", "detail": str(e)}); _descarrega()
             print(f"# error: {e}", file=sys.stderr)
             sys.exit(2)
         tot, dt = n[0], time.time() - t0
-        wb.flush()
-        print(f"\n# {tot} files · {dt:.2f}s (índice de {when})", file=sys.stderr)
+        _descarrega()
+        print(f"\n# {tot} files · {dt:.2f}s (index of {when})", file=sys.stderr)
         sys.exit(0 if tot > 0 else 1)
     if args.boolexpr:
         import boolean
         try:
-            tot, dt = boolean.search_boolean(q, args.boolexpr, out, stats=stats,
-                                             on_event=on_copy)
+            tot, dt = boolean.search_boolean(q, args.boolexpr, out, cancel=parar,
+                                             stats=stats, on_event=on_copy)
         except boolean.BooleanError as e:
             if args.json:
-                emit_json({"error": "boolean_expression", "detail": str(e)}); wb.flush()
+                emit_json({"error": "boolean_expression", "detail": str(e)}); _descarrega()
             print(f"boolean expression error: {e}", file=sys.stderr)
             sys.exit(2)
     else:
-        tot, dt = engine.search(q, out, stats=stats, on_event=on_copy)
+        tot, dt = engine.search(q, out, cancel=parar, stats=stats, on_event=on_copy)
     # F9a §2.2 + F9b §3.4: avisos NO MESMO stream (json) e no stderr (texto) —
     # montagem de rede morta pulada e diretórios sem permissão. Parcial anunciado.
     skipped = stats.get("skipped_mounts") or []
@@ -199,7 +227,6 @@ def main():
     # F11b: o motor (fd/rg) pode ter SAÍDO COM ERRO — flag não suportada numa
     # versão antiga, por exemplo. Sem isto a busca devolvia zero resultados em
     # silêncio e o usuário concluía que o arquivo não existe.
-    falhas = stats.get("engine_errors") or []
     if args.json:
         for sk in skipped:
             emit_json({"warn": "mount_dead", "path": sk.get("path"),
@@ -210,7 +237,7 @@ def main():
             emit_json({"warn" if e["motivo"] not in engine.MOTIVOS_GRAVES else "error":
                        "incomplete", "reason": e["motivo"], "where": e["onde"],
                        "detail": engine.texto_detalhe(e), "count": e["n"]})
-    wb.flush()
+    _descarrega()
     for sk in skipped:
         print(f"# warning: mount not responding — skipped: {sk.get('mount')} "
               f"({sk.get('fstype')})", file=sys.stderr)
@@ -243,5 +270,34 @@ def main():
     sys.exit(0 if tot > 0 else 1)
 
 
+def _main_protegido():
+    """main() com as duas saídas que todo filtro Unix precisa ter limpas:
+    Ctrl-C sai 130 sem traceback (os fd/rg filhos morrem no finally do motor, e
+    o SIGINT do terminal já os alcança por estarem no mesmo grupo); e o stdout
+    fechado pelo leitor não estoura no flush final do interpretador."""
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n# interrupted", file=sys.stderr)
+        code = 130
+    except SystemExit as e:
+        code = e.code
+    else:
+        code = 0
+    try:
+        sys.stdout.flush()
+    except (BrokenPipeError, ValueError):
+        pass
+    # se o leitor fechou o pipe, o flush do atexit estouraria de novo: aponta o
+    # stdout pro /dev/null (receita da documentação do Python, "SIGPIPE")
+    try:
+        if sys.stdout is not None:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+    except (OSError, ValueError):
+        pass
+    sys.exit(code)
+
+
 if __name__ == "__main__":
-    main()
+    _main_protegido()
