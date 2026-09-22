@@ -393,14 +393,20 @@ SOURCE_STRINGS = (frozenset(MOTIVO_TEXTO.values()) | frozenset(REASON_TEXTO.valu
                   | {" in {where}", "and {n} more occurrence(s) not listed"})
 
 
-def anota_incompleto(stats, motivo, onde="", detalhe="", n=1, args=None):
+def anota_incompleto(stats, motivo, onde="", detalhe="", n=1, args=None, grave=None):
     """Registra uma perda de completude. Agrega por (motivo, onde) para não
     estourar, e conta o que passar do teto em vez de descartar em silêncio —
     seria a própria doença que este funil trata.
 
     `detalhe` é a frase EN-US como está no código (chave do i18n); o que varia
     (código de saída, teto) vai em `args` e é formatado só na renderização —
-    senão a chave nunca casaria com a tabela de tradução."""
+    senão a chave nunca casaria com a tabela de tradução.
+
+    `grave` (revisão Fable 22/09/2026): o MESMO motivo pode ser grave ou não
+    conforme o lugar — uma montagem morta sob "/" é pedaço que faltou; a montagem
+    morta que o usuário DIGITOU como raiz é zero daquele lugar apresentado como
+    resposta (a regra do H3 para invalid_root/not_mounted). Por isso o `reason`
+    do --json fica o mesmo (contrato) e a gravidade vai na entrada."""
     if stats is None:
         return
     fila = stats.setdefault("incompleto", [])
@@ -411,6 +417,8 @@ def anota_incompleto(stats, motivo, onde="", detalhe="", n=1, args=None):
                 e["detalhe"] = detalhe[:_DETALHE_MAX]
                 if args:
                     e["args"] = dict(args)
+            if grave:
+                e["grave"] = True
             return
     if len(fila) >= _INCOMPLETO_MAX:
         stats["incompleto_omitidos"] = stats.get("incompleto_omitidos", 0) + n
@@ -418,6 +426,8 @@ def anota_incompleto(stats, motivo, onde="", detalhe="", n=1, args=None):
     e = {"motivo": motivo, "onde": onde, "detalhe": (detalhe or "")[:_DETALHE_MAX], "n": n}
     if args:
         e["args"] = dict(args)
+    if grave:
+        e["grave"] = True
     fila.append(e)
 
 
@@ -443,7 +453,7 @@ def resumo_incompleto(stats, tr=None):
     usuário; sem ele, EN-US."""
     tr = tr or (lambda s: s)
     fila = (stats or {}).get("incompleto") or []
-    grave = any(e["motivo"] in MOTIVOS_GRAVES for e in fila)
+    grave = any(e["motivo"] in MOTIVOS_GRAVES or e.get("grave") for e in fila)
     linhas = []
     for e in fila:
         # `onde` é caminho (passa intacto por tr) ou pseudo-local do booleano
@@ -2378,7 +2388,8 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
     return roots, expandidas, bool(expandidas)
 
 
-def _condena_montagem(mp, fstype, klass, status, stats, on_event, mortas, path=None):
+def _condena_montagem(mp, fstype, klass, status, stats, on_event, mortas, path=None,
+                      grave=False):
     """Registra uma montagem morta nos três canais — funil (dead_mount),
     stats['skipped_mounts'] (CLI/JSON) e painel (root_skipped) — e em `mortas`,
     que vira Query.excluded_paths: o que o gate condenou, nenhum motor toca."""
@@ -2386,7 +2397,8 @@ def _condena_montagem(mp, fstype, klass, status, stats, on_event, mortas, path=N
         stats.setdefault("skipped_mounts", []).append(
             {"path": path or mp, "mount": mp, "fstype": fstype, "reason": status})
         anota_incompleto(stats, "dead_mount", onde=mp,
-                         detalhe=f"{fstype}: {status}")   # 'no_response' | 'broken_mount'
+                         detalhe=f"{fstype}: {status}",
+                         grave=grave)   # 'no_response' | 'broken_mount'
     on_event("root_skipped", {"path": path or mp, "mount": mp, "fstype": fstype,
                               "klass": klass, "reason": status})
     if mortas is not None:
@@ -2440,8 +2452,12 @@ def _live_roots(paths, stats, probe_timeout: float = 3.0,
             status = disks.mount_status(mp, timeout=probe_timeout)
             if status != "alive":
                 # linha VERMELHA ao vivo (não popup no fim) — F10a §2
+                # Revisão Fable 22/09/2026 (campo, NAS congelado): a raiz que o
+                # usuário DIGITOU morta é grave — `sfs /mnt/NAS -c x` saía 1
+                # ("nada encontrado") quando a verdade é "não olhei". Montagem
+                # expandida sob "/" segue não-grave: pedaço que faltou, busca segue.
                 _condena_montagem(mp, prof.fstype, prof.klass, status, stats, on_event,
-                                  mortas, path=root)
+                                  mortas, path=root, grave=root not in expandidas)
                 continue
         # H3: só DEPOIS da sonda de rede — os.path.exists() numa montagem NFS em
         # D-state trava o processo, que é o congelamento que o F9a existe para
@@ -2651,7 +2667,8 @@ def _funde_stats(dst, src):
             for e in v:
                 anota_incompleto(dst, e["motivo"], e.get("onde", ""),
                                  e.get("detalhe", ""), e.get("n", 1),
-                                 args=e.get("args"))   # sem isto o particionado
+                                 args=e.get("args"),   # sem isto o particionado
+                                 grave=e.get("grave"))
                                                        # mostrava "{rc}: {msg}" cru
         elif isinstance(v, list):
             dst.setdefault(k, []).extend(v)

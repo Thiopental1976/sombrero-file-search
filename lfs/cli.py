@@ -271,7 +271,7 @@ def main():
         if denied:
             emit_json({"warn": "denied", "count": denied})
         for e in (stats.get("incompleto") or []):
-            emit_json({"warn" if e["motivo"] not in engine.MOTIVOS_GRAVES else "error":
+            emit_json({"warn" if not (e["motivo"] in engine.MOTIVOS_GRAVES or e.get("grave")) else "error":
                        "incomplete", "reason": e["motivo"], "where": e["onde"],
                        "detail": engine.texto_detalhe(e), "count": e["n"]})
     _descarrega()
