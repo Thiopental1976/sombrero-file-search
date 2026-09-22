@@ -133,6 +133,10 @@ _PT = {
     "Choose the folder": "Escolha a pasta",
     "Home folder (~)": "Pasta pessoal (~)",
     "(no external disk mounted)": "(nenhum disco externo montado)",
+    "(the name contains an invisible character, shown as ⟦…⟧ — e.g. RLO "
+    "reverses the text direction and is used to disguise file extensions)":
+        "(o nome contém um caractere invisível, mostrado como ⟦…⟧ — ex.: o RLO "
+        "inverte a direção do texto e é usado para disfarçar extensões de arquivo)",
     "Network (not included in All disks)": "Rede (fora de “Todos os discos”)",
 
     # status line

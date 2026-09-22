@@ -209,12 +209,33 @@ def preenche_menu_discos(menu, atuais, alterna, alterna_todos):
             a.toggled.connect(lambda on, mp=mp: alterna(mp, on))
 
 
+def nota_invisivel() -> str:
+    """Tooltip de nome com caractere invisível/de direção (22/09/2026)."""
+    return t("(the name contains an invisible character, shown as ⟦…⟧ — e.g. RLO "
+             "reverses the text direction and is used to disguise file extensions)")
+
+
+def notas_do_nome(path: str) -> str:
+    """As notas que um nome merece no tooltip ('' se nenhuma)."""
+    notas = []
+    if engine.tem_bytes_crus(path):
+        notas.append(nota_nome_antigo())
+    if engine.tem_invisivel(path):
+        notas.append(nota_invisivel())
+    return "\n".join(notas)
+
+
+def nome_marcado(path: str) -> bool:
+    """Itálico na tela: nome em codificação antiga OU com invisível (22/09/2026)."""
+    return engine.tem_bytes_crus(path) or engine.tem_invisivel(path)
+
+
 def _marca_nome_antigo(item, path: str):
     """Árvore das duplicatas: mesmo sinal da tabela (itálico + tooltip)."""
-    if engine.tem_bytes_crus(path):
+    if nome_marcado(path):
         f = item.font(0); f.setItalic(True); item.setFont(0, f)
         item.setToolTip(0, (item.toolTip(0) or engine.nome_exibivel(path))
-                        + "\n" + nota_nome_antigo())
+                        + "\n" + notas_do_nome(path))
 
 
 def url_local(path: str) -> QUrl:
@@ -374,7 +395,7 @@ class ResultModel(QAbstractTableModel):
         quanto pelo lessThan do proxy — o proxy chama este helper DIRETO (sem o dispatch
         do data()), que é o ganho de perf do A1. Pura."""
         base = os.path.basename(path) if col == 0 else os.path.dirname(path)
-        return engine.nome_exibivel(base).casefold()   # ordena pelo que se LÊ
+        return engine.nome_para_busca(base).casefold()   # ordena pelo que se LÊ
 
     def __init__(self):
         super().__init__()
@@ -415,14 +436,14 @@ class ResultModel(QAbstractTableModel):
             # sai legível (cp1252) mas em ITÁLICO — a leitura provável não se
             # passa pelo nome real; o tooltip diz o porquê
             parte = os.path.basename(m.path) if c == 0 else os.path.dirname(m.path)
-            if engine.tem_bytes_crus(parte):
+            if nome_marcado(parte):
                 f = QFont(); f.setItalic(True)
                 return f
             return None
         elif role == Qt.ToolTipRole:
             tip = engine.nome_exibivel(m.path)
-            if engine.tem_bytes_crus(m.path):
-                tip += "\n" + nota_nome_antigo()
+            if nome_marcado(m.path):
+                tip += "\n" + notas_do_nome(m.path)
             if m.snapshot:
                 tip += "\n" + t("found in snapshot tree: {tree}", tree=m.snapshot)
             if m.copies:
@@ -513,8 +534,8 @@ class ResultFilterProxy(QSortFilterProxyModel):
             return True
         m = self.sourceModel().rows[row]     # Match; sem I/O — dados em memória
         # filtra pelo que se LÊ: digitar "médico" acha "laudo_m\\xe9dico.txt"
-        return self._pred(engine.nome_exibivel(os.path.basename(m.path)),
-                          engine.nome_exibivel(m.path), m.mtime)
+        return self._pred(engine.nome_para_busca(os.path.basename(m.path)),
+                          engine.nome_para_busca(m.path), m.mtime)
 
     def lessThan(self, left, right):
         """Ordenação NATURAL nas colunas de texto (Arquivo=0, Pasta=1) — como os
@@ -1036,8 +1057,8 @@ class PropertiesDialog(QDialog):
         form = QFormLayout()
         form.addRow(t("Name:"), self._sel(engine.nome_exibivel(os.path.basename(m.path))))
         form.addRow(t("Folder:"), self._sel(engine.nome_exibivel(os.path.dirname(m.path))))
-        if engine.tem_bytes_crus(m.path):          # a leitura provável não se passa pela real
-            nota = QLabel(nota_nome_antigo()); nota.setWordWrap(True)
+        if nome_marcado(m.path):                   # a leitura provável não se passa pela real
+            nota = QLabel(notas_do_nome(m.path)); nota.setWordWrap(True)
             form.addRow("", nota)
         form.addRow(t("Type:"), self._sel(xdg.mime_for(m.path)))
         self.lbl_size = self._sel("…")

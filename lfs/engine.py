@@ -794,6 +794,42 @@ def tem_bytes_crus(s: str) -> bool:
     return any(0xDC80 <= ord(c) <= 0xDCFF for c in s)
 
 
+# ---------------------------------------------- caracteres INVISÍVEIS no nome (22/09/2026)
+# Medido no NAS TrueNAS: "fatura_\u202Etxt.exe" aparecia na tela como "fatura_exe.txt"
+# (RLO — o truque clássico para disfarçar executável) e "zero\u200Bwidth.txt" não era
+# achado por "zerowidth". Decisões do Rodrigo: MOSTRAR o invisível como marcador
+# visível (itálico + tooltip) e a busca IGNORÁ-LO ao comparar. Ficam de fora, de
+# propósito, ZWJ/ZWNJ (U+200D/200C): o ZWJ monta emoji compostos (👨‍⚕️) e o ZWNJ é
+# parte legítima da escrita persa e hindi.
+_INVISIVEIS = {
+    0x200B: "ZWSP", 0x2060: "WJ", 0xFEFF: "BOM", 0x00AD: "SHY",
+    0x202A: "LRE", 0x202B: "RLE", 0x202C: "PDF", 0x202D: "LRO", 0x202E: "RLO",
+    0x2066: "LRI", 0x2067: "RLI", 0x2068: "FSI", 0x2069: "PDI",
+}
+_TIRA_INVISIVEIS = {cp: None for cp in _INVISIVEIS}
+_MARCA_INVISIVEIS = {cp: "\u27e6" + nome + "\u27e7" for cp, nome in _INVISIVEIS.items()}
+# no regex do fd (Rust): "talvez invisíveis aqui", entre cada letra do padrão
+_RX_INV_RUST = ("(?:[\\x{200B}\\x{2060}\\x{FEFF}\\x{00AD}]|[\\x{202A}-\\x{202E}]"
+                "|[\\x{2066}-\\x{2069}])*")
+
+
+def tem_invisivel(s: str) -> bool:
+    return any(ord(c) in _INVISIVEIS for c in s)
+
+
+def sem_invisiveis(s: str) -> str:
+    """O nome como a BUSCA o compara: sem os invisíveis (ninguém digita um)."""
+    return s.translate(_TIRA_INVISIVEIS)
+
+
+def nome_para_busca(s: str) -> str:
+    """Nome/caminho -> texto para COMPARAR (filtro e ordenação da GUI): legível
+    (codificação legada) e sem invisíveis — o marcador ⟦RLO⟧ é só da tela."""
+    if tem_bytes_crus(s):
+        s = texto_legivel(os.fsencode(s))
+    return sem_invisiveis(s)
+
+
 def nome_exibivel(s: str) -> str:
     """Caminho/nome -> texto para a TELA (21/09/2026, decisão do Rodrigo): o que
     não é UTF-8 é lido na codificação legada da região (codificacao_legada; em
@@ -801,9 +837,10 @@ def nome_exibivel(s: str) -> str:
     "laudo_m\\xe9dico.txt" aparece "laudo_médico.txt". Só EXIBIÇÃO: abrir, copiar,
     exportar e o motor seguem com o caminho verdadeiro. A GUI marca esses nomes
     (itálico + tooltip) para a leitura provável não se passar pelo nome real."""
-    if not tem_bytes_crus(s):
-        return s
-    return texto_legivel(os.fsencode(s))
+    if tem_bytes_crus(s):
+        s = texto_legivel(os.fsencode(s))
+    # invisível perigoso vira marcador visível (⟦RLO⟧…) no lugar exato, 22/09/2026
+    return s.translate(_MARCA_INVISIVEIS) if tem_invisivel(s) else s
 
 
 def caminho_para_shell(p: str) -> str:
@@ -812,13 +849,15 @@ def caminho_para_shell(p: str) -> str:
     colar "laudo_mdico.txt" abria nada. Nome com byte não-UTF-8 sai em quoting
     ANSI-C do bash/zsh — $'/x/laudo_m\\xe9dico.txt' —, com os caracteres UTF-8
     legíveis como estão. Caminho normal sai INTACTO (nada muda para 99% dos casos)."""
-    if not tem_bytes_crus(p):
+    if not tem_bytes_crus(p) and not tem_invisivel(p):
         return p
     out = []
     for c in p:
         o = ord(c)
         if 0xDC80 <= o <= 0xDCFF:
             out.append("\\x%02x" % (o - 0xDC00))       # o byte original
+        elif o in _INVISIVEIS:
+            out.append("\\u%04x" % o)   # colado no terminal, o RLO não reordena a linha
         elif c in "\\'":
             out.append("\\" + c)
         elif o < 0x20 or o == 0x7F:
@@ -1162,6 +1201,8 @@ def _name_matcher(q: Query):
         lp = [p.lower() for p in pats]
         casa = lambda b: any(fnmatch.fnmatchcase(b.lower(), p) for p in lp)
     encs = _encs_de_globs(pats, q)
+    casa_utf8 = casa
+    casa = lambda b: casa_utf8(b) or (tem_invisivel(b) and casa_utf8(sem_invisiveis(b)))
     if not encs:
         return casa
     # 22/09/2026: nome não-UTF-8 (bytes legados) casa lido em cada codificação
@@ -1290,7 +1331,7 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                     yield Match(fp, st.st_size, st.st_mtime, ident=ident)
 
 
-_MERGE_GLOBS_MIN = 4                      # opt#3: >3 globs -> funde numa regex só
+# (22/09/2026: o antigo _MERGE_GLOBS_MIN = 4 saiu — todo glob de basename vai à regex fundida)
 
 def _glob_to_regex(glob: str, rust: bool = False, enc: str = None,
                    ignora_caixa: bool = True) -> Optional[str]:
@@ -1303,7 +1344,10 @@ def _glob_to_regex(glob: str, rust: bool = False, enc: str = None,
     QUALQUER byte e `?` um caractere OU um byte solto.
     enc (só com rust): a VARIANTE legada — letras não-ASCII viram os bytes delas
     em `enc` (ver legado_variantes). None se o glob não é representável ali."""
-    out = ["^"]
+    # 22/09/2026: na forma UTF-8 do dialeto do fd, "talvez invisíveis" entre cada
+    # token — "zerowidth" acha "zero\u200Bwidth.txt" (medido: custo no ruído)
+    inv = _RX_INV_RUST if (rust and not enc) else ""
+    out = ["^", inv]
     i, n = 0, len(glob)
     while i < n:
         c = glob[i]
@@ -1351,6 +1395,8 @@ def _glob_to_regex(glob: str, rust: bool = False, enc: str = None,
                     "".join("\\x%02X" % y for y in x) for x in alts) + "))")
         else:
             out.append(re.escape(c))
+        if inv and c != "*":
+            out.append(inv)
         i += 1
     out.append("$")
     return "".join(out)
@@ -1419,8 +1465,10 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
     use_glob = bool(q.name_patterns) and not q.name_is_regex
     # opt#3: muitos globs -> funde numa regex única (uma varredura só). Glob com
     # letra não-ASCII também vai para a regex: só ela carrega as variantes legadas
-    if use_glob and (len(pats) >= _MERGE_GLOBS_MIN or _encs_de_globs(pats, q)
-                     or formas_unicode(pats) != list(pats)):
+    # 22/09/2026: TODO glob de basename vai para a regex fundida — só ela carrega as
+    # variantes legadas, as formas NFC/NFD e a tolerância a invisíveis. Medido: custo
+    # no ruído (0,96×–1,08×) e os mesmos resultados do glob. (Glob com '/' não funde.)
+    if use_glob:
         merged = _merge_globs(pats, q)
         if merged is not None:
             pats = [merged]

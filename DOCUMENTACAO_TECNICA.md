@@ -1489,6 +1489,14 @@ com `dead_mount`; o kernel (cifs) fica calado por 180 s. **Teste com NAS
 - Menu "Discos ▾": função única `preenche_menu_discos`; seção **Rede** à parte,
   fora de "Todos os discos" (decisão do Rodrigo).
 - `_peek` só lê arquivo regular, no máximo 256 KiB (FIFO congelava a janela).
+- **Caracteres invisíveis no nome** (RLO e demais controles de direção, ZWSP, WJ,
+  BOM, hífen suave — `engine._INVISIVEIS`): aparecem como marcador `⟦RLO⟧` no lugar
+  exato, em itálico, com tooltip (o RLO fazia `fatura_\u202Etxt.exe` parecer
+  "fatura_exe.txt"); "copiar caminho" os escreve como `\u202e` na forma do terminal.
+  A busca por nome os ignora (fd: invisíveis opcionais entre cada letra da regex,
+  custo no ruído; Python/`--index`: `sem_invisiveis`). Com isso **todo glob de
+  basename vai à regex fundida** (o antigo limiar de 4 globs saiu). Decisões do
+  Rodrigo; teste `test_invisiveis_2026_09_22.py`.
 
 ### 22.6 Exportação e duplicatas (`searches.py`, `dupes.py`)
 
@@ -1552,9 +1560,10 @@ Levantado na atualização deste documento (22/09/2026), lendo o código contra 
 8. No ramo `--one-fs`, montagens `autofs`/gvfs **são** sondadas (`stat` +
    `statvfs`) — não verificado se isso aciona o automount (na expansão elas não são
    tocadas).
-9. Caracteres invisíveis no nome (item de exibição, decisão do Rodrigo):
-   `fatura_\u202Etxt.exe` aparece "fatura_exe.txt" (RTL override);
-   `zero\u200Bwidth.txt` não é achado por "zerowidth".
+9. ~~Caracteres invisíveis no nome~~ — **resolvido em 22/09** (§22.5): marcador
+   visível `⟦RLO⟧`/`⟦ZWSP⟧`… em itálico com tooltip, e a busca por nome ignora
+   esses caracteres (`_INVISIVEIS`, `nome_para_busca`, `_RX_INV_RUST`). ZWJ/ZWNJ
+   (emoji compostos, persa/hindi) ficam intocados.
 10. A docstring de `test_audit.py` ainda diz "ou via pytest" — não vale: os testes
     são scripts standalone (vários fazem `sys.exit()`).
 
