@@ -30,6 +30,11 @@ mais numa segunda análise do que a descrição do sintoma.
 | `6_kernel_cifs_congelamento_longo.log` | kernel em 107 s de congelamento: **vazio** (o cifs só declara o servidor morto em 3 × `echo_interval` = 180 s) |
 | `7_nas_vivo_conteudo_final.*` | conteúdo `AGULHA-` no NAS inteiro, código final: 91 arquivos (64 da origem + 27 criados), 6 reservados do DOS como `read_error` |
 
+> **Nota (22/09, commit do Fable `7ec3a71`):** estas capturas mostram o NAS digitado e
+> congelado saindo com `rc=1` e `"warn": "incomplete"`. A própria evidência revelou que isso
+> era "nada encontrado" mentiroso: desde então a montagem morta que é a **raiz digitada** é
+> grave — `rc=2` e `"error": "incomplete"`. Contrato em `docs/CONTRATO_FUNIL.md`.
+
 ## O que o teste mostrou (e os consertos)
 
 1. **Sonda enganada pelo cache.** `mount_status` fazia só `stat` — respondido

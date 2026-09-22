@@ -1253,7 +1253,9 @@ preenchidos, mas são **vista**, não fonte.
   `_anota` (o mesmo, sob `_cache_lock`).
 - `texto_detalhe(e, tr)` traduz e só então aplica `.format(**args)`.
 - `resumo_incompleto(stats, tr) -> (grave, linhas)`: **fonte única** da barra da GUI
-  e do exit code da CLI.
+  e do exit code da CLI. `grave` = motivo em `MOTIVOS_GRAVES` **ou** entrada marcada
+  `grave` (`anota_incompleto(..., grave=True)`; a fusão do particionado preserva a marca).
+  Contrato para scripts em uma página: `docs/CONTRATO_FUNIL.md`.
 - `MOTIVOS_GRAVES = {engine_failed, engine_missing, disk_failed, invalid_root, not_mounted}`
   — "o resultado pode estar **errado**".
 
@@ -1266,7 +1268,7 @@ preenchidos, mas são **vista**, não fonte.
 | `not_mounted` | `_raiz_montada`: está no `/etc/fstab` e não está montada | ✔ |
 | `permission_denied` | stderr "ermission denied" (`_reap`), `_walk_onerror`, fallback Python | — |
 | `read_error` | demais linhas de stderr por arquivo; erro de leitura no fallback | — |
-| `dead_mount` | `_condena_montagem` (gate); errno 107/116/112/19 no stderr (`_linha_de_montagem_morta`) | — |
+| `dead_mount` | `_condena_montagem` (gate); errno 107/116/112/19 no stderr (`_linha_de_montagem_morta`) | ✔ **só na raiz digitada** (marca `grave` da entrada, 22/09); expandida sob `/`: — |
 | `mount_not_entered` | `planejar_raizes`: gvfs/autofs/MTP (`enumerate_default=False`) | — |
 | `empty_mountpoint` | vaga de montagem vazia que não é mountpoint (indício) | — |
 | `stat_failed` | o motor listou, o `stat` falhou (H5) | — |

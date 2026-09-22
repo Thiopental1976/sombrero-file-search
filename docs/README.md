@@ -11,6 +11,7 @@ in Portuguese.
 | Onde | O que é |
 |---|---|
 | [`DOCUMENTACAO_TECNICA.md`](DOCUMENTACAO_TECNICA.md) | A documentação técnica: arquitetura, cada módulo, o funil de incompletude, as fases F9–F12 e a revisão mais recente. **Comece por aqui** para entender o código. |
+| [`CONTRATO_FUNIL.md`](CONTRATO_FUNIL.md) | O contrato para scripts: cada `reason` do `--json`, quais são graves, o código de saída 0/1/2. |
 | [`campo/`](campo/) | Testes de campo com hardware e redes reais, com a evidência bruta (`--json`, log do kernel): a instalação no Bazzite (jul/2026) e o NAS TrueNAS pela tailnet (set/2026). |
 | [`historico/`](historico/) | O diário de desenvolvimento: briefing inicial, handoffs e pedidos de revisão entre as fases, vereditos. Útil para entender **por que** uma decisão foi tomada; o código atual é a referência de **como** ela ficou (onde divergem, o código manda — ver §23 da documentação técnica). |
 
