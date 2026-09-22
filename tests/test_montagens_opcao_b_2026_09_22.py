@@ -70,6 +70,31 @@ for fora in ("/", "/var", "/var/home", "/sysroot", "/boot/efi", "/home/rodrigo",
              "/var/lib/containers/storage/overlay/x/merged", "/run/user/1000/gvfs", "/tmp"):
     ok(fora not in loc and fora not in net, f"de sistema/pseudo fica FORA: {fora}")
 ok(not (set(loc) & set(net)), "nenhuma montagem é local E rede ao mesmo tempo")
+# a lista de fs não-usuário é a DESTE módulo (o F12 tem um _PSEUDO_FS homônimo que a
+# sobrescrevia no import — zram/overlay com origem /dev passavam como disco)
+for l in ("/dev/zram0 /mnt/zram zram rw 0 0\n", "/dev/loop0 /media/o overlay rw 0 0\n",
+          "/dev/sdz1 /mnt/tmp tmpfs rw 0 0\n"):
+    mp = l.split()[1]
+    ok(mp not in engine.user_mounts([l]), f"{l.split()[2]} com origem /dev fica FORA ({mp})")
+ok("tmpfs" in engine._FS_NAO_USUARIO and "zram" in engine._FS_NAO_USUARIO,
+   "_FS_NAO_USUARIO não é sobrescrito pelo _PSEUDO_FS do F12")
+
+# planejar_raizes: raiz de REDE não leva stat antes da sonda (NAS congelado
+# pendurava 150 s, 22/09/2026) — o stat do motor vira uma armadilha
+chamados = []
+orig_dev, orig_ident = engine._st_dev, engine._ident
+engine._st_dev = lambda p: chamados.append(("st_dev", p)) or 1
+engine._ident = lambda p: chamados.append(("ident", p)) or (1, 1)
+try:
+    mnt = [("//nas/c", "/var/mnt/NAS", "cifs"), ("/dev/sda1", "/var/mnt/HD", "ext4")]
+    engine.planejar_raizes(["/var/mnt/NAS"], False, {}, mounts=mnt)
+    ok(not any(p == "/var/mnt/NAS" for _k, p in chamados),
+       f"raiz de rede: nenhum stat no plano ({chamados})")
+    chamados.clear()
+    engine.planejar_raizes(["/var/mnt/HD"], False, {}, mounts=mnt)
+    ok(any(p == "/var/mnt/HD" for _k, p in chamados), "raiz local segue levando stat (bind/identidade)")
+finally:
+    engine._st_dev, engine._ident = orig_dev, orig_ident
 ok(engine.user_mounts(["/dev/sdc1 /media/rodrigo/Backup\\040Externo ext4 rw 0 0\n"])
    == ["/media/rodrigo/Backup Externo"], "espaço escapado (\\040) segue decodificado")
 ok(isinstance(engine.user_mounts(), list) and isinstance(engine.network_mounts(), list),

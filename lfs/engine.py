@@ -91,7 +91,10 @@ _SISTEMA_PREFIXO = ("/boot/", "/efi/", "/proc", "/sys", "/dev", "/run/", "/var/"
                     "/.snapshots", "/root/", "/opt/")
 # ...mas abaixo destes o usuário monta disco de propósito (ganham do prefixo acima)
 _USUARIO_PREFIXO = _MIDIA + ("/home/", "/var/home/")
-_PSEUDO_FS = frozenset((
+# (nome próprio: o F12 tem o SEU _PSEUDO_FS mais abaixo, e um nome repetido fazia
+# o de lá sobrescrever este no import — zram/overlay com origem /dev escapavam
+# como "disco local"; achado na revisão da documentação, 22/09/2026)
+_FS_NAO_USUARIO = frozenset((
     "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "ramfs", "cgroup", "cgroup2",
     "securityfs", "pstore", "bpf", "debugfs", "tracefs", "configfs", "fusectl",
     "mqueue", "hugetlbfs", "autofs", "rpc_pipefs", "binfmt_misc", "efivarfs", "nsfs",
@@ -147,7 +150,7 @@ def classifica_montagens(lines=None) -> dict:
         if len(parts) < 3:
             continue
         src, mp, fstype = parts[0], _decodifica_mp(parts[1]), parts[2]
-        if fstype in _PSEUDO_FS or _eh_de_sistema(mp):
+        if fstype in _FS_NAO_USUARIO or _eh_de_sistema(mp):
             continue
         if fstype in rede_fs:
             out[mp] = ("rede", fstype, src)
