@@ -2731,8 +2731,8 @@ class MainWindow(QMainWindow):
     # H10/nível 3: perdas que o painel de narrativa JÁ desenha por raiz (linha
     # vermelha com o motivo; "(snapshots skipped)" ao lado do disco). Repetir na
     # barra seria dizer a mesma coisa duas vezes em cada busca do disco com
-    # Timeshift. Só some da barra se o painel de FATO tem aquela raiz — no
-    # booleano, que não emite eventos, tudo continua indo pra barra.
+    # Timeshift. Só some da barra se o painel de FATO tem aquela raiz (o booleano
+    # emite os mesmos eventos desde o H12, então vale para os dois motores).
     _MOTIVOS_NO_PAINEL = {"snapshots_skipped", "snapshots_searched", "dead_mount", "invalid_root",
                           "not_mounted", "mount_not_entered"}
 

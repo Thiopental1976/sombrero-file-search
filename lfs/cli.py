@@ -55,7 +55,7 @@ def main():
                     help="search INSIDE documents (PDF/docx/epub/zip…) via ripgrep-all (rga)")
     ap.add_argument("--name-regex", action="store_true")
     ap.add_argument("--content-regex", action="store_true")
-    ap.add_argument("-i", "--ignore-case", action="store_true", help="ignore case (default is already insensitive; use -s for sensitive)")
+    ap.add_argument("-i", "--ignore-case", action="store_true", help="ignore case (the default; overrides -s)")
     ap.add_argument("-s", "--case-sensitive", action="store_true")
     ap.add_argument("-w", "--word", action="store_true", help="whole word")
     ap.add_argument("--hidden", action="store_true")
@@ -133,7 +133,8 @@ def main():
     q = Query(
         paths=args.path, name_patterns=names, name_is_regex=args.name_regex,
         content=args.content, content_is_regex=args.content_regex,
-        case_sensitive=args.case_sensitive, whole_word=args.word,
+        # -i vence -s: é pedido explícito (22/09/2026 — antes -i era aceito e ignorado)
+        case_sensitive=args.case_sensitive and not args.ignore_case, whole_word=args.word,
         include_hidden=args.hidden, respect_gitignore=args.gitignore,
         one_file_system=args.one_fs, skip_snapshots=not args.snapshots,
         min_size=args.min_size, max_size=args.max_size,       # já em bytes (_tamanho)
@@ -265,7 +266,8 @@ def main():
     if args.json:
         for sk in skipped:
             emit_json({"warn": "mount_dead", "path": sk.get("path"),
-                       "mount": sk.get("mount"), "fstype": sk.get("fstype")})
+                       "mount": sk.get("mount"), "fstype": sk.get("fstype"),
+                       "reason": sk.get("reason")})   # 22/09: no_response × broken_mount
         if denied:
             emit_json({"warn": "denied", "count": denied})
         for e in (stats.get("incompleto") or []):
@@ -274,7 +276,10 @@ def main():
                        "detail": engine.texto_detalhe(e), "count": e["n"]})
     _descarrega()
     for sk in skipped:
-        print(f"# warning: mount not responding — skipped: {sk.get('mount')} "
+        # 22/09/2026: "not responding" só quando é o caso; montagem que RESPONDEU
+        # com erro de montagem morta (ESTALE, ENOTCONN…) é "broken"
+        oque = "broken" if sk.get("reason") == "broken_mount" else "not responding"
+        print(f"# warning: mount {oque} — skipped: {sk.get('mount')} "
               f"({sk.get('fstype')})", file=sys.stderr)
     if denied:
         print(f"# warning: {denied} directories without permission — partial results",

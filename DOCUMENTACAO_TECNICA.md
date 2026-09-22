@@ -1540,32 +1540,22 @@ Levantado na atualização deste documento (22/09/2026), lendo o código contra 
 | Decisão B (flock entre processos, `--no-serial-wait`) e `--no-index` | planejados | **não existem** em `lfs/*.py` |
 | B6 (booleano × documentos) | exclusão mútua na GUI (auditoria de julho, §13) | revogado: o booleano combina com documentos; a trava saiu |
 
-### 23.2 Pendências de código (pequenas, sem conserto ainda)
+### 23.2 Pendências de código — destino (22/09/2026)
 
-1. `-i/--ignore-case` é aceito pela CLI e **não faz nada** (`args.ignore_case` nunca
-   é lido); o padrão já é insensível e `-s` prevalece.
-2. `human_error(..., context="eject")` é chamado no ejetar, mas `_CLAUSES` não tem
-   chave `eject` — a mensagem sai sem a cláusula de contexto.
-3. `dupes.export` usa `,` (a busca usa `;`) e grava **direto** no destino, sem o
-   `.sombrero-part` + `os.replace` que `searches.export` ganhou em 21/09.
-4. `dupes.py` nunca escreve `stats["incompleto"]`: a barra das duplicatas só mostra
-   `denied`, embora chame `resumo_incompleto`.
-5. `{"warn":"mount_dead"}` do `--json` **não** traz `reason`, e o aviso de texto diz
-   "not responding" também quando o motivo é `broken_mount`.
-6. Comentários desatualizados: o de `_MOTIVOS_NO_PAINEL` (`app.py`) diz que "o
-   booleano não emite eventos" (emite desde o H12); o de `MOTIVOS_GRAVES` cita o nome
-   antigo `raiz_invalida` (a chave é `invalid_root`).
-7. Com várias raízes em `--index`, a recusa de cobertura é raiz a raiz dentro do
-   gerador: resultados de uma raiz íntegra anterior podem sair antes do exit 2.
-8. No ramo `--one-fs`, montagens `autofs`/gvfs **são** sondadas (`stat` +
-   `statvfs`) — não verificado se isso aciona o automount (na expansão elas não são
-   tocadas).
-9. ~~Caracteres invisíveis no nome~~ — **resolvido em 22/09** (§22.5): marcador
-   visível `⟦RLO⟧`/`⟦ZWSP⟧`… em itálico com tooltip, e a busca por nome ignora
-   esses caracteres (`_INVISIVEIS`, `nome_para_busca`, `_RX_INV_RUST`). ZWJ/ZWNJ
-   (emoji compostos, persa/hindi) ficam intocados.
-10. A docstring de `test_audit.py` ainda diz "ou via pytest" — não vale: os testes
-    são scripts standalone (vários fazem `sys.exit()`).
+| # | Pendência | Destino |
+|---|---|---|
+| 1 | `-i/--ignore-case` aceito e ignorado | ✅ agora **vence `-s`** (pedido explícito) |
+| 2 | `human_error(context="eject")` sem cláusula | ✅ `_CLAUSES[("eject", …)]` = "The disk was not ejected." (+ pt) |
+| 3 | `dupes.export` gravava direto no destino | ✅ temporário + `os.replace` via **`searches.grava_atomico`** (fonte única das duas exportações; mora fora do `dupes.py`, cuja linha vermelha proíbe replace/unlink no módulo). Separador segue `,` (não mudar formato de quem já usa) |
+| 4 | `dupes.py` não escreve `stats["incompleto"]` | **não é defeito**: a barra das duplicatas já mostra "N ilegíveis" pelo `denied`; não há outra perda a anotar |
+| 5 | `mount_dead` sem `reason`; texto sempre "not responding" | ✅ `reason` no `--json`; texto "mount broken" quando `broken_mount` |
+| 6 | comentários desatualizados (`_MOTIVOS_NO_PAINEL`, `raiz_invalida`) | ✅ corrigidos |
+| 7 | `--index` multi-raiz imprimia antes de recusar | ✅ cobertura de **todas** as raízes antes do primeiro resultado |
+| 8 | autofs/gvfs sondados no `--one-fs` | **comportamento conhecido, mantido**: o próprio walker com `--one-file-system` já faz `stat` no ponto de montagem (é como compara `st_dev`), então tirar a sonda não evitaria acordar o automount |
+| 9 | caracteres invisíveis no nome | ✅ §22.5 |
+| 10 | docstring do `test_audit.py` sugeria pytest | ✅ corrigida |
+
+Teste das pendências: `tests/test_pendencias_2026_09_22.py` (falha no código anterior).
 
 ### 23.3 Números citados só nos handoffs (não reverificados)
 

@@ -466,7 +466,21 @@ def name_verdicts(files, groups: List[DupGroup]) -> List[NameGroup]:
 def export(groups: List[DupGroup], path: str, fmt: str = "csv"):
     """Grava os grupos em CSV (colunas: group, hash, size, path — uma linha por
     caminho) ou JSON. `surrogateescape` deixa caminhos com bytes não-UTF-8 (nomes
-    hostis do acervo) irem para o disco sem estourar — a mesma disciplina do F5."""
+    hostis do acervo) irem para o disco sem estourar — a mesma disciplina do F5.
+
+    22/09/2026: grava num temporário e promove no fim (searches.grava_atomico, a
+    mesma da exportação da busca): falha no meio (disco cheio) não deixa arquivo
+    pela metade com cara de completo, nem destrói a exportação anterior."""
+    try:                        # pacote (GUI) e flat (cli.py/testes)
+        from .searches import grava_atomico
+    except ImportError:
+        from searches import grava_atomico
+    # a troca atômica mora em searches.grava_atomico: este módulo não tem (nem
+    # deve ter) replace/unlink — ver a linha vermelha do cabeçalho
+    grava_atomico(path, lambda tmp: _export_para(groups, tmp, fmt))
+
+
+def _export_para(groups: List[DupGroup], path: str, fmt: str):
     if fmt == "json":
         import json
         data = [{"hash": g.digest, "size": g.size, "wasted": g.wasted,

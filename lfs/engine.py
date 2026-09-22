@@ -311,7 +311,7 @@ _DETALHE_MAX = 300           # teto do detalhe (repr de exceção); os textos de
 # pedaço" — só estes mudam o código de saída da CLI, porque um script que checa
 # `sfs ... || echo "não achei"` não pode passar a falhar porque uma pasta do
 # sistema negou leitura.
-# `raiz_invalida` entra (H3): raiz que não existe — disco desmontado, nome
+# `invalid_root` (antes `raiz_invalida`) entra (H3): raiz que não existe — disco desmontado, nome
 # digitado errado — não é "faltou um pedaço", é ZERO daquele lugar apresentado
 # como resposta. grep e rg saem 2 num caminho inexistente; um script que decide
 # "não está no disco X" tem de saber que o disco X não estava lá.

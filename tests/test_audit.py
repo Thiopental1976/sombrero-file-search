@@ -2,7 +2,8 @@
 """Testes de regressão da auditoria Fable 5 (LinuxFileSearch_Auditoria_Debug.md).
 
 Cobre os consertos B1–B14 no que dá para exercitar sem GUI (o núcleo é sem-Qt).
-Rode:  python3 tests/test_audit.py      (ou via pytest)
+Rode:  python3 tests/test_audit.py      (script standalone — NÃO via pytest:
+        vários testes da suíte fazem sys.exit() e o pytest dá INTERNALERROR)
 
 Cada teste constrói sua própria árvore sintética em tempdir — não toca no acervo.
 """

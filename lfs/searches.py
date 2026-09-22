@@ -223,6 +223,25 @@ def export_json(matches, fp) -> int:
     return len(dados)
 
 
+def grava_atomico(path: str, escreve):
+    """Chama `escreve(tmp)` num temporário AO LADO de `path` e o promove com
+    os.replace no fim; falha no meio (disco cheio) apaga o temporário e mantém a
+    exportação anterior intacta. Fonte única das duas exportações (busca e
+    duplicatas, 22/09/2026) — e mora AQUI, não no dupes.py, cuja linha vermelha
+    (test_dupes_no_delete_api) proíbe replace/unlink no módulo inteiro."""
+    tmp = path + ".sombrero-part"
+    try:
+        r = escreve(tmp)
+        os.replace(tmp, path)
+        return r
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def export(matches, path: str) -> int:
     """Escolhe o formato pela extensão. `.json` → JSON; qualquer outra → CSV."""
     ext = os.path.splitext(path)[1].lower()
@@ -237,15 +256,7 @@ def export(matches, path: str) -> int:
     # Escreve num temporário ao lado e promove no fim: exportação que falha no
     # meio (disco cheio) não deixa um arquivo truncado com cara de completo, nem
     # destrói a exportação anterior de mesmo nome.
-    tmp = path + ".sombrero-part"
-    try:
+    def escreve(tmp):
         with open(tmp, "w", newline="", encoding="utf-8", errors="surrogateescape") as f:
-            n = export_json(matches, f) if ext == ".json" else export_csv(matches, f)
-        os.replace(tmp, path)
-        return n
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+            return export_json(matches, f) if ext == ".json" else export_csv(matches, f)
+    return grava_atomico(path, escreve)

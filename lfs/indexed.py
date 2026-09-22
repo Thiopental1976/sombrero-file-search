@@ -199,6 +199,18 @@ def search_indexed(q: engine.Query, conf=None, mounts=None,
         conf = parse_updatedb_conf(_conf_text)
 
     match_name = engine._name_matcher(q)
+    # 22/09/2026: cobertura de TODAS as raízes antes do primeiro resultado — com o
+    # teste dentro do laço, uma raiz íntegra já tinha impresso os achados dela
+    # quando a seguinte recusava a busca inteira (exit 2 depois de resultados).
+    for root in q.paths:
+        real = os.path.realpath(os.path.abspath(os.path.expanduser(root)))
+        holes = index_coverage(real, conf, mounts, include_hidden=q.include_hidden)
+        if holes:
+            det = ", ".join(f"{h['path']} ({h['reason']})" for h in holes)
+            raise IndexError_(
+                f"'{os.path.abspath(os.path.expanduser(root))}' has parts that are not "
+                f"in the index: {det}. An indexed result would silently leave that "
+                f"subtree out — use the live search.")
     for root in q.paths:
         given = os.path.abspath(os.path.expanduser(root))
         # R4 (achado Fable): o plocate indexa e devolve caminhos REAIS (resolvidos).

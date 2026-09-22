@@ -78,6 +78,10 @@ _CLAUSES = {
     ("mount",  "network"): "This location was skipped.",
     ("mount",  "space"):   "This location was skipped.",
     ("mount",  "file"):    "This location was skipped.",
+    # 22/09/2026: o ejetar chamava human_error(context="eject") sem cláusula própria
+    ("eject",  "network"): "The disk was not ejected.",
+    ("eject",  "space"):   "The disk was not ejected.",
+    ("eject",  "file"):    "The disk was not ejected.",
 }
 
 

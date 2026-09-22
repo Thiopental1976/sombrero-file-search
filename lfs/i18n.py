@@ -528,6 +528,7 @@ _PT = {
         "Este arquivo foi pulado.",
     "This location was skipped.":
         "Este local foi pulado.",
+    "The disk was not ejected.": "O disco não foi ejetado.",
 }
 
 # Source is English; only non-English languages need a table.
