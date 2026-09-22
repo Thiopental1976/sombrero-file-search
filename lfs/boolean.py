@@ -252,8 +252,7 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
         res = _files_with_term_py(term, q, cancel, stats)
         return res & set(restrict) if restrict is not None else res
     base = _rg_base(q) + ["-l", "--null"]         # --null: ver _le_caminhos_nul
-    if not q.content_is_regex: base.append("--fixed-strings")
-    base += ["-e", term]
+    base += engine.rg_padroes([term], q)          # + variantes legadas (22/09/2026)
     if restrict is None:
         batches = [list(q.paths)]                 # varredura da árvore toda
     else:
@@ -760,8 +759,7 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
     if not _content_binary(q):              # T2: sem rg, colhe as linhas em Python
         return _display_lines_py(pos_terms, files, q, cancel)   # (o fallback só lê texto plano)
     base = _rg_base(q) + ["--json"]
-    if not q.content_is_regex: base.append("--fixed-strings")
-    for term in pos_terms: base += ["-e", term]   # B6: não sombrear o tradutor t()
+    base += engine.rg_padroes(pos_terms, q)       # B6 + variantes legadas (22/09/2026)
     res: dict = {}
     for i in range(0, len(files), _BATCH):
         if cancel(): break
@@ -791,7 +789,8 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
                     lst = res.setdefault(path, [])
                     if len(lst) < 200:
                         ln = ev["data"].get("line_number") or 0
-                        txt = engine._logical_line(engine._rg_linha(ev["data"].get("lines")))
+                        txt = engine._logical_line(engine._rg_linha(ev["data"].get("lines"),
+                                                                    pos_terms, q))
                         lst.append((ln, txt))
         finally:
             vigia.set()
@@ -805,6 +804,7 @@ def _display_lines_py(pos_terms, files, q: engine.Query, cancel) -> dict:
     com a mesma semântica (case/regex/word) da busca. Guarda S_ISREG (T1) e pula
     binário (NUL), igual ao _iter_content_python. Uma passada por arquivo."""
     rxs = [engine._content_regex(t, q) for t in pos_terms]
+    encs = engine.encs_dos_termos(pos_terms, q)   # espelho das variantes do rg
     res: dict = {}
     for fp in files:
         if cancel(): break
@@ -816,8 +816,15 @@ def _display_lines_py(pos_terms, files, q: engine.Query, cancel) -> dict:
                 for i, line in enumerate(fh, 1):
                     if "\x00" in line:            # binário: descarta o arquivo inteiro
                         lst = []; break
-                    if any(rx.search(line) for rx in rxs) and len(lst) < 200:
+                    if len(lst) >= 200:
+                        continue
+                    if any(rx.search(line) for rx in rxs):
                         lst.append((i, engine._logical_line(engine._linha_py(line))))
+                    else:
+                        txt = next((x for x in (engine.casa_legado(line, rx, encs) for rx in rxs)
+                                    if x is not None), None)
+                        if txt is not None:
+                            lst.append((i, engine._logical_line(txt)))
                 if lst:
                     res[os.path.abspath(fp)] = lst
         except OSError:

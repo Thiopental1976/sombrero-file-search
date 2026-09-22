@@ -399,22 +399,285 @@ def _linha_de_montagem_morta(linha: str):
 #   - LINHA em codificação legada (cp1252/latin-1 — o "arquivo velho do Windows"
 #     que o público do SFS traz na migração): a linha casada aparecia VAZIA no
 #     preview, na CLI e no export.
-def _cp1252_resgata(exc):
-    """Handler de erro de decodificação: o trecho que não é UTF-8 é lido como
-    cp1252 (superset prático do latin-1; bytes sem definição viram U+FFFD). O
-    resto da linha segue UTF-8 — arquivo misto continua legível."""
-    if not isinstance(exc, UnicodeDecodeError):
-        raise exc
-    ruim = exc.object[exc.start:exc.end]
-    return ruim.decode("cp1252", errors="replace"), exc.end
+# ------------------------------------------ codificações LEGADAS do mundo inteiro
+# 22/09/2026 (decisão do Rodrigo: "o programa é de alcance mundial"). Arquivo de
+# texto antigo não é só cp1252: cada região do Windows/DOS/Mac/Unix tinha o seu
+# "ANSI". Esta tabela serve a DUAS coisas:
+#   - BUSCA: um termo com acento/letra não-ASCII também casa os BYTES que ele
+#     teria em cada codificação legada que o representa (legado_variantes) —
+#     numa passada só do rg; medido: +1% a +6% de tempo (a segunda passada com
+#     --encoding custava 2,7×);
+#   - EXIBIÇÃO: a linha casada é decodificada na codificação em que o termo
+#     aparece; sem termo para guiar (nome de arquivo, preview), na codificação
+#     legada da REGIÃO do usuário (codificacao_legada, pelo locale).
+LEGADAS = (
+    "cp1252", "latin_1", "iso8859_15", "cp850", "mac_roman",               # ocidental
+    "cp1250", "iso8859_2",                                                  # Europa central
+    "cp1251", "koi8_r", "koi8_u", "cp866", "iso8859_5", "mac_cyrillic",     # cirílico
+    "cp1253", "iso8859_7",                                                  # grego
+    "cp1254", "iso8859_9",                                                  # turco
+    "cp1255", "iso8859_8",                                                  # hebraico
+    "cp1256", "iso8859_6",                                                  # árabe
+    "cp1257", "iso8859_13",                                                 # báltico
+    "cp1258",                                                               # vietnamita
+    "cp874",                                                                # tailandês
+    "shift_jis", "euc_jp", "gbk", "big5", "euc_kr",                         # CJK
+)
+_CJK_ENC = frozenset(("shift_jis", "euc_jp", "gbk", "big5", "euc_kr"))
+_NOME_ENC = {"cp1252": "Windows-1252", "cp1250": "Windows-1250", "cp1251": "Windows-1251",
+             "cp1253": "Windows-1253", "cp1254": "Windows-1254", "cp1255": "Windows-1255",
+             "cp1256": "Windows-1256", "cp1257": "Windows-1257", "cp1258": "Windows-1258",
+             "cp874": "Windows-874", "latin_1": "ISO-8859-1", "koi8_r": "KOI8-R",
+             "koi8_u": "KOI8-U", "shift_jis": "Shift-JIS", "euc_jp": "EUC-JP",
+             "gbk": "GBK", "big5": "Big5", "euc_kr": "EUC-KR", "mac_roman": "Mac Roman",
+             "mac_cyrillic": "Mac Cyrillic", "cp850": "DOS 850", "cp866": "DOS 866"}
 
-codecs.register_error("sfs-cp1252", _cp1252_resgata)
+# idioma do locale -> "ANSI" daquela região no Windows (o que o usuário traz)
+_LEGADA_POR_IDIOMA = {
+    **dict.fromkeys(("pl", "cs", "sk", "hu", "hr", "sl", "ro", "bs", "sq"), "cp1250"),
+    **dict.fromkeys(("ru", "uk", "be", "bg", "sr", "mk", "kk", "ky", "tg", "mn"), "cp1251"),
+    "el": "cp1253", "tr": "cp1254", "az": "cp1254", "he": "cp1255", "yi": "cp1255",
+    **dict.fromkeys(("ar", "fa", "ur", "ps"), "cp1256"),
+    **dict.fromkeys(("lt", "lv", "et"), "cp1257"),
+    "vi": "cp1258", "th": "cp874", "ja": "shift_jis", "ko": "euc_kr",
+}
 
 
-def texto_legivel(raw: bytes) -> str:
-    """Bytes de uma LINHA -> texto para exibir. UTF-8 onde for UTF-8; o que não
-    for, cp1252. É só EXIBIÇÃO: o casamento já foi decidido pelo motor."""
-    return raw.decode("utf-8", errors="sfs-cp1252")
+def nome_codificacao(enc: str) -> str:
+    return _NOME_ENC.get(enc, enc.replace("_", "-").upper())
+
+
+def codificacao_legada(environ=None) -> str:
+    """A codificação LEGADA mais provável dos arquivos antigos deste usuário: a
+    do Windows da região dele, pelo locale (pt_BR -> cp1252, ru_RU -> cp1251,
+    ja_JP -> Shift-JIS, zh_TW -> Big5…). SFS_LEGACY_ENCODING força outra.
+    `environ` injetável para os testes."""
+    env = os.environ if environ is None else environ
+    forcada = env.get("SFS_LEGACY_ENCODING", "").strip()
+    if forcada:
+        try:
+            return codecs.lookup(forcada).name.replace("-", "_")
+        except LookupError:
+            pass
+    loc = next((env.get(v) for v in ("LC_ALL", "LC_CTYPE", "LANG") if env.get(v)), "") or ""
+    lingua, _, resto = loc.partition("_")
+    lingua = lingua.split(".")[0].lower()
+    regiao = resto.split(".")[0].split("@")[0].upper()
+    if lingua == "zh":
+        return "big5" if regiao in ("TW", "HK", "MO") else "gbk"
+    return _LEGADA_POR_IDIOMA.get(lingua, "cp1252")
+
+
+def _resgata(enc):
+    """Handler de decodificação: trecho que não é UTF-8 é lido em `enc` (o resto
+    da linha segue UTF-8 — arquivo misto continua legível)."""
+    nome = "sfs-" + enc
+    try:
+        codecs.lookup_error(nome)
+    except LookupError:
+        def h(exc):
+            if not isinstance(exc, UnicodeDecodeError):
+                raise exc
+            return exc.object[exc.start:exc.end].decode(enc, errors="replace"), exc.end
+        codecs.register_error(nome, h)
+    return nome
+
+
+def texto_legivel(raw: bytes, enc: str = None) -> str:
+    """Bytes de uma LINHA -> texto para exibir. UTF-8 onde for UTF-8; o resto em
+    `enc` (padrão: codificacao_legada()). É só EXIBIÇÃO: o casamento já foi
+    decidido pelo motor. CJK é multibyte: a linha inteira vai para o `enc`."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    import unicodedata
+    enc = enc or codificacao_legada()
+    if enc in _CJK_ENC:
+        s = raw.decode(enc, errors="replace")
+    else:
+        s = raw.decode("utf-8", errors=_resgata(enc))
+    # NFC: o cp1258 (vietnamita) grava o TOM como combinante separado; sem compor,
+    # "Hà Nội" não bate com o termo digitado nem se desenha direito
+    return unicodedata.normalize("NFC", s)
+
+
+_META_RUST = frozenset("\\.+*?()|[]{}^$#&-~")
+
+
+def _esc_rust(t: str) -> str:
+    """Escapa para o regex do rg (Rust) SÓ os metacaracteres — escapar outra
+    pontuação quebraria rg antigo."""
+    return "".join("\\" + c if c in _META_RUST else c for c in t)
+
+
+def _possivel_em_utf8(b: bytes) -> bool:
+    """`b` pode aparecer como TRECHO de um texto UTF-8 válido? (até 3 bytes de
+    continuação no começo = cauda do caractere anterior; sequência incompleta
+    no fim = começo do próximo)."""
+    for k in range(0, min(3, len(b)) + 1):
+        if any(not (0x80 <= x <= 0xBF) for x in b[:k]):
+            break
+        resto = b[k:]
+        for corte in range(0, min(3, len(resto)) + 1):
+            meio, fim = resto[:len(resto) - corte], resto[len(resto) - corte:]
+            try:
+                meio.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            if not fim:
+                return True
+            try:
+                fim.decode("utf-8")
+            except UnicodeDecodeError as e:
+                if e.reason == "unexpected end of data":
+                    return True
+    return False
+
+
+def _tem_cjk(t: str) -> bool:
+    return any(0x3040 <= ord(c) <= 0x30FF or 0x3400 <= ord(c) <= 0x9FFF
+               or 0xAC00 <= ord(c) <= 0xD7AF or 0xF900 <= ord(c) <= 0xFAFF for c in t)
+
+
+def _forma_cp1258(t: str) -> str:
+    """Como o Windows vietnamita gravava: letra com circunflexo/breve/chifre
+    PRONTA (â ê ô ă ơ ư — o cp1258 as tem) e o TOM como combinante separado."""
+    import unicodedata
+    out, i, d = [], 0, unicodedata.normalize("NFD", t)
+    while i < len(d):
+        base = d[i]; i += 1
+        marcas = []
+        while i < len(d) and unicodedata.combining(d[i]):
+            marcas.append(d[i]); i += 1
+        for m in list(marcas):
+            junto = unicodedata.normalize("NFC", base + m)
+            if len(junto) == 1 and m in "\u0302\u0306\u031b":   # circunflexo, breve, chifre
+                base = junto; marcas.remove(m)
+        out.append(base + "".join(marcas))
+    return "".join(out)
+
+
+_cache_variantes: dict = {}
+
+
+def legado_variantes(termo: str, ignora_caixa: bool = True) -> tuple:
+    """((codificação, regex-rust), …) — os BYTES que `termo` teria em cada
+    codificação legada que o representa, uma entrada por sequência distinta.
+
+    Contra acerto falso em arquivo UTF-8: a variante entra se for IMPOSSÍVEL em
+    UTF-8 válido (zero risco, por construção), ou se for possível só nas bordas
+    mas longa (>= 4 bytes) ou ancorada em letra ASCII (risco desprezível: o
+    arquivo teria de colar "av" num caractere do plano U+Cxxxx). Curta, sem
+    ASCII e possível fica FORA: "é" sozinho = byte E9, que começa ideograma
+    chinês em UTF-8 (medido: casava 马). Codificação CJK só para termo com
+    ideograma/kana/hangul (as tabelas japonesas têm latim e cirílico, mas
+    ninguém gravou português em EUC-JP). Termo ASCII: nenhuma variante."""
+    chave = (termo, ignora_caixa)
+    if chave in _cache_variantes:
+        return _cache_variantes[chave]
+    out = []
+    if not termo.isascii():
+        vistos = {termo.encode("utf-8")}
+        cjk = _tem_cjk(termo)
+        ancora = any(c.isascii() and c.isalnum() for c in termo)
+        for enc in LEGADAS:
+            if (enc in _CJK_ENC) != cjk:
+                continue
+            b = forma = None
+            for f in ((termo, _forma_cp1258(termo)) if enc == "cp1258" else (termo,)):
+                try:
+                    b, forma = f.encode(enc), f
+                    break
+                except UnicodeEncodeError:
+                    pass
+            if b is None or b in vistos:
+                continue
+            vistos.add(b)
+            if _possivel_em_utf8(b) and len(b) < 4 and not ancora:
+                continue
+            partes = []
+            for c in forma:
+                if c.isascii():
+                    partes.append(_esc_rust(c))
+                    continue
+                bs = set()
+                for x in ({c, c.upper(), c.lower()} if ignora_caixa else {c}):
+                    try:
+                        bs.add(x.encode(enc))
+                    except UnicodeEncodeError:
+                        pass
+                alts = sorted(bs)
+                if all(len(x) == 1 for x in alts):
+                    partes.append("(?-u:[" + "".join("\\x%02X" % x[0] for x in alts) + "])")
+                else:
+                    partes.append("(?-u:(?:" + "|".join(
+                        "".join("\\x%02X" % y for y in x) for x in alts) + "))")
+            out.append((enc, "".join(partes)))
+    _cache_variantes[chave] = tuple(out)
+    return _cache_variantes[chave]
+
+
+def rg_padroes(termos, q) -> list:
+    """Argumentos de PADRÃO do rg para `termos` (conteúdo ou termos do booleano).
+    Regex do usuário: como veio (não há como reescrever regex arbitrária com
+    segurança). Literal sem variante legada: --fixed-strings, como sempre.
+    Literal com variante: o termo escapado + os bytes de cada codificação legada
+    (o rg junta tudo numa busca só; -w e --ignore-case seguem valendo)."""
+    termos = list(termos)
+    if q.content_is_regex:
+        return sum((["-e", t] for t in termos), [])
+    variantes = [(t, legado_variantes(t, not q.case_sensitive)) for t in termos]
+    if not any(v for _, v in variantes):
+        return ["--fixed-strings"] + sum((["-e", t] for t in termos), [])
+    out = []
+    for t, v in variantes:
+        out += ["-e", _esc_rust(t)]
+        for _enc, rx in v:
+            out += ["-e", rx]
+    return out
+
+
+def encs_dos_termos(termos, q) -> list:
+    """Codificações legadas candidatas para `termos`, na ordem da tabela."""
+    if q is not None and q.content_is_regex:
+        return []
+    vistos = []
+    for t in termos:
+        for enc, _rx in legado_variantes(t, q is None or not q.case_sensitive):
+            if enc not in vistos:
+                vistos.append(enc)
+    return vistos
+
+
+def texto_para_termos(raw: bytes, termos, q=None) -> str:
+    """Linha casada -> texto, na codificação em que o TERMO aparece (uma linha
+    russa em KOI8-R não pode sair "ÁÎÁĚÉÚ" como sairia em cp1252). Sem acerto
+    entre as candidatas, a regional (texto_legivel)."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    alvo = [t.casefold() for t in termos if t]
+    for enc in encs_dos_termos(termos, q):
+        s = texto_legivel(raw, enc)
+        if any(t in s.casefold() for t in alvo):
+            return s
+    return texto_legivel(raw)
+
+
+def casa_legado(line: str, rx, encs):
+    """Fallback Python: a linha (lida com surrogateescape) casa `rx` em alguma
+    das codificações legadas `encs`? Devolve o texto decodificado, ou None. É o
+    espelho do que o rg faz com as variantes de bytes (paridade)."""
+    if not encs or not tem_bytes_crus(line):
+        return None
+    raw = line.encode("utf-8", errors="surrogateescape")
+    for enc in encs:
+        s = texto_legivel(raw, enc)
+        if rx.search(s):
+            return s
+    return None
 
 
 def tem_bytes_crus(s: str) -> bool:
@@ -426,7 +689,8 @@ def tem_bytes_crus(s: str) -> bool:
 
 def nome_exibivel(s: str) -> str:
     """Caminho/nome -> texto para a TELA (21/09/2026, decisão do Rodrigo): o que
-    não é UTF-8 é lido como cp1252, a mesma regra do preview (texto_legivel) —
+    não é UTF-8 é lido na codificação legada da região (codificacao_legada; em
+    pt_BR, cp1252), a mesma regra do preview (texto_legivel) —
     "laudo_m\\xe9dico.txt" aparece "laudo_médico.txt". Só EXIBIÇÃO: abrir, copiar,
     exportar e o motor seguem com o caminho verdadeiro. A GUI marca esses nomes
     (itálico + tooltip) para a leitura provável não se passar pelo nome real."""
@@ -485,8 +749,9 @@ def _rg_caminho(campo) -> Optional[str]:
         return None
 
 
-def _rg_linha(campo) -> str:
-    """`data.lines` do rg --json -> texto da linha (ver texto_legivel)."""
+def _rg_linha(campo, termos=(), q=None) -> str:
+    """`data.lines` do rg --json -> texto da linha. Bytes (não-UTF-8): na
+    codificação em que um dos `termos` aparece (texto_para_termos)."""
     if not campo:
         return ""
     txt = campo.get("text")
@@ -496,9 +761,10 @@ def _rg_linha(campo) -> str:
     if b64 is None:
         return ""
     try:
-        return texto_legivel(base64.b64decode(b64))
+        raw = base64.b64decode(b64)
     except (ValueError, TypeError):
         return ""
+    return texto_para_termos(raw, termos, q) if termos else texto_legivel(raw)
 
 
 def _vigia_cancel(proc, cancel, intervalo: float = 0.2):
@@ -1120,10 +1386,8 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
         cmd += ["--threads", str(jobs)]        # F11: idem ao fd, ver _grupos_por_disco
     if not docs:                               # --encoding é do rg; rga já extrai UTF-8
         cmd += ["--encoding", "auto"]
-    if not q.content_is_regex:
-        cmd.append("--fixed-strings")
     cmd += rg_flags_comuns(q)                  # fonte única — ver rg_flags_comuns
-    cmd += ["-e", q.content, "--"]
+    cmd += rg_padroes([q.content], q) + ["--"] # + variantes legadas (22/09/2026)
     cmd += q.paths
 
     name_rx = None
@@ -1176,7 +1440,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
                 cur = Match(path, st.st_size, st.st_mtime, ident=ident)
             elif t == "match" and cur is not None:
                 ln = ev["data"].get("line_number")
-                txt = _rg_linha(ev["data"].get("lines"))     # text OU bytes (cp1252…)
+                txt = _rg_linha(ev["data"].get("lines"), (q.content,), q)   # text OU bytes
                 cur.nmatch += len(ev["data"].get("submatches", []))
                 if len(cur.lines) < 200:
                     cur.lines.append((ln or 0, _logical_line(txt)))
@@ -1201,6 +1465,7 @@ def _iter_content_python(q: Query, cancel, stats=None):
     """Fallback: varre nomes e faz grep em Python (blocos, ignora binário).
     N2: conta 'denied' de diretórios (os.walk) e de arquivos sem permissão."""
     rx = _content_regex(q.content, q)
+    encs = encs_dos_termos([q.content], q)     # espelho das variantes do rg (22/09/2026)
     for m in _iter_names_python(q, stats, cancel):
         if cancel():
             return
@@ -1222,12 +1487,13 @@ def _iter_content_python(q: Query, cancel, stats=None):
                     # era visto no fim do arquivo
                     if (i & 0x3FFF) == 0 and cancel():
                         return
-                    if rx.search(line):
+                    txt = _linha_py(line) if rx.search(line) else casa_legado(line, rx, encs)
+                    if txt is not None:
                         if hit is None:
                             hit = m
                         m.nmatch += 1
                         if len(m.lines) < 200:
-                            m.lines.append((i, _logical_line(_linha_py(line))))
+                            m.lines.append((i, _logical_line(txt)))
                 if hit is not None:
                     yield m
         except PermissionError:

@@ -161,8 +161,9 @@ def path_to_uri(path: str) -> str:
 def nota_nome_antigo() -> str:
     """Tooltip de nome não-UTF-8 (ver engine.nome_exibivel). Função, não
     constante: o test_i18n_no_stale_keys exige o literal dentro de t(...)."""
-    return t("(name stored in an old encoding (Windows-1252); shown as its likely "
-             "reading — the name on disk is not exactly this text)")
+    return t("(name stored in an old encoding ({enc}); shown as its likely "
+             "reading — the name on disk is not exactly this text)",
+             enc=engine.nome_codificacao(engine.codificacao_legada()))
 
 
 def _marca_nome_antigo(item, path: str):

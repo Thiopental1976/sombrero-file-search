@@ -123,9 +123,9 @@ _PT = {
     "(binary file — no text preview)": "(arquivo binário — sem preview de texto)",
     "   … (truncated)": "   … (truncado)",
     "(empty)": "(vazio)",
-    "(name stored in an old encoding (Windows-1252); shown as its likely "
+    "(name stored in an old encoding ({enc}); shown as its likely "
     "reading — the name on disk is not exactly this text)":
-        "(nome gravado em codificação antiga (Windows-1252); a tela mostra a leitura "
+        "(nome gravado em codificação antiga ({enc}); a tela mostra a leitura "
         "provável — o nome no disco não é exatamente este texto)",
     "(no preview: {e})": "(sem preview: {e})",
 
