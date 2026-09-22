@@ -47,10 +47,12 @@ _PT = {
         "Nome do arquivo — ex.: rotina  ·  *.pdf  ·  exames*.txt   (vazio = todos)",
     "Search by NAME. Plain text means “contains”: report finds\n"
     "“routine exams.txt” in any extension. Multiple terms separated\n"
-    "by comma (OR). Hand-typed globs (* ? [) are honored as typed.":
+    "by comma (OR). Hand-typed globs (* ?) match the WHOLE name, as typed;\n"
+    "brackets alone are searched both ways: [2019] finds “[2019] Reports”.":
         "Busca por NOME. Texto puro significa “contém”: rotina acha\n"
         "“exames de rotina.txt” em qualquer extensão. Vários termos separados\n"
-        "por vírgula (OU). Globs à mão (* ? [) são respeitados como digitados.",
+        "por vírgula (OU). Globs à mão (* ?) valem para o nome INTEIRO, como digitados;\n"
+        "colchetes sozinhos buscam dos dois jeitos: [2019] acha “[2019] Laudos”.",
     "  Search  ": "  Buscar  ",
     "Cancel": "Cancelar",
 

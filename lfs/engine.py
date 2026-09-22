@@ -1105,6 +1105,24 @@ def as_name_glob(term: str) -> str:
     return f"*{t}*"
 
 
+def as_name_globs(term: str) -> list:
+    """Como as_name_glob, mas devolve a LISTA de globs a buscar (22/09/2026, nota
+    do parecer de revisão 2 do Fable). Termo com colchetes e SEM `*`/`?` é
+    ambíguo: `[2019]` como glob é "um caractere entre 2, 0, 1, 9" — e quem digita
+    isso quase sempre quer a pasta "[2019] Laudos". Busca-se das DUAS formas e os
+    resultados se somam: o glob como digitado (quem escreve `[0-9]` continua
+    recebendo a classe) e o texto literal "contém" (colchete escapado como
+    `[[]`/`[]]`). Nada que o glob achava some. Com `*` ou `?` é glob puro."""
+    t = term.strip()
+    if not t:
+        return []
+    principal = as_name_glob(t)
+    if "[" in t and not ({"*", "?"} & set(t)):
+        literal = "".join("[[]" if c == "[" else "[]]" if c == "]" else c for c in t)
+        return [principal, f"*{literal}*"]
+    return [principal]
+
+
 # ---------------------------------------------------------------- parâmetros
 @dataclass
 class Query:
@@ -1386,6 +1404,14 @@ def _glob_to_regex(glob: str, rust: bool = False, enc: str = None,
                     return None                  # classe com acento: sem variante
                 if inner.startswith("!"):
                     inner = "^" + inner[1:]
+                if rust:
+                    # 22/09/2026: na classe do Rust, `[` abre classe aninhada e `&&`/`~~`
+                    # são operações de conjunto — o `[[]` do colchete literal
+                    # (as_name_globs) quebrava a regex; escapar o que é literal
+                    neg = inner.startswith("^")
+                    corpo = inner[1:] if neg else inner
+                    inner = ("^" if neg else "") + "".join(
+                        "\\" + ch if ch in "[]\\&~" else ch for ch in corpo)
                 out.append("[" + inner + "]")
                 i = j
         elif enc and not c.isascii():

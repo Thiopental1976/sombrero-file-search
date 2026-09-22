@@ -283,7 +283,7 @@ Comando **`sfs`** (alias `lfs`). Saída **sempre em inglês** (`i18n.set_lang("e
 |---|---|
 | `path…` (1+) | pastas → `paths` |
 | `-V`, `--version` | versão + aviso GPL, sai |
-| `-n`, `--name TEXT` | nome **contém** o termo (`as_name_glob`); globs `* ? [` como digitados; vários por `,` ou `;` → `name_patterns` |
+| `-n`, `--name TEXT` | nome **contém** o termo (`as_name_globs`); com `*`/`?` é glob do nome inteiro; **só colchetes** (`[2019]`) busca das duas formas, glob e literal (22/09); vários por `,` ou `;` → `name_patterns` |
 | `--name-regex` / `--content-regex` | tratar como regex |
 | `-c`, `--content TEXT` | texto/regex a conter → `content` |
 | `-b`, `--bool EXPR` | busca booleana |

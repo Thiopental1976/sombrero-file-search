@@ -47,7 +47,8 @@ def main():
                     help="show version and license, then exit")
     ap.add_argument("-n", "--name", default="",
                     help="name CONTAINS the term ('rotina' finds 'exames de rotina.txt'); "
-                         "globs (* ? [) are used as typed; separate several with commas")
+                         "globs with * or ? match the whole name as typed; brackets alone are "
+                         "searched both ways ('[2019]' finds '[2019] Reports'); separate several with commas")
     ap.add_argument("-c", "--content", default="", help="text/regex the file must contain")
     ap.add_argument("-b", "--bool", dest="boolexpr", default="", metavar="EXPR",
                     help="BOOLEAN content search: '(A OR B) AND C NOT D' (| & ! and quotes)")
@@ -128,8 +129,9 @@ def main():
                 pass
 
     # plain text = "contains" (same semantics as the GUI); explicit globs are respected
-    names = [engine.as_name_glob(p) for p in args.name.replace(";", ",").split(",")
-             if p.strip()] if not args.name_regex else ([args.name] if args.name else [])
+    # as_name_globs: `[2019]` também é buscado como texto literal (22/09/2026)
+    names = [g for p in args.name.replace(";", ",").split(",") if p.strip()
+             for g in engine.as_name_globs(p)] if not args.name_regex else ([args.name] if args.name else [])
     q = Query(
         paths=args.path, name_patterns=names, name_is_regex=args.name_regex,
         content=args.content, content_is_regex=args.content_regex,

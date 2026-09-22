@@ -1802,7 +1802,8 @@ class MainWindow(QMainWindow):
         self.ed_name.setToolTip(t(
             "Search by NAME. Plain text means “contains”: report finds\n"
             "“routine exams.txt” in any extension. Multiple terms separated\n"
-            "by comma (OR). Hand-typed globs (* ? [) are honored as typed."))
+            "by comma (OR). Hand-typed globs (* ?) match the WHOLE name, as typed;\n"
+            "brackets alone are searched both ways: [2019] finds “[2019] Reports”."))
         self.ed_name.returnPressed.connect(self.start_search)
         # F10a #3: ↑/↓ no campo de busca percorrem o histórico do F5. Fica no
         # eventFilter (não QShortcut) porque só vale COM foco no campo — senão
@@ -2369,8 +2370,9 @@ class MainWindow(QMainWindow):
             name_pats = [name_txt] if name_txt else []
         else:
             # texto puro = "contém" (rotina -> *rotina*); glob digitado é respeitado
-            name_pats = [engine.as_name_glob(p) for p in name_txt.replace(";", ",").split(",")
-                         if p.strip() and p.strip() != "*"]
+            # as_name_globs: `[2019]` também é buscado como texto literal (22/09/2026)
+            name_pats = [g for p in name_txt.replace(";", ",").split(",")
+                         if p.strip() and p.strip() != "*" for g in engine.as_name_globs(p)]
         days = self.sp_days.value()
         mod_after = (time.time() - days * 86400) if days > 0 else None
         return Query(
