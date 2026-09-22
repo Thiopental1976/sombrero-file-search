@@ -455,6 +455,13 @@ _DEAD_MOUNT_ERRNOS = frozenset({
     errno.ENODEV,     # 19
 })
 
+# statvfs (22/09/2026): no espaço-livre de uma montagem de REDE, estes errnos querem
+# dizer "o servidor não respondeu" — não "negou" — e a montagem está morta
+_DEAD_STATVFS_ERRNOS = _DEAD_MOUNT_ERRNOS | frozenset({
+    errno.EIO, errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH,
+    errno.ECONNREFUSED, errno.ECONNRESET, errno.ECONNABORTED,
+})
+
 _PROBE_ALIVE = b"A"
 _PROBE_DEAD = b"D"
 
@@ -484,7 +491,7 @@ def _reap_abandoned():
         _abandoned_pids[:] = still
 
 
-def mount_status(mp: str, timeout: float = 3.0, _stat=os.stat) -> str:
+def mount_status(mp: str, timeout: float = 3.0, _stat=os.stat, _statvfs=os.statvfs) -> str:
     """Sonda de vida de uma montagem (F9a §2.2 + F1/F2). Devolve
     'alive' | 'no_response' | 'broken_mount'.
 
@@ -501,7 +508,15 @@ def mount_status(mp: str, timeout: float = 3.0, _stat=os.stat) -> str:
     'no_response' = travou (não respondeu no prazo). 'broken_mount' = respondeu na
     hora com um errno de montagem morta (F2). 'alive' = respondeu OK, ou negou com
     um errno que não é da montagem (EACCES/EPERM/ENOENT/EIO). `_stat` é injetável
-    p/ teste determinístico (sem NAS/sshfs real)."""
+    p/ teste determinístico (sem NAS/sshfs real).
+
+    22/09/2026 — o stat SOZINHO mentia (medido, NFS real com o servidor desligado:
+    `stat` do ponto de montagem "OK" em 0,0 s, respondido pelo CACHE DE ATRIBUTOS
+    do cliente; a busca seguia, o fd entrava no NAS morto e a CLI pendurava os
+    120 s do teste). Agora o filho faz também `statvfs`, que vai ao SERVIDOR a
+    cada chamada (FSSTAT no NFS, QUERY_FS_INFO no SMB, statfs ao daemon FUSE no
+    sshfs/rclone): mesmo NAS morto -> EIO em 9,1 s (soft) ou trava (hard) — o
+    prazo daqui pega os dois. `_statvfs` injetável como o `_stat`."""
     _reap_abandoned()
     r, w = os.pipe()
     pid = os.fork()
@@ -537,6 +552,11 @@ def mount_status(mp: str, timeout: float = 3.0, _stat=os.stat) -> str:
         code = _PROBE_ALIVE
         try:
             _stat(mp)
+            try:
+                _statvfs(mp)              # vai ao SERVIDOR (o stat pode vir do cache)
+            except OSError as e:
+                if e.errno in _DEAD_STATVFS_ERRNOS:
+                    code = _PROBE_DEAD    # servidor não respondeu: montagem morta
         except OSError as e:
             if e.errno in _DEAD_MOUNT_ERRNOS:
                 code = _PROBE_DEAD        # respondeu, mas a montagem está QUEBRADA
@@ -578,11 +598,11 @@ def mount_status(mp: str, timeout: float = 3.0, _stat=os.stat) -> str:
     return result
 
 
-def mount_alive(mp: str, timeout: float = 3.0, _stat=os.stat) -> bool:
+def mount_alive(mp: str, timeout: float = 3.0, _stat=os.stat, _statvfs=os.statvfs) -> bool:
     """Contrato bool (F9a): True só se a montagem está VIVA e OK. 'no_response'
     (travou) e 'broken_mount' (respondeu quebrada, F2) contam como MORTA. Para o
     aviso distinguir o motivo, use `mount_status` diretamente."""
-    return mount_status(mp, timeout=timeout, _stat=_stat) == "alive"
+    return mount_status(mp, timeout=timeout, _stat=_stat, _statvfs=_statvfs) == "alive"
 
 
 def mounts_under(root: str, mounts=None):

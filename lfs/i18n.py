@@ -133,6 +133,7 @@ _PT = {
     "Choose the folder": "Escolha a pasta",
     "Home folder (~)": "Pasta pessoal (~)",
     "(no external disk mounted)": "(nenhum disco externo montado)",
+    "Network (not included in All disks)": "Rede (fora de “Todos os discos”)",
 
     # status line
     "Ready.": "Pronto.",

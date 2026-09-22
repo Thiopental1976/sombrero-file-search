@@ -73,26 +73,107 @@ def engine_info():
     }
 
 
-def user_mounts(lines=None):
-    """Pontos de montagem 'de usuário' — discos externos/acervo: dispositivos
-    reais (/dev/*) montados sob /media, /mnt, /run/media ou /var/mnt (ostree:
-    Bazzite/Silverblue montam discos fixos ali, pois /mnt é da imagem ro). São os
-    candidatos da busca MULTIDISCOS na GUI ("Discos ▾"). `lines` injetável p/ teste."""
+# ------------------------------------------ montagens de USUÁRIO (Opção B, 22/09/2026)
+# Antes: só /dev/* sob /media, /mnt, /run/media, /var/mnt — uma lista de prefixos
+# PERMITIDOS. Sumiam do menu "Discos ▾" (e de "Todos os discos"): o /data e o
+# /srv que o usuário cria à mão, disco no fstab em qualquer lugar, dataset ZFS
+# (origem "pool/dataset", não /dev) e todo compartilhamento de rede. A "Opção B"
+# dos pareceres de julho (PLANO_MESTRE, BUG_Bazzite, ANALISE_Portabilidade):
+# EXCLUIR o que é de sistema em vez de listar o que é permitido — a lista de
+# exclusão é mais curta, mais estável, e pega qualquer distro futura.
+_MIDIA = ("/media/", "/mnt/", "/run/media/", "/var/mnt/")
+_SISTEMA_EXATO = frozenset(("/", "/home", "/var", "/var/home", "/root", "/usr", "/etc",
+                            "/opt", "/sysroot", "/boot", "/efi", "/snap", "/srv/tftp"))
+# prefixos de sistema: tudo o que mora abaixo deles é do SO (ZFS-raiz do Ubuntu
+# monta rpool/USERDATA, /var/log, /var/lib… como datasets — nenhum é "disco")
+_SISTEMA_PREFIXO = ("/boot/", "/efi/", "/proc", "/sys", "/dev", "/run/", "/var/", "/usr/",
+                    "/etc/", "/sysroot/", "/ostree", "/snap/", "/tmp", "/nix", "/gnu",
+                    "/.snapshots", "/root/", "/opt/")
+# ...mas abaixo destes o usuário monta disco de propósito (ganham do prefixo acima)
+_USUARIO_PREFIXO = _MIDIA + ("/home/", "/var/home/")
+_PSEUDO_FS = frozenset((
+    "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "ramfs", "cgroup", "cgroup2",
+    "securityfs", "pstore", "bpf", "debugfs", "tracefs", "configfs", "fusectl",
+    "mqueue", "hugetlbfs", "autofs", "rpc_pipefs", "binfmt_misc", "efivarfs", "nsfs",
+    "selinuxfs", "overlay", "composefs", "fuse.portal", "fuse.gvfsd-fuse", "gvfsd-fuse",
+    "nfsd", "swap", "zram"))
+# local mas sem /dev na origem
+_LOCAL_SEM_DEV = frozenset(("zfs", "fuse.mergerfs", "mergerfs", "fuse.unionfs",
+                            "fuse.unionfs-fuse", "bcachefs"))
+# rede/nuvem além do que disks já conhece (rclone monta B2, OneDrive, Drive…)
+_REDE_EXTRA = frozenset(("fuse.rclone", "rclone", "fuse.s3fs", "s3fs", "fuse.gcsfuse",
+                         "fuse.afpfs", "afpfs", "fuse.onedriver"))
+_RX_OCTAL = re.compile(r"\\([0-7]{3})")
+
+
+def _decodifica_mp(mp: str) -> str:
+    """/proc/mounts escapa espaço, tab, \\n e barra invertida em octal (\\040…)."""
+    return _RX_OCTAL.sub(lambda m: chr(int(m.group(1), 8)), mp)
+
+
+def _eh_de_sistema(mp: str) -> bool:
+    if mp in _SISTEMA_EXATO:
+        return True
+    # a PASTA PESSOAL em si (/home/<user>; dataset rpool/USERDATA no ZFS-raiz do
+    # Ubuntu) é do sistema — o menu já tem "Pasta pessoal (~)". Disco montado
+    # DENTRO dela (~/discos/HD) é do usuário.
+    for base in ("/home/", "/var/home/"):
+        if mp.startswith(base) and "/" not in mp[len(base):].rstrip("/"):
+            return True
+    if mp.startswith(_USUARIO_PREFIXO):
+        return False
+    return mp.startswith(_SISTEMA_PREFIXO)
+
+
+def classifica_montagens(lines=None) -> dict:
+    """{mountpoint: (classe, fstype, origem)} das montagens de USUÁRIO, com classe
+    "local" (disco, partição, LUKS, ZFS, mergerfs…) ou "rede" (NFS, SMB/CIFS,
+    sshfs, WebDAV, rclone…). Sistema, pseudo-fs, snaps/AppImage e contêineres
+    ficam fora. `lines` injetável p/ teste (formato /proc/mounts)."""
     if lines is None:
         try:
             with open("/proc/mounts", encoding="utf-8") as f:
                 lines = f.readlines()
         except OSError:
-            return []
-    out = set()
+            return {}
+    try:
+        from . import disks as _d
+    except ImportError:
+        import disks as _d
+    rede_fs = _d._NET_FSTYPES | _REDE_EXTRA
+    out = {}
     for line in lines:
         parts = line.split()
-        if len(parts) < 2 or not parts[0].startswith("/dev/"):
+        if len(parts) < 3:
             continue
-        mp = parts[1].replace("\\040", " ")     # espaço vem escapado no mounts
-        if mp.startswith(("/media/", "/mnt/", "/run/media/", "/var/mnt/")):
-            out.add(mp)
-    return sorted(out)
+        src, mp, fstype = parts[0], _decodifica_mp(parts[1]), parts[2]
+        if fstype in _PSEUDO_FS or _eh_de_sistema(mp):
+            continue
+        if fstype in rede_fs:
+            out[mp] = ("rede", fstype, src)
+        elif src.startswith("/dev/"):
+            # loop = snap, AppImage, imagem de contêiner… só vale na pasta de
+            # mídia (a ISO que o Discos montou em /run/media/<user>/)
+            if src.startswith("/dev/loop") and not mp.startswith(_MIDIA):
+                continue
+            out[mp] = ("local", fstype, src)
+        elif fstype in _LOCAL_SEM_DEV:
+            out[mp] = ("local", fstype, src)
+    return out
+
+
+def user_mounts(lines=None):
+    """Discos LOCAIS de usuário (ver classifica_montagens): os candidatos da busca
+    MULTIDISCOS na GUI ("Discos ▾" e "Todos os discos"). `lines` injetável p/ teste."""
+    return sorted(mp for mp, (cl, _f, _s) in classifica_montagens(lines).items()
+                  if cl == "local")
+
+
+def network_mounts(lines=None):
+    """Compartilhamentos de REDE montados (NAS, SMB, NFS, sshfs, nuvem via
+    rclone): a seção "Rede" do menu. `lines` injetável p/ teste."""
+    return sorted(mp for mp, (cl, _f, _s) in classifica_montagens(lines).items()
+                  if cl == "rede")
 
 
 # --------------------------------------------------- arvores de SNAPSHOT (F11)

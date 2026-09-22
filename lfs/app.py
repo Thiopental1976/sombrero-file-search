@@ -166,6 +166,49 @@ def nota_nome_antigo() -> str:
              enc=engine.nome_codificacao(engine.codificacao_legada()))
 
 
+def preenche_menu_discos(menu, atuais, alterna, alterna_todos):
+    """Menu "Discos ▾" (busca e duplicatas — antes duas cópias do mesmo código).
+    Pasta pessoal + discos LOCAIS (Opção B: /data, /srv, ZFS… — ver
+    engine.classifica_montagens); "Todos os discos" marca SÓ os locais.
+    22/09/2026 (decisão do Rodrigo): compartilhamentos de REDE (NAS, SMB, NFS,
+    sshfs, nuvem via rclone) numa seção à parte, marcáveis um a um — "usuários
+    buscam arquivos localmente e isso custa menos para o uso diário"."""
+    menu.clear()
+    cur = set(atuais)
+    home = os.path.expanduser("~")
+    mounts = engine.user_mounts()
+    rede = engine.network_mounts()
+    if mounts:
+        aa = menu.addAction(t("All disks"))
+        aa.setCheckable(True); aa.setChecked(all(mp in cur for mp in mounts))
+        aa.toggled.connect(alterna_todos)
+        menu.addSeparator()
+    # preferência: nome do volume (label) ao mountpoint cru — o mountpoint
+    # fica no tooltip, ainda descobrível. menu_labels desambigua labels que
+    # colidem (P1): dois discos de mesmo nome ganham o mountpoint no rótulo.
+    labels = disks.menu_labels(mounts + rede)
+    for mp in [home] + mounts:
+        label, tip = (t("Home folder (~)"), home) if mp == home else (labels[mp], mp)
+        a = menu.addAction(label)
+        a.setToolTip(tip)
+        a.setCheckable(True); a.setChecked(mp in cur)
+        a.toggled.connect(lambda on, mp=mp: alterna(mp, on))
+    if not mounts and not rede:
+        a = menu.addAction(t("(no external disk mounted)"))
+        a.setEnabled(False)
+    if rede:
+        menu.addSeparator()
+        cab = menu.addAction(t("Network (not included in All disks)"))
+        cab.setEnabled(False)
+        tipos = engine.classifica_montagens()
+        for mp in rede:
+            _cl, fstype, src = tipos.get(mp, ("rede", "", ""))
+            a = menu.addAction("🌐  " + labels[mp])
+            a.setToolTip(f"{mp}\n{src}  ({fstype})")
+            a.setCheckable(True); a.setChecked(mp in cur)
+            a.toggled.connect(lambda on, mp=mp: alterna(mp, on))
+
+
 def _marca_nome_antigo(item, path: str):
     """Árvore das duplicatas: mesmo sinal da tabela (itálico + tooltip)."""
     if engine.tem_bytes_crus(path):
@@ -1370,29 +1413,10 @@ class DuplicatesPanel(QWidget):
         return [p.strip() for p in self.ed_paths.text().split(";") if p.strip()]
 
     def _fill_disks_menu(self):
-        self.mnu_disks.clear()
-        cur = set(self._paths_list())
-        home = os.path.expanduser("~")
-        mounts = engine.user_mounts()
-        if mounts:
-            all_on = all(mp in cur for mp in mounts)
-            aa = self.mnu_disks.addAction(t("All disks"))
-            aa.setCheckable(True); aa.setChecked(all_on)
-            aa.toggled.connect(self._toggle_all_disks)
-            self.mnu_disks.addSeparator()
-        labels = disks.menu_labels(mounts)
-        for mp in [home] + mounts:
-            if mp == home:
-                label, tip = t("Home folder (~)"), home
-            else:
-                label, tip = labels[mp], mp
-            a = self.mnu_disks.addAction(label)
-            a.setToolTip(tip)
-            a.setCheckable(True); a.setChecked(mp in cur)
-            a.toggled.connect(lambda on, mp=mp: self._toggle_path(mp, on))
-        if not mounts:
-            a = self.mnu_disks.addAction(t("(no external disk mounted)"))
-            a.setEnabled(False)
+        """Monta o menu na hora de abrir: home + discos montados AGORA (pen drive
+        plugado depois da janela aberta aparece). Marcado = já está no 'Em'."""
+        preenche_menu_discos(self.mnu_disks, self._paths_list(),
+                             self._toggle_path, self._toggle_all_disks)
 
     def _toggle_path(self, mp, on):
         cur = self._paths_list()
@@ -2075,33 +2099,8 @@ class MainWindow(QMainWindow):
     def _fill_disks_menu(self):
         """Monta o menu na hora de abrir: home + discos montados AGORA (pen drive
         plugado depois da janela aberta aparece). Marcado = já está no 'Em'."""
-        self.mnu_disks.clear()
-        cur = set(self._paths_list())
-        home = os.path.expanduser("~")
-        mounts = engine.user_mounts()
-        # "All disks": marca/desmarca TODOS os discos montados de uma vez
-        if mounts:
-            all_on = all(mp in cur for mp in mounts)
-            aa = self.mnu_disks.addAction(t("All disks"))
-            aa.setCheckable(True); aa.setChecked(all_on)
-            aa.toggled.connect(self._toggle_all_disks)
-            self.mnu_disks.addSeparator()
-        # preferência: nome do volume (label) ao mountpoint cru — o mountpoint
-        # fica no tooltip, ainda descobrível. menu_labels desambigua labels que
-        # colidem (P1): dois discos de mesmo nome ganham o mountpoint no rótulo.
-        labels = disks.menu_labels(mounts)
-        for mp in [home] + mounts:
-            if mp == home:
-                label, tip = t("Home folder (~)"), home
-            else:
-                label, tip = labels[mp], mp
-            a = self.mnu_disks.addAction(label)
-            a.setToolTip(tip)
-            a.setCheckable(True); a.setChecked(mp in cur)
-            a.toggled.connect(lambda on, mp=mp: self._toggle_path(mp, on))
-        if not mounts:
-            a = self.mnu_disks.addAction(t("(no external disk mounted)"))
-            a.setEnabled(False)
+        preenche_menu_discos(self.mnu_disks, self._paths_list(),
+                             self._toggle_path, self._toggle_all_disks)
 
     def _toggle_path(self, mp, on):
         cur = self._paths_list()
