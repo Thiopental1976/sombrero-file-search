@@ -1,0 +1,3 @@
+{"path": "/var/mnt/NAS/idiomas_e_nomes/Ранний анализ крови.txt", "size": 15, "mtime": 1790076825.2467175, "is_dir": false, "nmatch": 0, "lines": [], "snapshot": null, "copies": []}
+{"warn": "denied", "count": 2}
+{"warn": "incomplete", "reason": "permission_denied", "where": "", "detail": "directories that denied reading", "count": 2}

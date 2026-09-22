@@ -654,6 +654,12 @@ def legado_variantes(termo: str, ignora_caixa: bool = True) -> tuple:
     chinês em UTF-8 (medido: casava 马). Codificação CJK só para termo com
     ideograma/kana/hangul (as tabelas japonesas têm latim e cirílico, mas
     ninguém gravou português em EUC-JP). Termo ASCII: nenhuma variante."""
+    import unicodedata
+    # a variante legada sai SEMPRE da forma composta: codificação antiga não guarda
+    # NFD (o cp1258 tem a sua forma própria, _forma_cp1258). Sem isto a forma NFD
+    # de formas_unicode gerava variante com acento "solto", e fd e Python a
+    # tratavam diferente (medido: divergência em `-n é`)
+    termo = unicodedata.normalize("NFC", termo)
     chave = (termo, ignora_caixa)
     if chave in _cache_variantes:
         return _cache_variantes[chave]
@@ -699,6 +705,20 @@ def legado_variantes(termo: str, ignora_caixa: bool = True) -> tuple:
     return _cache_variantes[chave]
 
 
+def formas_unicode(termos) -> list:
+    """Cada termo nas DUAS formas Unicode, sem repetir (22/09/2026). Medido no NAS
+    TrueNAS: "médico" não achava "médico_decomposto_NFD.txt" — o macOS grava nome
+    DECOMPOSTO (NFD: "e" + acento combinante), o teclado digita COMPOSTO (NFC), e
+    os bytes não batem. Arquivo vindo de Mac (NAS, pendrive) ficava invisível."""
+    import unicodedata
+    out = []
+    for t in termos:
+        for f in (t, unicodedata.normalize("NFC", t), unicodedata.normalize("NFD", t)):
+            if f not in out:
+                out.append(f)
+    return out
+
+
 def rg_padroes(termos, q) -> list:
     """Argumentos de PADRÃO do rg para `termos` (conteúdo ou termos do booleano).
     Regex do usuário: como veio (não há como reescrever regex arbitrária com
@@ -708,7 +728,10 @@ def rg_padroes(termos, q) -> list:
     termos = list(termos)
     if q.content_is_regex:
         return sum((["-e", t] for t in termos), [])
-    variantes = [(t, legado_variantes(t, not q.case_sensitive)) for t in termos]
+    termos = formas_unicode(termos)                    # NFC + NFD (arquivo de Mac)
+    import unicodedata
+    variantes = [(t, legado_variantes(t, not q.case_sensitive)
+                  if t == unicodedata.normalize("NFC", t) else ()) for t in termos]
     if not any(v for _, v in variantes):
         return ["--fixed-strings"] + sum((["-e", t] for t in termos), [])
     out = []
@@ -950,9 +973,19 @@ def _reap(proc, errf=None, stats=None):
                 motivo = next((L.strip() for L in linhas
                                if L.strip() and not benigna(L)), "")
                 so_permissao = bool(d or lacos) and not motivo
+                # 22/09/2026 (NAS TrueNAS real): o rg sai 2 quando QUALQUER arquivo
+                # falha — medido, 6 nomes reservados do Windows (CON.txt…) que o NAS
+                # lista como 8.3 ("AHY9U3~9") mas não abre (ENOENT) pintavam "search
+                # engine failed" + exit 2 na busca inteira. Se TODA queixa restante é
+                # de um CAMINHO ("<path>: motivo (os error N)"), é erro de leitura
+                # daqueles arquivos (read_error, abaixo), não o motor que quebrou —
+                # flag desconhecida, regex inválida etc. não têm esse formato.
+                so_por_arquivo = bool(motivo) and all(
+                    _RX_ERRO_MOTOR.match(L.strip()) for L in linhas
+                    if L.strip() and not benigna(L))
                 morto_por_nos = nos_matamos and rc is not None and (rc < 0 or rc in (137, 143))
                 if (rc is not None and rc not in (0, 1, -15, 143)
-                        and not so_permissao and not morto_por_nos):
+                        and not so_permissao and not morto_por_nos and not so_por_arquivo):
                     msg = (motivo or f"the engine exited with code {rc}")[:200]
                     stats.setdefault("engine_errors", []).append({"rc": rc, "erro": msg})
                     anota_incompleto(stats, "engine_failed",
@@ -1119,7 +1152,7 @@ def _name_matcher(q: Query):
         rx = re.compile(q.name_patterns[0], flags)
         return lambda b: rx.search(b) is not None
     # globs (lista). case-insensitive por padrão como o Agent Ransack
-    pats = q.name_patterns
+    pats = formas_unicode(q.name_patterns)         # NFC + NFD, espelho do fd
     if q.case_sensitive:
         casa = lambda b: any(fnmatch.fnmatchcase(b, p) for p in pats)
     else:
@@ -1344,10 +1377,11 @@ def _encs_de_globs(pats, q) -> list:
     decisão para o fd (_merge_globs) e para o Python (_name_matcher)."""
     if q is not None and q.name_is_regex:
         return []
+    import unicodedata
     ign = q is None or not q.case_sensitive
     out = []
     for p in pats:
-        for e in _encs_do_glob(p, ign):
+        for e in _encs_do_glob(unicodedata.normalize("NFC", p), ign):
             if e not in out:
                 out.append(e)
     return out
@@ -1363,8 +1397,11 @@ def _merge_globs(pats, q=None) -> Optional[str]:
         return None
     ign = q is None or not q.case_sensitive
     partes = []
-    for p in pats:
-        partes.append(_glob_to_regex(p, rust=True))
+    import unicodedata
+    for f in formas_unicode(pats):                 # NFC + NFD (nome gravado no Mac)
+        partes.append(_glob_to_regex(f, rust=True))
+    for p in pats:                                 # variantes legadas: só da forma NFC
+        p = unicodedata.normalize("NFC", p)
         for enc in _encs_do_glob(p, ign):
             v = _glob_to_regex(p, rust=True, enc=enc, ignora_caixa=ign)
             if v is not None:
@@ -1379,7 +1416,8 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
     use_glob = bool(q.name_patterns) and not q.name_is_regex
     # opt#3: muitos globs -> funde numa regex única (uma varredura só). Glob com
     # letra não-ASCII também vai para a regex: só ela carrega as variantes legadas
-    if use_glob and (len(pats) >= _MERGE_GLOBS_MIN or _encs_de_globs(pats, q)):
+    if use_glob and (len(pats) >= _MERGE_GLOBS_MIN or _encs_de_globs(pats, q)
+                     or formas_unicode(pats) != list(pats)):
         merged = _merge_globs(pats, q)
         if merged is not None:
             pats = [merged]
@@ -1620,9 +1658,12 @@ def _content_regex(content: str, q: Query) -> "re.Pattern":
     """Regex de conteúdo com as MESMAS flags que o fallback usa (case/regex/word).
     Fatorado p/ o fallback de linhas do booleano casar idêntico à busca do termo."""
     flags = 0 if q.case_sensitive else re.IGNORECASE
-    if q.whole_word and not q.content_is_regex:
-        return re.compile(r"\b" + re.escape(content) + r"\b", flags)
-    return re.compile(content if q.content_is_regex else re.escape(content), flags)
+    if q.content_is_regex:
+        return re.compile(content, flags)
+    alt = "|".join(re.escape(f) for f in formas_unicode([content]))   # espelho do rg_padroes
+    if q.whole_word:
+        return re.compile(r"\b(?:" + alt + r")\b", flags)
+    return re.compile(alt, flags)
 
 
 def _iter_content_python(q: Query, cancel, stats=None):
@@ -2213,14 +2254,28 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
             sob = disks.mounts_under(r, mounts)
         except Exception:
             continue
+        # 22/09/2026 (NAS TrueNAS real, VM congelada): a RAIZ também. O stat
+        # abaixo rodava no processo principal ANTES da sonda (_live_roots vem
+        # depois deste plano), e com a raiz sendo o próprio NAS congelado a busca
+        # pendurava até o cliente SMB desistir — medido 150 s. É a mesma regra
+        # das montagens sob a raiz: stat só em disco LOCAL; rede/FUSE é da sonda.
         try:
-            dev_mae = _st_dev(r)
-        except OSError:
-            dev_mae = None
-        try:
-            ids_digitadas.add(_ident(r))
-        except OSError:
-            pass
+            prof_r = (disks.search_profile(r, mounts) if mounts is not None
+                      else disks.search_profile(r))
+        except Exception:
+            prof_r = None
+        raiz_segura = prof_r is not None and not prof_r.is_network \
+            and not (prof_r.fstype or "").lower().startswith("fuse")
+        dev_mae = None
+        if raiz_segura:
+            try:
+                dev_mae = _st_dev(r)
+            except OSError:
+                dev_mae = None
+            try:
+                ids_digitadas.add(_ident(r))
+            except OSError:
+                pass
         for mp in sob:
             if mp in seen:
                 continue

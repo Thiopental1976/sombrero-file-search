@@ -102,6 +102,15 @@ try:
     r = busca("Avaliação", case_sensitive=True)
     ok("pt_ansi.txt" in r, "caixa sensível: 'Avaliação' casa 'Avaliação' em cp1252")
 
+    # (4b) NFD (macOS): mesma palavra composta e decomposta no mesmo arquivo
+    import unicodedata
+    with open(os.path.join(T, "mac_nfd.txt"), "w", encoding="utf-8") as f:
+        f.write("Avaliação composta\n" + unicodedata.normalize("NFD", "Avaliação decomposta") + "\n")
+    for motor, py in (("rg", False), ("python", True)):
+        r = busca("avaliação", python=py)
+        n = len(r["mac_nfd.txt"].lines) if "mac_nfd.txt" in r else 0
+        ok(n == 2, f"[{motor:6}] NFD do Mac: acha as 2 linhas, composta e decomposta ({n})")
+
     # (5) regex do usuário: como veio (sem variante)
     ok(engine.rg_padroes(["avalia..o"], Query(paths=[T], content_is_regex=True))
        == ["-e", "avalia..o"], "regex do usuário segue como veio")

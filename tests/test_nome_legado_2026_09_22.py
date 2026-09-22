@@ -37,6 +37,9 @@ NOMES = {                                   # rótulo -> bytes do nome no disco
     "japones_utf8":   "京都_メモ.txt".encode(),
     "emoji_utf8":     "foto_😀.txt".encode(),
     "espaco_utf8":    b"exames de rotina.txt",
+    # macOS grava nome DECOMPOSTO (NFD); o teclado digita composto (NFC) — medido
+    # no NAS TrueNAS: "médico" não achava este (22/09/2026, formas_unicode)
+    "nfd_mac":        __import__("unicodedata").normalize("NFD", "exame_médico_mac.txt").encode(),
 }
 
 T = tempfile.mkdtemp(prefix="sfs_nomeleg_")
@@ -60,22 +63,22 @@ try:
 
     g = engine.as_name_glob
     casos = [
-        ([g("médico")],  {"laudo_cp1252", "MEDICO_cp1252", "normal_utf8"}, "médico acha cp1252 + UTF-8"),
-        ([g("MÉDICO")],  {"laudo_cp1252", "MEDICO_cp1252", "normal_utf8"}, "caixa: MÉDICO acha médico"),
+        ([g("médico")],  {"laudo_cp1252", "MEDICO_cp1252", "normal_utf8", "nfd_mac"}, "médico acha cp1252 + UTF-8 + NFD do Mac"),
+        ([g("MÉDICO")],  {"laudo_cp1252", "MEDICO_cp1252", "normal_utf8", "nfd_mac"}, "caixa: MÉDICO acha médico"),
         ([g("ção")],     {"relat_cp1252"},                                 "ção acha relatório_ÇÃO (outro byte cru antes)"),
         ([g("анализ")],  {"analise_cp1251", "analise_koi8"},               "анализ acha cp1251 E KOI8-R"),
         ([g("東京")],    {"toquio_sjis"},                                  "東京 acha nome Shift-JIS"),
-        ([g("é")],       {"normal_utf8"},                                  "'é' sozinho: só UTF-8 (sem acerto falso em 马鹿)"),
+        ([g("é")],       {"normal_utf8", "nfd_mac"},                       "'é' sozinho: UTF-8 e NFD (sem acerto falso em 马鹿)"),
         (["*.txt", "*.a", "*.b", "*.c"], set(NOMES),                       "4+ globs fundidos acham TODOS (antes: 1 de 4)"),
         (["exames?de*", "*.a", "*.b", "*.c"], {"espaco_utf8"},             "4+ globs: '?' e espaço seguem certos"),
         (["*médico*", "*.a", "*.b", "*.c"],
-         {"laudo_cp1252", "MEDICO_cp1252", "normal_utf8"},                 "4+ globs com acento: variantes na fusão"),
+         {"laudo_cp1252", "MEDICO_cp1252", "normal_utf8", "nfd_mac"},      "4+ globs com acento: variantes na fusão"),
     ]
     for globs, esperado, oque in casos:
         a, b = busca(globs), busca(globs, python=True)
         ok(a == esperado, f"[fd    ] {oque} ({sorted(a)})")
         ok(b == esperado, f"[python] {oque} ({sorted(b)})")
-    ok(busca([g("médico")], case_sensitive=True) == {"laudo_cp1252", "normal_utf8"},
+    ok(busca([g("médico")], case_sensitive=True) == {"laudo_cp1252", "normal_utf8", "nfd_mac"},
        "caixa sensível: médico não casa MÉDICO")
 
     # o dialeto Python do _glob_to_regex não mudou (test_glob_to_regex o usa)

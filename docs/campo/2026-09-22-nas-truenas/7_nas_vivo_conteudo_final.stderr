@@ -1,0 +1,6 @@
+# engine: rg=/home/rtoledo/.local/bin/rg fd=/home/rtoledo/.local/bin/fd rga=/home/rtoledo/.local/bin/rga
+# incomplete: read error (×6): rg: /var/mnt/NAS/casos_de_borda/reservados_dos/AHY9U3~9: No such file or directory (os error 2)
+# incomplete: snapshots skipped in /var/mnt/NAS: snapshot tree not searched: this location had live results (--snapshots / 'include snapshots' to always search it)
+
+# 91 files · 109.32s
+rc=0

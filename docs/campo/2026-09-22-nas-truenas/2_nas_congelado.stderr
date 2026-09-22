@@ -1,0 +1,8 @@
+# engine: rg=/home/rtoledo/.local/bin/rg fd=/home/rtoledo/.local/bin/fd rga=/home/rtoledo/.local/bin/rga
+# warning: mount not responding — skipped: /var/mnt/NAS (cifs)
+# warning: 2 directories without permission — partial results
+# incomplete: mount not responding in /var/mnt/NAS: cifs: no_response
+# incomplete: permission denied (×2): directories that denied reading
+
+# 0 files · 3.29s
+rc=1

@@ -1,0 +1,4 @@
+# engine: rg=/home/rtoledo/.local/bin/rg fd=/home/rtoledo/.local/bin/fd rga=/home/rtoledo/.local/bin/rga
+# incomplete: snapshots searched in /var/mnt/NAS: nothing in the live tree, so the snapshot tree was searched too; results from it are marked
+
+# 0 files · 30.93s

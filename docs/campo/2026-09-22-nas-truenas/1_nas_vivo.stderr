@@ -1,0 +1,6 @@
+# engine: rg=/home/rtoledo/.local/bin/rg fd=/home/rtoledo/.local/bin/fd rga=/home/rtoledo/.local/bin/rga
+# warning: 2 directories without permission — partial results
+# incomplete: permission denied (×2): directories that denied reading
+
+# 1 files · 0.55s
+rc=0

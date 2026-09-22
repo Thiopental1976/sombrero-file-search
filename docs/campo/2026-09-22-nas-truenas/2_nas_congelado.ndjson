@@ -1,0 +1,4 @@
+{"warn": "mount_dead", "path": "/var/mnt/NAS", "mount": "/var/mnt/NAS", "fstype": "cifs"}
+{"warn": "denied", "count": 2}
+{"warn": "incomplete", "reason": "dead_mount", "where": "/var/mnt/NAS", "detail": "cifs: no_response", "count": 1}
+{"warn": "incomplete", "reason": "permission_denied", "where": "", "detail": "directories that denied reading", "count": 2}

@@ -1,0 +1,11 @@
+# engine: rg=/home/rtoledo/.local/bin/rg fd=/home/rtoledo/.local/bin/fd rga=/home/rtoledo/.local/bin/rga
+{"warn": "mount_dead", "path": "/var/mnt/NAS", "mount": "/var/mnt/NAS", "fstype": "cifs"}
+{"warn": "denied", "count": 2}
+{"warn": "incomplete", "reason": "dead_mount", "where": "/var/mnt/NAS", "detail": "cifs: no_response", "count": 1}
+{"warn": "incomplete", "reason": "permission_denied", "where": "", "detail": "directories that denied reading", "count": 2}
+# warning: mount not responding — skipped: /var/mnt/NAS (cifs)
+# warning: 2 directories without permission — partial results
+# incomplete: mount not responding in /var/mnt/NAS: cifs: no_response
+# incomplete: permission denied (×2): directories that denied reading
+
+# 0 files · 3.40s
