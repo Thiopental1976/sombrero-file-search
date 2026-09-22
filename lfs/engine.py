@@ -1040,9 +1040,23 @@ def _name_matcher(q: Query):
     # globs (lista). case-insensitive por padrão como o Agent Ransack
     pats = q.name_patterns
     if q.case_sensitive:
-        return lambda b: any(fnmatch.fnmatchcase(b, p) for p in pats)
-    lp = [p.lower() for p in pats]
-    return lambda b: any(fnmatch.fnmatchcase(b.lower(), p) for p in lp)
+        casa = lambda b: any(fnmatch.fnmatchcase(b, p) for p in pats)
+    else:
+        lp = [p.lower() for p in pats]
+        casa = lambda b: any(fnmatch.fnmatchcase(b.lower(), p) for p in lp)
+    encs = _encs_de_globs(pats, q)
+    if not encs:
+        return casa
+    # 22/09/2026: nome não-UTF-8 (bytes legados) casa lido em cada codificação
+    # candidata — o espelho das variantes que o fd recebe (paridade)
+    def casa_legado_nome(b):
+        if casa(b):
+            return True
+        if not tem_bytes_crus(b):
+            return False
+        raw = b.encode("utf-8", errors="surrogateescape")
+        return any(casa(texto_legivel(raw, e)) for e in encs)
+    return casa_legado_nome
 
 
 def _passes_meta(q: Query, st: os.stat_result) -> bool:
@@ -1161,17 +1175,30 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
 
 _MERGE_GLOBS_MIN = 4                      # opt#3: >3 globs -> funde numa regex só
 
-def _glob_to_regex(glob: str) -> str:
+def _glob_to_regex(glob: str, rust: bool = False, enc: str = None,
+                   ignora_caixa: bool = True) -> Optional[str]:
     """Converte um glob de basename numa regex ANCORADA (^...$), equivalente ao
-    fnmatch. `*`->`.*`, `?`->`.`, `[...]` preservado (com `!`->`^`), resto literal."""
+    fnmatch. `*`->`.*`, `?`->`.`, `[...]` preservado (com `!`->`^`), resto literal.
+
+    rust=True (22/09/2026): o dialeto do fd, que casa os BYTES do nome. Medido:
+    com 4+ globs fundidos, `*.txt` achava 1 de 4 arquivos — o `.` Unicode do Rust
+    não atravessa byte inválido, e nome não-UTF-8 sumia calado. Aqui `*` casa
+    QUALQUER byte e `?` um caractere OU um byte solto.
+    enc (só com rust): a VARIANTE legada — letras não-ASCII viram os bytes delas
+    em `enc` (ver legado_variantes). None se o glob não é representável ali."""
     out = ["^"]
     i, n = 0, len(glob)
     while i < n:
         c = glob[i]
         if c == "*":
-            out.append(".*")
+            out.append("(?s-u:.)*" if rust else ".*")
         elif c == "?":
-            out.append(".")
+            if not rust:
+                out.append(".")
+            elif enc:
+                out.append("(?s-u:.)")
+            else:
+                out.append("(?:(?s:.)|(?-u:[\\x80-\\xFF]))")
         elif c == "[":
             j = i + 1
             if j < n and glob[j] in "!^":
@@ -1184,10 +1211,27 @@ def _glob_to_regex(glob: str) -> str:
                 out.append(r"\[")
             else:
                 inner = glob[i + 1:j]
+                if enc and not inner.isascii():
+                    return None                  # classe com acento: sem variante
                 if inner.startswith("!"):
                     inner = "^" + inner[1:]
                 out.append("[" + inner + "]")
                 i = j
+        elif enc and not c.isascii():
+            bs = set()
+            for x in ({c, c.upper(), c.lower()} if ignora_caixa else {c}):
+                try:
+                    bs.add(x.encode(enc))
+                except UnicodeEncodeError:
+                    pass
+            if not bs:
+                return None
+            alts = sorted(bs)
+            if all(len(x) == 1 for x in alts):
+                out.append("(?-u:[" + "".join("\\x%02X" % x[0] for x in alts) + "])")
+            else:
+                out.append("(?-u:(?:" + "|".join(
+                    "".join("\\x%02X" % y for y in x) for x in alts) + "))")
         else:
             out.append(re.escape(c))
         i += 1
@@ -1195,18 +1239,56 @@ def _glob_to_regex(glob: str) -> str:
     return "".join(out)
 
 
-def _merge_globs(pats) -> Optional[str]:
-    """Opt#3: funde vários globs de basename numa única regex alternada, p/ rodar
-    UM só fd em vez de um por padrão (menos varreduras = menos I/O, bom p/ SMR).
-    Só funde globs simples (sem '/'); valida a regex antes. Devolve None p/ recusar."""
+_RX_CORINGA = re.compile(r"[*?]|\[[^\]]*\]")
+
+
+def _encs_do_glob(glob: str, ign: bool = True) -> list:
+    """Codificações legadas em que UM glob também deve casar. O critério contra
+    acerto falso (legado_variantes) é aplicado a CADA TRECHO LITERAL entre
+    coringas, não ao glob inteiro: o `*` é ASCII mas não ancora nada — medido,
+    `-n é` (-> `*é*`) casava nome chinês em UTF-8 (马 = E9 A9 AC). Vale a
+    codificação aceita em todos os trechos que têm letra não-ASCII."""
+    trechos = [t for t in _RX_CORINGA.split(glob) if not t.isascii()]
+    if not trechos:
+        return []
+    comuns = None
+    for t in trechos:
+        encs = [e for e, _rx in legado_variantes(t, ign)]
+        comuns = encs if comuns is None else [e for e in comuns if e in encs]
+    return comuns or []
+
+
+def _encs_de_globs(pats, q) -> list:
+    """União das codificações de _encs_do_glob para os globs de NOME — a mesma
+    decisão para o fd (_merge_globs) e para o Python (_name_matcher)."""
+    if q is not None and q.name_is_regex:
+        return []
+    ign = q is None or not q.case_sensitive
+    out = []
+    for p in pats:
+        for e in _encs_do_glob(p, ign):
+            if e not in out:
+                out.append(e)
+    return out
+
+
+def _merge_globs(pats, q=None) -> Optional[str]:
+    """Opt#3: funde vários globs de basename numa única regex alternada (dialeto
+    do fd), p/ rodar UM só fd em vez de um por padrão (menos varreduras = menos
+    I/O, bom p/ SMR). 22/09/2026: + as variantes legadas de cada glob (nome
+    "laudo_m\\xe9dico.txt" achado por "médico"). Só funde globs simples (sem
+    '/'). Devolve None p/ recusar."""
     if any("/" in p for p in pats):              # glob de caminho: fd casa a path toda
         return None
-    merged = "(?:" + "|".join(_glob_to_regex(p) for p in pats) + ")"
-    try:
-        re.compile(merged)                       # sanidade (se falhar, cai no multi-fd)
-    except re.error:
-        return None
-    return merged
+    ign = q is None or not q.case_sensitive
+    partes = []
+    for p in pats:
+        partes.append(_glob_to_regex(p, rust=True))
+        for enc in _encs_do_glob(p, ign):
+            v = _glob_to_regex(p, rust=True, enc=enc, ignora_caixa=ign)
+            if v is not None:
+                partes.append(v)
+    return "(?:" + "|".join(partes) + ")"
 
 
 def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
@@ -1214,9 +1296,10 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
     alternada (opt#3, 1 só fd); até 3, um fd por padrão."""
     pats = q.name_patterns or ["."]
     use_glob = bool(q.name_patterns) and not q.name_is_regex
-    # opt#3: muitos globs -> funde numa regex única (uma varredura só)
-    if use_glob and len(pats) >= _MERGE_GLOBS_MIN:
-        merged = _merge_globs(pats)
+    # opt#3: muitos globs -> funde numa regex única (uma varredura só). Glob com
+    # letra não-ASCII também vai para a regex: só ela carrega as variantes legadas
+    if use_glob and (len(pats) >= _MERGE_GLOBS_MIN or _encs_de_globs(pats, q)):
+        merged = _merge_globs(pats, q)
         if merged is not None:
             pats = [merged]
             use_glob = False                      # agora é regex, não glob
