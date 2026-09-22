@@ -56,17 +56,20 @@ qualquer distro. O modo documentos usa **ripgrep-all** (`rga`).
 
 ```
 sombrero-file-search/
+├── README.md / README.pt-BR.md, MANUAL.md / MANUAL.pt-BR.md   # o que o USUÁRIO precisa
+├── LICENSE (GPL-3.0-or-later), install.sh, requirements.txt (PySide6>=6.5)
+├── VERSION ($Format:%h (%cs)$, preenchido pelo git archive), .gitattributes, .gitignore
 ├── lfs/                     # código (15 módulos; só app.py importa Qt)
 ├── tests/                   # scripts standalone + 2 matrizes de instalação em shell
 ├── packaging/               # build_deb.sh, build_appimage.sh
 ├── assets/                  # icon.svg, icon{,_48,_64,_128,_256}.png, demo.gif, social_preview.png…
-├── docs/campo/              # evidência bruta de testes de campo (ex.: NAS TrueNAS, 22/09/2026)
-├── install.sh               # instalador universal
-├── README.md / README.pt-BR.md, MANUAL.md / MANUAL.pt-BR.md
-├── DOCUMENTACAO_TECNICA.md (este), INSTALACAO_BAZZITE_DIFICULDADES.md, BRIEFING_COMPLETO_…md
-├── HANDOFF_*.md, REVISAO_PEDIDO_*.md, VEREDITO_*.md   # histórico de revisões
-├── VERSION ($Format:%h (%cs)$, preenchido pelo git archive), requirements.txt (PySide6>=6.5)
-└── LICENSE (GPL-3.0-or-later), .gitattributes, .gitignore
+└── docs/                    # para quem CONTRIBUI (guia em docs/README.md)
+    ├── DOCUMENTACAO_TECNICA.md (este)
+    ├── campo/               # testes de campo com evidência bruta
+    │   ├── 2026-07-bazzite-instalacao.md
+    │   └── 2026-09-22-nas-truenas/
+    └── historico/           # diário de desenvolvimento: BRIEFING, HANDOFF_*, REVISAO_PEDIDO_*,
+                             #   VEREDITO_*, BRANDING_PROMPTS (reorganizado da raiz em 22/09/2026)
 ```
 
 O lançador não mora mais na raiz: o `install.sh` gera `sombrero-file-search` (GUI) e
@@ -1524,7 +1527,7 @@ Ver §23.2 (inclui os caracteres invisíveis no nome e o `-i` sem efeito).
 ## 23. Handoff × código, e pendências conhecidas
 
 Levantado na atualização deste documento (22/09/2026), lendo o código contra os
-`HANDOFF_*.md` da raiz. **O código manda**; os handoffs são o histórico da decisão.
+`HANDOFF_*.md` (hoje em `docs/historico/`). **O código manda**; os handoffs são o histórico da decisão.
 
 ### 23.1 Onde o handoff ficou para trás
 

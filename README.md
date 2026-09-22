@@ -276,6 +276,12 @@ python3 tests/test_honestidade.py    # the honesty table, ~1 min
 ./packaging/build_appimage.sh        # ~10 min the first time
 ```
 
+## Documentation
+
+The user guide is [MANUAL.md](MANUAL.md). For contributors, [`docs/`](docs/) holds the technical
+documentation (architecture, every module, the incompleteness funnel), field tests with raw
+evidence, and the development history.
+
 ## Interface language
 
 English is the source language; the GUI follows the system locale and falls back to English

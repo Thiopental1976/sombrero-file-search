@@ -280,6 +280,12 @@ python3 tests/test_honestidade.py    # a tabela de honestidade, ~1 min
 ./packaging/build_appimage.sh        # ~10 min na primeira vez
 ```
 
+## Documentação
+
+O guia de uso é o [MANUAL.pt-BR.md](MANUAL.pt-BR.md). Para quem vai contribuir, a pasta
+[`docs/`](docs/) tem a documentação técnica (arquitetura, cada módulo, o funil de
+incompletude), os testes de campo com a evidência bruta e o histórico de desenvolvimento.
+
 ## Idioma da interface
 
 O inglês é o idioma-fonte; a GUI segue o locale do sistema e cai para o inglês em qualquer
