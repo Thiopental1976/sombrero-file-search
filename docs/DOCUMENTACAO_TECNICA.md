@@ -1442,6 +1442,10 @@ ideograma/kana/hangul).
 - **`rg_padroes(termos, q)`**: fonte única do padrão nos 3 pontos que chamam o rg
   (conteúdo, termo e linhas do booleano). Termo ASCII e regex do usuário: como
   antes (`--fixed-strings`/regex crua). Custo medido: +1% a +6%.
+  **No booleano, em HD mecânico** (nota 5 do parecer de revisão 2 do Fable), 5 termos acentuados,
+  cache frio a cada rodada, 2,3 GB de um jogo Ren'Py no Toledo (22/09/2026): mediana **11,4 s com
+  variantes × 12,0 s sem** — ruído; o controle sem acento (mesmo código nos dois modos) oscilou
+  10,5–13,9 s. No HD frio o tempo é do disco; as regex de bytes pesam na CPU, que espera o disco.
 - **Nome** (`_glob_to_regex(rust=True)`, `_merge_globs`): dialeto do fd em que `*`
   casa QUALQUER byte (`(?s-u:.)*`). Consertou também a fusão de 4+ globs, que
   perdia calada todo nome não-UTF-8. Glob com letra não-ASCII vai sempre para a
