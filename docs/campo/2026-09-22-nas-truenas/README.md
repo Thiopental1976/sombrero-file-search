@@ -56,8 +56,8 @@ case-insensitive (não existe lá); `.oculto/` fora por padrão (pasta oculta);
 
 ## Fica em aberto
 
-- `fatura_‮txt.exe` aparece na tela como "fatura_exe.txt" (RTL override) e
-  `zero​width.txt` não é achado por "zerowidth": caracteres invisíveis no
+- `fatura_\u202Etxt.exe` aparece na tela como "fatura_exe.txt" (RTL override) e
+  `zero\u200Bwidth.txt` não é achado por "zerowidth": caracteres invisíveis no
   nome — item de exibição/busca próprio, decisão do Rodrigo.
 - A busca por nome no NAS inteiro leva ~30 s e a de conteúdo ~110 s pela tailnet
   (SMB, latência real) — esperado, e o motivo da decisão "Rede fora de Todos os

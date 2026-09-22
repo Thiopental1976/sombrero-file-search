@@ -1553,8 +1553,8 @@ Levantado na atualização deste documento (22/09/2026), lendo o código contra 
    `statvfs`) — não verificado se isso aciona o automount (na expansão elas não são
    tocadas).
 9. Caracteres invisíveis no nome (item de exibição, decisão do Rodrigo):
-   `fatura_‮txt.exe` aparece "fatura_exe.txt" (RTL override);
-   `zero​width.txt` não é achado por "zerowidth".
+   `fatura_\u202Etxt.exe` aparece "fatura_exe.txt" (RTL override);
+   `zero\u200Bwidth.txt` não é achado por "zerowidth".
 10. A docstring de `test_audit.py` ainda diz "ou via pytest" — não vale: os testes
     são scripts standalone (vários fazem `sys.exit()`).
 
