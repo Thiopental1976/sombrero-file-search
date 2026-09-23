@@ -285,7 +285,10 @@ python3 tests/test_honestidade.py    # a tabela de honestidade, ~1 min
 O guia de uso é o [MANUAL.pt-BR.md](MANUAL.pt-BR.md); o que mudou em cada versão está no
 [CHANGELOG.md](CHANGELOG.md) (em inglês). Para quem vai contribuir, a pasta
 [`docs/`](docs/) tem a documentação técnica (arquitetura, cada módulo, o funil de
-incompletude), os testes de campo com a evidência bruta e o histórico de desenvolvimento.
+incompletude), o [contrato para scripts](docs/CONTRATO_FUNIL.pt-BR.md), os testes de campo
+com a evidência bruta e o histórico de desenvolvimento.
+
+A língua-fonte do projeto é o **inglês**; as versões em português (`*.pt-BR.md`) andam ao lado.
 
 ## Idioma da interface
 

@@ -1,5 +1,6 @@
 # Sombrero File Search — Documentação Técnica
 
+*English version (canonical): [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md).*
 > Documento de referência para **avaliação e depuração** do projeto. Descreve arquitetura,
 > cada módulo, o fluxo de dados, o modelo de concorrência, a gramática da busca booleana,
 > o modo documentos, o player de mídia, o sistema de temas e a matriz de dependências por distro.
@@ -1255,7 +1256,7 @@ preenchidos, mas são **vista**, não fonte.
 - `resumo_incompleto(stats, tr) -> (grave, linhas)`: **fonte única** da barra da GUI
   e do exit code da CLI. `grave` = motivo em `MOTIVOS_GRAVES` **ou** entrada marcada
   `grave` (`anota_incompleto(..., grave=True)`; a fusão do particionado preserva a marca).
-  Contrato para scripts em uma página: `docs/CONTRATO_FUNIL.md`.
+  Contrato para scripts em uma página: `docs/CONTRATO_FUNIL.pt-BR.md`.
 - `MOTIVOS_GRAVES = {engine_failed, engine_missing, disk_failed, invalid_root, not_mounted}`
   — "o resultado pode estar **errado**".
 

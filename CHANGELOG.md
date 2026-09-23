@@ -4,7 +4,7 @@ All notable changes to **Sombrero File Search**. Dates are YYYY-MM-DD.
 The project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`.
 
 Detailed rationale and measurements live in the commit messages and in
-[`docs/DOCUMENTACAO_TECNICA.md`](docs/DOCUMENTACAO_TECNICA.md) (Portuguese).
+[`docs/TECHNICAL_DOCUMENTATION.md`](docs/TECHNICAL_DOCUMENTATION.md).
 
 ## [1.2.0] — 2026-09-22
 
@@ -24,12 +24,12 @@ names, dead network mounts — plus new CLI filters.
 - **Names with invisible characters** are shown with a visible marker
   (`fatura_⟦RLO⟧txt.exe`) in italics with a tooltip — the RLO trick used to
   disguise executables no longer fools the list — and the search ignores those
-  characters, so `zerowidth` finds `zero​width.txt`.
+  characters, so `zerowidth` finds `zero\u200bwidth.txt`.
 - **CLI:** `--max-size`, `--depth N`, `--follow`.
 - **Network shares in the "Disks ▾" menu** (NFS, SMB, sshfs, WebDAV, rclone), in
   their own section, deliberately *not* included in "All disks" — everyday
   searching is local and cheaper.
-- `docs/CONTRATO_FUNIL.md`: the incompleteness contract for scripts (every
+- `docs/FUNNEL_CONTRACT.md`: the incompleteness contract for scripts (every
   `reason`, which ones are fatal, exit codes).
 
 ### Changed

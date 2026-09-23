@@ -1,5 +1,6 @@
 # Instalação do Sombrero File Search em distros imutáveis (Bazzite / Fedora Atomic)
 
+*English version (canonical): [2026-07-bazzite-install.md](2026-07-bazzite-install.md).*
 **Relatório de campo — 30/07/2026**
 Ambiente: Bazzite 44.20260721.0 (Silverblue), GNOME/Wayland, x86_64, ASUS GL553VD.
 Commit testado: `907085f` (25/07/2026), branch `main`.

@@ -280,8 +280,9 @@ python3 tests/test_honestidade.py    # the honesty table, ~1 min
 
 The user guide is [MANUAL.md](MANUAL.md); what changed in each release is in
 [CHANGELOG.md](CHANGELOG.md). For contributors, [`docs/`](docs/) holds the technical
-documentation (architecture, every module, the incompleteness funnel), field tests with raw
-evidence, and the development history.
+documentation (architecture, every module, the incompleteness funnel), the
+[contract for scripts](docs/FUNNEL_CONTRACT.md), field tests with raw evidence, and the
+development history.
 
 ## Interface language
 

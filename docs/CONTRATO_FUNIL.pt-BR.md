@@ -1,5 +1,7 @@
 # Contrato do funil de incompletude (`--json` e código de saída)
 
+*English version (canonical): [FUNNEL_CONTRACT.md](FUNNEL_CONTRACT.md).*
+
 O SFS diz **o que ficou de fora e por quê**, num canal só (`stats["incompleto"]` em
 `lfs/engine.py`), e dali derivam a barra da GUI, o painel por raiz, o stderr da CLI, o
 `--json` e o código de saída. Esta página é o **contrato para scripts**: os IDs abaixo são
@@ -65,4 +67,4 @@ O `detail` sai sempre em **inglês**, em qualquer locale (a CLI é o contrato de
 
 `tests/test_honestidade.py` (matriz motor × perda), `tests/test_funil_incompleto.py`,
 `tests/test_motor_falhou.py`, `tests/test_revisao_fable_2026_09_22.py` (gravidade por lugar).
-Detalhe da implementação: `DOCUMENTACAO_TECNICA.md` §20.3.
+Detalhe da implementação: `TECHNICAL_DOCUMENTATION.md` §20.3.

@@ -1,69 +1,71 @@
-# Teste de campo: NAS TrueNAS real pela tailnet (22/09/2026)
+# Field test: a real TrueNAS over the tailnet (2026-09-22)
 
-Evidência bruta do teste que motivou os commits `e3fc1ae` e seguintes. Guardada
-por sugestão da revisão: saída `--json` do SFS + log do kernel do período valem
-mais numa segunda análise do que a descrição do sintoma.
+*Versão em português: [README.pt-BR.md](README.pt-BR.md).*
 
-## Bancada
+Raw evidence of the test that led to commit `e3fc1ae` and the ones after it. Kept on the
+review's suggestion: the SFS `--json` output plus the kernel log of the period are worth more
+in a second analysis than a description of the symptom.
 
-- **NAS:** TrueNAS SCALE 25.10.7 numa VM libvirt do ServidorCedro (4 vCPU, 8 GB),
-  pool RAIDZ1 de 4 "baias" de 20 GB sobre HD mecânico; dataset `tanque/Compartilhado`
-  SMB, *case-insensitive*, ACL NFSv4, LZ4. Só dados sintéticos (seed fixa).
-- **Rede:** tailnet (Tailscale), `tailscale serve` repassando 445 → VM.
-- **Cliente:** Bazzite (ostree), kernel 6.18, `mount -t cifs … vers=3.1.1` em
-  `/var/mnt/NAS` (opções efetivas: `soft,echo_interval=60,actimeo=1`).
-- **Conteúdo:** 3.261 arquivos sintéticos (~611 MB) + 27 criados no teste pelo
-  próprio SMB em `idiomas_e_nomes/` (15 escritas, NFD do macOS, RTL override,
-  largura zero, aspas, `$(…)`, nome de ~240 bytes, conteúdo cp1252/cp1251/Shift-JIS).
-- **Falha simulada:** `virsh suspend nas-simulado` — o NAS congela com a montagem
-  "viva" (TCP aberto, nada responde): o pior caso.
+## The bench
 
-## Arquivos
+- **NAS:** TrueNAS SCALE 25.10.7 in a libvirt VM on ServidorCedro (4 vCPU, 8 GB), RAIDZ1 pool
+  of four 20 GB "bays" on a mechanical disk; dataset `tanque/Compartilhado` over SMB,
+  *case-insensitive*, NFSv4 ACL, LZ4. Synthetic data only (fixed seed).
+- **Network:** tailnet (Tailscale), `tailscale serve` forwarding 445 → VM.
+- **Client:** Bazzite (ostree), kernel 6.18, `mount -t cifs … vers=3.1.1` at `/var/mnt/NAS`
+  (effective options: `soft,echo_interval=60,actimeo=1`).
+- **Content:** 3,261 synthetic files (~611 MB) plus 27 created during the test over SMB itself
+  in `idiomas_e_nomes/` (15 writing systems, macOS NFD, RTL override, zero width, quotes,
+  `$(…)`, a ~240-byte name, cp1252/cp1251/Shift-JIS content).
+- **Simulated failure:** `virsh suspend nas-simulado` — the NAS freezes with the mount still
+  "alive" (TCP open, nothing answers): the worst case.
 
-| Arquivo | O quê |
+## Files
+
+| File | What |
 |---|---|
-| `1_nas_vivo.*` | busca por nome em escrita cirílica no NAS vivo: 0,7 s |
-| `2_nas_congelado.*` | **NAS congelado, versão corrigida, 1ª rodada: 3,4 s**, `dead_mount` / `cifs: no_response` |
-| `3_kernel_cifs.log` | kernel no congelamento curto: **vazio** |
-| `4_congelado_5s/100s.ndjson` | congelamento longo: busca a 5 s e a 100 s — 3,4 s e 3,5 s, NAS pulado nas duas |
-| `5_apos_retomar.txt` | depois do `resume`: NAS responde em 0,1 s, busca normal |
-| `6_kernel_cifs_congelamento_longo.log` | kernel em 107 s de congelamento: **vazio** (o cifs só declara o servidor morto em 3 × `echo_interval` = 180 s) |
-| `7_nas_vivo_conteudo_final.*` | conteúdo `AGULHA-` no NAS inteiro, código final: 91 arquivos (64 da origem + 27 criados), 6 reservados do DOS como `read_error` |
+| `1_nas_vivo.*` | name search in Cyrillic on the live NAS: 0.7 s |
+| `2_nas_congelado.*` | **frozen NAS, fixed build, first run: 3.4 s**, `dead_mount` / `cifs: no_response` |
+| `3_kernel_cifs.log` | kernel during the short freeze: **empty** |
+| `4_congelado_5s/100s.ndjson` | long freeze: search at 5 s and at 100 s — 3.4 s and 3.5 s, NAS skipped in both |
+| `5_apos_retomar.txt` | after `resume`: the NAS answers in 0.1 s, search back to normal |
+| `6_kernel_cifs_congelamento_longo.log` | kernel during 107 s of freeze: **empty** (cifs only declares the server dead at 3 × `echo_interval` = 180 s) |
+| `7_nas_vivo_conteudo_final.*` | content `AGULHA-` across the whole NAS, final code: 91 files (64 from the source + 27 created), 6 DOS reserved names as `read_error` |
 
-> **Nota (22/09, commit do Fable `7ec3a71`):** estas capturas mostram o NAS digitado e
-> congelado saindo com `rc=1` e `"warn": "incomplete"`. A própria evidência revelou que isso
-> era "nada encontrado" mentiroso: desde então a montagem morta que é a **raiz digitada** é
-> grave — `rc=2` e `"error": "incomplete"`. Contrato em `docs/CONTRATO_FUNIL.md`.
+> **Note (2026-09-22, Fable's commit `7ec3a71`):** these captures show the typed, frozen NAS
+> exiting with `rc=1` and `"warn": "incomplete"`. The evidence itself revealed that this was a
+> lying "nothing found": since then, a dead mount that is the **typed root** is fatal —
+> `rc=2` and `"error": "incomplete"`. Contract in `docs/FUNNEL_CONTRACT.md`.
 
-## O que o teste mostrou (e os consertos)
+## What the test showed (and the fixes)
 
-1. **Sonda enganada pelo cache.** `mount_status` fazia só `stat` — respondido
-   pelo cache de atributos com o servidor morto (NFS local: "OK" em 0,0 s). Agora
-   também `statvfs`, que vai ao servidor.
-2. **`stat` da RAIZ fora da sonda.** `planejar_raizes` (F12) roda antes do gate e
-   fazia `stat` na raiz — sendo a raiz o NAS congelado, pendurava (medido 150 s na
-   build `e3fc1ae`; a mesma build "passou" em 15 s numa 2ª rodada só porque o
-   cliente já marcara o servidor como morto — **a ordem dos testes engana**).
-   Agora a raiz de rede/FUSE não leva `stat`; é trabalho da sonda.
-3. **"search engine failed" por 6 arquivos.** Nomes reservados do DOS (`CON.txt`…)
-   que o NAS lista como 8.3 (`AHY9U3~9`) mas não abre faziam o `rg` sair 2 e a
-   busca inteira virar falha grave. Queixa que é só "`<caminho>`: motivo (os
-   error N)" agora é `read_error` daqueles arquivos.
-4. **NFD do macOS.** "médico" não achava `médico_decomposto_NFD.txt`. Termo e glob
-   vão agora nas duas formas Unicode (NFC e NFD).
+1. **The probe was fooled by the cache.** `mount_status` only did a `stat` — answered by the
+   attribute cache with the server dead (local NFS: "OK" in 0.0 s). It now also does
+   `statvfs`, which goes to the server.
+2. **A `stat` on the ROOT, outside the probe.** `planejar_raizes` (F12) runs before the gate
+   and did a `stat` on the root — with the root being the frozen NAS, the search hung
+   (measured 150 s on build `e3fc1ae`; the same build "passed" in 15 s on a second run only
+   because the client had already marked the server dead — **the order of the tests
+   deceives**). A network/FUSE root no longer takes a `stat`; that is the probe's job.
+3. **"search engine failed" because of 6 files.** DOS reserved names (`CON.txt`…) that the NAS
+   lists in 8.3 form (`AHY9U3~9`) but will not open made `rg` exit 2 and turned the whole
+   search into a fatal failure. A complaint that is only "`<path>`: reason (os error N)" is now
+   a `read_error` for those files.
+4. **macOS NFD.** "médico" did not find `médico_decomposto_NFD.txt`. The term and the glob now
+   go in both Unicode forms (NFC and NFD).
 
-## Conferido contra a origem
+## Checked against the source
 
-`CODIGO-AGULHA-7731`: 57 no SFS = 57 na origem. `AGULHA-` nos casos de borda: as
-diferenças são todas explicadas — `laudo.txt` fundido com `Laudo.txt` pelo NAS
-case-insensitive (não existe lá); `.oculto/` fora por padrão (pasta oculta);
-`utf16_bom.txt` achado pelo SFS e não pelo `grep` da origem (o grep não lê UTF-16).
+`CODIGO-AGULHA-7731`: 57 in SFS = 57 at the source. `AGULHA-` in the edge cases: every
+difference is explained — `laudo.txt` merged into `Laudo.txt` by the case-insensitive NAS (it
+does not exist there); `.oculto/` out by default (hidden folder); `utf16_bom.txt` found by SFS
+and not by `grep` at the source (grep does not read UTF-16).
 
-## Fica em aberto
+## Left open
 
-- `fatura_\u202Etxt.exe` aparece na tela como "fatura_exe.txt" (RTL override) e
-  `zero\u200Bwidth.txt` não é achado por "zerowidth": caracteres invisíveis no
-  nome — item de exibição/busca próprio, decisão do Rodrigo.
-- A busca por nome no NAS inteiro leva ~30 s e a de conteúdo ~110 s pela tailnet
-  (SMB, latência real) — esperado, e o motivo da decisão "Rede fora de Todos os
-  discos".
+- `fatura_‮txt.exe` is displayed as "fatura_exe.txt" (RTL override) and
+  `zero​width.txt` is not found by "zerowidth": invisible characters in the name — an item
+  of its own for display/search, Rodrigo's decision. *(Fixed in v1.2.0.)*
+- A name search across the whole NAS takes ~30 s and a content search ~110 s over the tailnet
+  (SMB, real latency) — expected, and the reason behind the "Network outside All disks"
+  decision.

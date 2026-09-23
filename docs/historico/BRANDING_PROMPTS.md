@@ -25,7 +25,7 @@ enquadrada pela **lente de uma lupa** (busca). É o que já está desenhado no
 
 > **✅ Arte final gerada (Grok, 21/07/2026).** Os PNGs do app
 > (`icon.png`, `icon_256/128/64/48.png`) já são o ícone Grok recortado; o hero
-> virou **[`social_preview.png`](social_preview.png)** (1280×640, para o
+> virou **[`social_preview.png`](../../assets/social_preview.png)** (1280×640, para o
 > *Settings → Social preview* do GitHub). Os originais 1280×720 do Grok ficam
 > versionados como **`icon_grok_src.jpg`** e **`hero_grok_src.jpg`** (proveniência
 > / recorte futuro). O `icon.svg` continua sendo a versão vetorial escalável
