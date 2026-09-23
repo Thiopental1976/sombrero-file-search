@@ -1,0 +1,47 @@
+# Two versions of SFS running at once — captured 2026-09-23, ServidorCedro (X11, :0)
+#
+# Question under test: does a second instance fail to render while a DIFFERENT
+# version is already open? (Reported symptom: "without a pkill of that window,
+# the new one would not render".)
+
+## A) Offscreen (QT_QPA_PLATFORM=offscreen) — 1.1.0 running, 1.2.0 starting
+
+1.1.0 (from backup_lfs_ef7991d_2026-09-10.tar.gz) launched in background, alive.
+Then 1.2.0 (the .deb, /usr/lib/sombrero-file-search) started:
+
+  QApplication  0.1s
+  import        0.4s
+  MainWindow    1.2s
+  show          1.2s
+  rc=0
+
+config.json sha256 before: 69f380cd19cf10b5
+config.json sha256 after:  69f380cd19cf10b5   (unchanged — no shared-state clash)
+
+## B) Real display (DISPLAY=:0), root window at 1920x1080
+
+wmctrl -lG, with 1.1.0 already open and 1.2.0 started on top
+(columns: id, desktop, x, y, width, height, host, title)
+
+  0x02c00007  0 389  154  1160 760  ServidorCedro Sombrero File Search  ·  ef7991d (2026-09-09)
+  0x03800007  0 60   122  1160 760  ServidorCedro Sombrero File Search
+
+Both processes alive, both windows inside the visible area, both seen on screen
+by the user over RustDesk. **The version clash did not reproduce.**
+
+## What DID reproduce, in the same capture
+
+The X root is 1920x1080 right now; the monitor's native mode is 3440x1440
+(see 2_tela_e_janelas.txt). A window placed while the screen was wider is left
+outside the visible area when the mode shrinks — live proof in the same listing:
+
+  0x08600003  0 3240 0    300  490  ServidorCedro 186469951 - RustDesk
+                ^^^^ x = 3240 on a 1920-wide root: mapped, alive, invisible.
+
+The user switches the RustDesk session to a lower resolution on purpose, to save
+bandwidth on a slow Wi-Fi link at work. So the shrink is routine, not an accident.
+
+## No single-instance mechanism exists
+
+grep over lfs/app.py for QLocalServer / QLocalSocket / QSharedMemory / flock /
+lockf: no match. Nothing in the app refuses or defers a second instance.

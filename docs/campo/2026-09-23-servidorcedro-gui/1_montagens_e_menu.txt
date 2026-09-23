@@ -1,0 +1,33 @@
+# engine.classifica_montagens() — 12 discos, nenhuma rede
+local  /mnt/4TB-Portable                ext4     /dev/mapper/4tb-portable
+local  /mnt/CB69B31B5CC6C5D7            ext4     /dev/sdd2
+local  /mnt/DiscoG                      ext4     /dev/sda2
+local  /mnt/DiscoL                      ext4     /dev/sdk2
+local  /mnt/DiscoQ                      ext4     /dev/sdf2
+local  /mnt/Expansion1                  ext4     /dev/sdg2
+local  /mnt/Expansion2                  ext4     /dev/sdb2
+local  /mnt/Expansion3                  ext4     /dev/sdc1
+local  /mnt/Expansion4                  ext4     /dev/sde2
+local  /mnt/HDInternoBaixo              ext4     /dev/sdi2
+local  /mnt/SSD128Gb                    ext4     /dev/sdh3
+local  /mnt/optane                      ext4     /dev/nvme1n1p1
+
+# /mnt/* deliberadamente fora (nao e disco de usuario):
+  /mnt/optane/tmp/RustDesk/cliprdr-server -> rustdesk-cliprdr-fs fuse
+
+# menu "Disks" montado na GUI: 15 entradas
+   All disks
+   ----
+   Home folder (~)
+   4TB-Portable
+   UnidadeOptane
+   DiscoG
+   DiscoL
+   DiscoQ
+   Expansion1
+   Expansion2
+   Expansion3
+   Expansion4
+   HDInternoBaixo
+   SSD128Gb
+   OptaneCache

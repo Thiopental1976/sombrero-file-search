@@ -1,0 +1,23 @@
+# xrandr --current | grep connected
+DP-2 connected primary 1920x1080+0+0 (normal left inverted right x axis y axis) 800mm x 330mm
+
+# modos disponiveis no DP-2 (o nativo e o primeiro)
+   3440x1440     60.00 + 165.00   144.00   100.00  
+   2560x1440     60.00  
+   2560x1080    144.00    59.94  
+
+# xdpyinfo | grep dimensions  (tamanho REAL da raiz do X agora)
+  dimensions:    1920x1080 pixels (508x286 millimeters)
+
+# wmctrl -d  (area util segundo o WM)
+0  * DG: 1920x1080  VP: 0,0  WA: 0,0 1920x1040  Workspace 1
+1  - DG: 1920x1080  VP: N/A  WA: 0,0 1920x1040  Workspace 2
+2  - DG: 1920x1080  VP: N/A  WA: 0,0 1920x1040  Workspace 3
+3  - DG: 1920x1080  VP: N/A  WA: 0,0 1920x1040  Workspace 4
+
+# wmctrl -lG  (id, desk, x, y, larg, alt, host, titulo)
+0x03000003  0 0    0    1920 1040 ServidorCedro Desktop
+0x07c0001b  0 0    0    1920 1040 ServidorCedro Steam
+0x05000006  0 0    64   1920 1008 ServidorCedro ✳ NAS simulado via Tailscale
+0x04200007  0 10   72   1920 1008 ServidorCedro qBittorrent v5.2.3
+0x08600003  0 3240 0    300  490  ServidorCedro 186469951 - RustDesk
