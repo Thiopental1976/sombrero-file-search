@@ -38,8 +38,10 @@ por termo e combina), então é rápida mesmo em acervos grandes.
 Exemplo real: `(laudo OR relatório) AND paciente NOT rascunho`.
 
 **Dentro de documentos.** Com o modo *docs* liga o [ripgrep-all](https://github.com/phiresky/ripgrep-all)
-(`rga`), que busca **dentro** de PDF, docx, epub, odt e zip. Precisa do `rga`
-instalado (opcional em todos os canais; o `install.sh` baixa, o AppImage não embute).
+(`rga`), que busca **dentro** de PDF, docx, epub, odt e zip. O `rga` vem embutido
+em todos os canais (AppImage, .deb, `install.sh`). docx, odt e epub o próprio Sombrero lê,
+sem programa extra; PDF precisa do `pdftotext` (pacote `poppler-utils`, que o .deb puxa);
+o `pandoc`, se instalado, acrescenta os formatos raros (fb2, ipynb, html).
 
 **Filtros** (valem para nome, conteúdo e booleano):
 
@@ -266,7 +268,7 @@ lfs ~ -n '*.md' -l 2>/dev/null | fzf
 
 | | quando usar | GUI |
 |---|---|---|
-| **AppImage** | qualquer distro, nada a instalar (Python + PySide6 + `rg` + `fd` embutidos; `rga` não) | sim |
+| **AppImage** | qualquer distro, nada a instalar (Python + PySide6 + `rg` + `fd` + `rga` embutidos) | sim |
 | **.deb** | Debian/Ubuntu/Mint, integrado ao apt | precisa de PySide6 (`--setup-gui`) e de `libgl1` em sistemas mínimos |
 | **install.sh** | qualquer distro, instala no `~`, sem root | usa o do sistema ou cria um venv |
 

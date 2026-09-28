@@ -205,8 +205,16 @@ def _rg_base(q: engine.Query, matching: bool = True):
     # F11b: as flags comuns vivem em engine.rg_flags_comuns — este módulo
     # montava as suas e por isso ficou sem skip_snapshots (bug 5 do parecer do
     # Fable 5). Regra nova pro rg entra LÁ, não aqui.
-    cmd = [_content_binary(q)] + engine.rg_flags_comuns(q, matching=matching)
+    binario = _content_binary(q)
+    extra = engine.rga_args() if binario and binario == engine.RGA else []
+    cmd = [binario] + extra + engine.rg_flags_comuns(q, matching=matching)
     return cmd
+
+
+def _env_do_motor(cmd):
+    """Ambiente do subprocesso: o do rga quando o binário é o rga (ver
+    engine.rga_env — ele exige o rg no PATH); None (herdar) no rg puro."""
+    return engine.rga_env() if cmd and engine.RGA and cmd[0] == engine.RGA else None
 
 
 def _le_caminhos_nul(proc, cancel) -> set:
@@ -265,7 +273,8 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
         cmd = base + ["--"] + roots
         errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr p/ contar denied
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
+                                    env=_env_do_motor(cmd))
         except OSError:
             errf.close()
             if restrict is None:
@@ -324,7 +333,8 @@ def _universe(q: engine.Query, cancel, stats=None) -> set[str]:
         cmd = _rg_base(q, matching=False) + ["-l", "--null", "-e", "", "--"] + q.paths
         errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
+                                    env=_env_do_motor(cmd))
         except OSError:
             errf.close(); proc = None
             # H8b: o mesmo aviso que _files_with_term já dava — aqui o universo
@@ -767,7 +777,8 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
         errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                    stderr=errf, text=True, errors="replace")
+                                    stderr=errf, text=True, errors="replace",
+                                    env=_env_do_motor(cmd))
         except OSError:
             errf.close()
             # H8c: os arquivos continuam no resultado, mas SEM as linhas —

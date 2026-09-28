@@ -18,29 +18,180 @@ O motor NÃO depende de Qt. A GUI o consome via callbacks/geradores, num thread,
 pra interface nunca travar (foi o defeito do menu do Cinnamon: busca síncrona).
 """
 from __future__ import annotations
-import os, re, fnmatch, shutil, subprocess, json, stat, time, tempfile
+import os, re, fnmatch, shutil, subprocess, json, stat, sys, time, tempfile
 import base64, codecs, threading
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
 
 # ---------------------------------------------------------------- detecção
-# binários que o próprio app pode empacotar (ver F6) — procurados além do PATH
-_APP_BIN = os.path.expanduser("~/.local/share/sombrero-file-search/bin")
+# binários que o próprio app pode empacotar (ver F6) — procurados além do PATH.
+# 28/09/2026: era só ~/.local/share/sombrero-file-search/bin, o lugar do
+# install.sh. O .deb (/usr/lib/sombrero-file-search) e o AppImage põem o código
+# em outro lugar, então o rga que eles embutem nunca seria achado — foi como o
+# ServidorCedro ficou sem modo documentos. A pasta bin/ AO LADO de lfs/ vale
+# para os três canais; a do HOME fica para instalações antigas.
+_APP_BINS = [
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin"),
+    os.path.expanduser("~/.local/share/sombrero-file-search/bin"),
+]
 
 def _which(*names):
     for n in names:
         p = shutil.which(n)
         if p:
             return p
-        cand = os.path.join(_APP_BIN, n)   # fallback: binário empacotado
-        if os.access(cand, os.X_OK):
-            return cand
+        for d in _APP_BINS:                # fallback: binário empacotado
+            cand = os.path.join(d, n)
+            if os.access(cand, os.X_OK):
+                return cand
     return None
 
 RG = _which("rg")                    # ripgrep
 FD = _which("fd", "fdfind")          # fd (Debian/Mint = fdfind)
 RGA = _which("rga", "ripgrep-all")   # ripgrep-all: busca DENTRO de PDF/docx/epub/zip…
+
+
+# ------------------------------------------- rga: docx/odt/epub sem pandoc (28/09/2026)
+# O rga lê docx/odt/epub pelo pandoc (~160–200 MB, ausente na maioria das
+# máquinas). O SFS registra o seu próprio leitor (lfs/docs_text.py, só stdlib)
+# como "custom adapter" do rga, por um arquivo de configuração passado em
+# --rga-config-file. Medido no rga 0.10.10: o adaptador personalizado vem ANTES
+# dos internos na prioridade, então ganha do pandoc nesses três formatos; o
+# pandoc continua servindo os que só ele lê (fb2, ipynb, html).
+#
+# Armadilha medida: --rga-config-file SUBSTITUI o config.jsonc do usuário, não
+# soma. Os adaptadores que o usuário escreveu são copiados para o nosso arquivo,
+# e na FRENTE do nosso (a escolha explícita dele vence). Se o arquivo dele não
+# puder ser lido, o SFS não passa config nenhuma: o rga roda como o usuário o
+# deixou, com pandoc — perder o docx sem pandoc é menos grave que atropelar a
+# configuração de alguém.
+_RGA_ADAPTADOR = "sombrero_docs"
+_rga_args_cache: Optional[list] = None
+
+
+def _sem_comentarios_jsonc(s: str) -> str:
+    """Tira // e /* */ do JSONC, respeitando strings ("http://…" fica)."""
+    out, i, n = [], 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == '"':
+            j = i + 1
+            while j < n and s[j] != '"':
+                j += 2 if s[j] == "\\" else 1
+            out.append(s[i:j + 1]); i = j + 1
+        elif s.startswith("//", i):
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+        elif s.startswith("/*", i):
+            j = s.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        else:
+            out.append(c); i += 1
+    return "".join(out)
+
+
+def _rga_config_usuario() -> Optional[dict]:
+    """Config do rga do usuário; {} se não há; None se existe e não se lê."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    path = os.path.join(base, "ripgrep-all", "config.jsonc")
+    try:
+        with open(path, encoding="utf-8") as f:
+            bruto = f.read()
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeDecodeError):
+        return None
+    try:
+        cfg = json.loads(_sem_comentarios_jsonc(bruto))
+    except ValueError:
+        return None
+    return cfg if isinstance(cfg, dict) else None
+
+
+def rga_config(usuario: Optional[dict] = None) -> Optional[dict]:
+    """A configuração que o SFS entrega ao rga, ou None para não entregar nada."""
+    if usuario is None:
+        usuario = _rga_config_usuario()
+        if usuario is None:
+            return None
+    try:
+        from . import docs_text                # engine importado como lfs.engine
+    except ImportError:
+        try:
+            import docs_text                   # lfs/ no sys.path (app.py, cli.py, testes)
+        except ImportError:
+            return None
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs_text.py")
+    nosso = {
+        "name": _RGA_ADAPTADOR,
+        "description": "Sombrero File Search: text of docx/odt/epub without pandoc",
+        "version": docs_text.VERSAO,
+        "extensions": list(docs_text.EXTENSOES),
+        "mimetypes": list(docs_text.MIMETYPES),
+        # -I: o leitor é só stdlib; isolado, nenhum PYTHONPATH/site do usuário
+        # entra no meio de cada arquivo extraído
+        "binary": sys.executable or "python3",
+        "args": ["-I", script, "$input_file_extension"],
+    }
+    cfg = dict(usuario)
+    cfg.pop("$schema", None)       # caminho relativo ao arquivo dele, não ao nosso
+    deles = [a for a in (cfg.get("custom_adapters") or [])
+             if isinstance(a, dict) and a.get("name") != _RGA_ADAPTADOR]
+    cfg["custom_adapters"] = deles + [nosso]
+    return cfg
+
+
+def rga_args() -> list:
+    """Argumentos do rga que ligam o leitor do SFS ([] = rga como veio).
+
+    O arquivo mora no cache do usuário, com o hash do conteúdo no nome: dois
+    SFS abertos (um .deb e um AppImage, por exemplo) geram configs diferentes —
+    o caminho do Python muda — e nenhum sobrescreve o do outro."""
+    global _rga_args_cache
+    # Cache por processo — mas se o arquivo sumiu (limpador de ~/.cache numa
+    # sessão longa da GUI), recria: um --rga-config-file apontando para o nada
+    # derrubaria TODA busca em documentos até reabrir o programa.
+    if _rga_args_cache is not None and all(
+            os.path.isfile(a.split("=", 1)[1]) for a in _rga_args_cache):
+        return list(_rga_args_cache)
+    args = []
+    cfg = rga_config()
+    if cfg is not None:
+        import hashlib
+        dados = json.dumps(cfg, ensure_ascii=False, indent=1, sort_keys=True)
+        nome = "config-" + hashlib.sha256(dados.encode()).hexdigest()[:16] + ".json"
+        base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+        pasta = os.path.join(base, "sombrero-file-search", "rga")
+        path = os.path.join(pasta, nome)
+        try:
+            if not os.path.isfile(path):
+                os.makedirs(pasta, exist_ok=True)
+                fd, tmp = tempfile.mkstemp(dir=pasta, prefix=".config-")
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(dados)
+                os.replace(tmp, path)
+            args = ["--rga-config-file=" + path]
+        except OSError:
+            args = []                  # HOME só-leitura: rga como veio (com pandoc)
+    _rga_args_cache = args
+    return list(args)
+
+
+def rga_env() -> Optional[dict]:
+    """Ambiente para rodar o rga. Medido: o rga procura o `rg` no PATH, e só
+    nele — com o rg empacotado fora do PATH (install.sh numa sessão que ainda
+    não tem ~/.local/bin, rg embutido no .deb), o rga saía com "Could not find
+    executable rg" e o modo documentos inteiro morria. None = herdar o atual."""
+    if not RG:
+        return None
+    pasta = os.path.dirname(RG)
+    atual = os.environ.get("PATH", "")
+    if pasta in atual.split(os.pathsep):
+        return None
+    env = dict(os.environ)
+    env["PATH"] = atual + os.pathsep + pasta if atual else pasta
+    return env
 
 # H1 (Fable 5.1, 08/09/2026): o fd ENGOLE "Permission denied" a menos que receba
 # --show-errors — medido: pasta chmod 000, rc=0, stderr vazio. Como a busca por
@@ -1670,7 +1821,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
     """
     docs = bool(q.documents and RGA)
     binary = RGA if docs else RG
-    cmd = [binary, "--json"]
+    cmd = [binary] + (rga_args() if docs else []) + ["--json"]
     if jobs and not docs:
         cmd += ["--threads", str(jobs)]        # F11: idem ao fd, ver _grupos_por_disco
     if not docs:                               # --encoding é do rg; rga já extrai UTF-8
@@ -1686,7 +1837,8 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
     errf = tempfile.TemporaryFile(mode="w+")
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
-                                text=True, errors="replace")
+                                text=True, errors="replace",
+                                env=rga_env() if docs else None)
         if procs is not None:
             procs.append(proc)                 # F11 bug1: idem ao fd
     except OSError:

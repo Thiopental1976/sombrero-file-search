@@ -39,8 +39,10 @@ then combined), so it stays fast even on large collections.
 Real example: `(invoice OR receipt) AND client NOT draft`.
 
 **Inside documents.** The *docs* mode enables [ripgrep-all](https://github.com/phiresky/ripgrep-all)
-(`rga`), which searches **inside** PDF, docx, epub, odt and zip files. Requires
-`rga` (optional in every channel; `install.sh` downloads it, the AppImage does not bundle it).
+(`rga`), which searches **inside** PDF, docx, epub, odt and zip files. `rga` comes
+bundled in every channel (AppImage, .deb, `install.sh`). docx, odt and epub are read by
+Sombrero itself, with no extra program; PDF needs `pdftotext` (package `poppler-utils`,
+pulled in by the .deb); `pandoc`, if installed, adds the rarer formats (fb2, ipynb, html).
 
 **Filters** (apply to name, content and boolean searches):
 
@@ -264,7 +266,7 @@ lfs ~ -n '*.md' -l 2>/dev/null | fzf
 
 | | when to use | GUI |
 |---|---|---|
-| **AppImage** | any distro, nothing to install (Python + PySide6 + `rg` + `fd` bundled; `rga` not) | yes |
+| **AppImage** | any distro, nothing to install (Python + PySide6 + `rg` + `fd` + `rga` bundled) | yes |
 | **.deb** | Debian/Ubuntu/Mint, apt-integrated | needs PySide6 (`--setup-gui`) and `libgl1` on minimal systems |
 | **install.sh** | any distro, installs into `~`, no root | uses the system's or builds a venv |
 

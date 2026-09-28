@@ -14,6 +14,11 @@
 # instalador. São ~6 MB estáticos (musl) dentro de ~200; o "tamanho" não segurava.
 # Mesmas versões que o install.sh baixa, das mesmas URLs de release.
 #
+# rga EMBUTIDO também (28/09/2026, decisão do Rodrigo): sem ele o modo
+# documentos não existia no AppImage. docx/odt/epub o próprio SFS lê
+# (lfs/docs_text.py); o pandoc (~160–200 MB, só formatos raros) NÃO entra —
+# se o sistema tiver, o rga o usa. PDF usa o pdftotext do sistema.
+#
 # Por que AppImage e não Flatpak: o Flatpak roda em sandbox e este programa
 # existe para varrer o disco INTEIRO. Concedê-lo `--filesystem=host` é anular a
 # sandbox e ainda assim brigar com portais para abrir arquivo no aplicativo do
@@ -38,6 +43,9 @@ RGV="15.2.0"     # manter em sincronia com install.sh (install_static_engines)
 FDV="v10.4.2"
 RGURL="https://github.com/BurntSushi/ripgrep/releases/download/$RGV/ripgrep-$RGV-x86_64-unknown-linux-musl.tar.gz"
 FDURL="https://github.com/sharkdp/fd/releases/download/$FDV/fd-$FDV-x86_64-unknown-linux-musl.tar.gz"
+RGAV="v0.10.10"  # manter em sincronia com install.sh e build_deb.sh
+RGAURL="https://github.com/phiresky/ripgrep-all/releases/download/$RGAV/ripgrep_all-$RGAV-x86_64-unknown-linux-musl.tar.gz"
+RGASHA="a969c25b182ac84aa672518313b5f741091decf7d93d03a020bcfe517b9ff4e8"
 
 say() { printf '\033[1;36m%s\033[0m\n' "$*"; }
 ok()  { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -59,6 +67,9 @@ fetch "$AIURL" "$CACHE/appimagetool.AppImage"; chmod +x "$CACHE/appimagetool.App
 fetch "$PYURL" "$CACHE/python-standalone.tar.gz"
 fetch "$RGURL" "$CACHE/ripgrep-$RGV.tar.gz"
 fetch "$FDURL" "$CACHE/fd-$FDV.tar.gz"
+fetch "$RGAURL" "$CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz"
+echo "$RGASHA  $CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz" | sha256sum -c --quiet - \
+  || { rm -f "$CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz"; echo "sha256 do rga não confere" >&2; exit 1; }
 
 # --------------------------------------------------------------- AppDir
 appdir="$(mktemp -d)/$APP.AppDir"
@@ -111,7 +122,7 @@ StartupNotify=true
 EOF
 cp "$appdir/$APP.desktop" "$appdir/usr/share/applications/"
 
-say "[4/5] Motores rg e fd (estáticos)"
+say "[4/5] Motores rg, fd e rga (estáticos)"
 # Um binário de cada tarball, e só ele: o tarball do rg traz manpage/completions
 # que não fazem falta aqui. `find -name` em vez de caminho fixo porque a pasta
 # de topo carrega a versão no nome.
@@ -127,10 +138,24 @@ embute_motor() {   # tarball nome
   if ldd "$appdir/usr/bin/$2" 2>&1 | grep -q '=>'; then
     echo "$2 não é estático (ldd lista dependências)" >&2; exit 1
   fi
-  ok "$2 $("$appdir/usr/bin/$2" --version | head -1)"
+  # rga-preproc não tem --version (reclama da falta de arquivo): a linha fica vazia
+  ok "$2 $("$appdir/usr/bin/$2" --version 2>/dev/null | head -1 || true)"
 }
 embute_motor "$CACHE/ripgrep-$RGV.tar.gz" rg
 embute_motor "$CACHE/fd-$FDV.tar.gz" fd
+# rga e rga-preproc na MESMA pasta: medido, o rga acha o rga-preproc ao lado
+# de si. O rga exige o rg no PATH — o AppRun já põe usr/bin no fim do PATH.
+embute_motor "$CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz" rga
+embute_motor "$CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz" rga-preproc
+mkdir -p "$appdir/usr/lib/$APP/licenses"
+tar -xzf "$CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz" -O --wildcards '*/LICENSE.md' \
+  > "$appdir/usr/lib/$APP/licenses/ripgrep-all-LICENSE.md"
+cat > "$appdir/usr/lib/$APP/licenses/README" <<EOF
+usr/bin/rga and usr/bin/rga-preproc are unmodified release binaries of
+ripgrep-all $RGAV (AGPL-3.0-or-later, license text alongside).
+Source code of this exact version:
+https://github.com/phiresky/ripgrep-all/tree/$RGAV
+EOF
 
 # AppRun: o ponto de entrada. Duas responsabilidades além de chamar o Python —
 #   1) `--cli`, para que UM arquivo sirva a GUI e a linha de comando;
@@ -196,10 +221,26 @@ for t in sh dirname readlink fusermount fusermount3; do
 done
 : > "$vazio/sonda.txt"
 motor="$(PATH="$vazio" "$img" --cli "$vazio" -n sonda 2>&1 >/dev/null || true)"
-rm -rf "$vazio"
 case "$motor" in
-  *"rg=/"*"/usr/bin/rg "*"fd=/"*"/usr/bin/fd"*) ok "motores embutidos encontrados sem nada no PATH" ;;
-  *) echo "AppImage não achou os motores embutidos:" >&2; printf '%s\n' "$motor" >&2; exit 1 ;;
+  *"rg=/"*"/usr/bin/rg "*"fd=/"*"/usr/bin/fd "*"rga=/"*"/usr/bin/rga"*) ok "motores embutidos encontrados sem nada no PATH" ;;
+  *) echo "AppImage não achou os motores embutidos:" >&2; printf '%s\n' "$motor" >&2; rm -rf "$vazio"; exit 1 ;;
+esac
+# Modo documentos de ponta a ponta, ainda sem nada no PATH (sem pandoc, sem
+# python do sistema): um .odt mínimo tem de ser achado pelo rga embutido +
+# leitor do SFS (lfs/docs_text.py) rodando no Python do próprio AppImage.
+python3 - "$vazio/sonda.odt" <<'PY'
+import sys, zipfile
+T = 'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"'
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("mimetype", "application/vnd.oasis.opendocument.text")
+    z.writestr("content.xml", f'<office:document-content {T}><office:body><office:text>'
+                              '<text:p>sonda zebrafoca</text:p></office:text></office:body></office:document-content>')
+PY
+achou="$(PATH="$vazio" XDG_CACHE_HOME="$vazio/cache" "$img" --cli "$vazio" -D -c zebrafoca -l 2>/dev/null || true)"
+rm -rf "$vazio"
+case "$achou" in
+  *sonda.odt*) ok "modo documentos: .odt achado sem pandoc e sem nada no PATH" ;;
+  *) echo "modo documentos não achou o .odt de sonda" >&2; exit 1 ;;
 esac
 echo
 echo "  GUI :  $img"

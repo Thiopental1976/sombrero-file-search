@@ -25,6 +25,16 @@
 # Depends é deliberadamente mínimo: python3. ripgrep e fd são Recommends porque
 # o motor tem fallback em Python puro (mais lento, mas correto) — declará-los
 # como Depends mentiria sobre o que o programa precisa para funcionar.
+#
+# rga EMBUTIDO (28/09/2026, decisão do Rodrigo — "ele é multidistro"): o
+# ripgrep-all não existe no apt do Debian/Ubuntu/Mint, e com ele só em Suggests
+# o modo documentos simplesmente não existia para quem instalava o .deb (foi o
+# que se viu no ServidorCedro). São ~15 MB (~5 compactados), em
+# /usr/lib/sombrero-file-search/bin, onde o motor procura binário empacotado.
+# Consequência: o pacote deixa de ser "all" e passa a ser por arquitetura
+# (amd64, arm64) — o binário do rga é da máquina. docx/odt/epub o SFS lê sozinho
+# (lfs/docs_text.py); pandoc (formatos raros) e poppler-utils (pdftotext, PDF)
+# vêm do apt, em Recommends — o apt instala Recommends por padrão.
 set -euo pipefail
 # O umask do autor nesta máquina é 007 (grupo-privado): sem isto, os diretórios
 # saem 770 e o próprio dpkg-deb recusa a árvore ("control directory has bad
@@ -35,7 +45,19 @@ umask 022
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:-$SRC/dist}"
 APP="sombrero-file-search"
-ARCH="all"                      # Python puro: um pacote serve qualquer máquina
+ARCH="${DEB_ARCH:-amd64}"       # amd64 | arm64 — o rga embutido é binário da máquina
+CACHE="${LFS_PKG_CACHE:-$HOME/.cache/lfs-appimage}"
+RGAV="v0.10.10"                 # manter em sincronia com install.sh e build_appimage.sh
+case "$ARCH" in
+  # musl = estático, roda em qualquer glibc; o do arm64 só existe gnu (dinâmico,
+  # glibc) — serve Debian/Ubuntu arm64, que é o alvo de um .deb.
+  amd64) RGATRIPLE="x86_64-unknown-linux-musl"
+         RGASHA="a969c25b182ac84aa672518313b5f741091decf7d93d03a020bcfe517b9ff4e8" ;;
+  arm64) RGATRIPLE="aarch64-unknown-linux-gnu"
+         RGASHA="2cd875ab6c78b27e4830b5bca92c570a8a8dcfb368bc71b189b65ac01fbc3020" ;;
+  *) echo "DEB_ARCH=$ARCH não suportado (amd64 | arm64)" >&2; exit 1 ;;
+esac
+RGAURL="https://github.com/phiresky/ripgrep-all/releases/download/$RGAV/ripgrep_all-$RGAV-$RGATRIPLE.tar.gz"
 
 ver="$(cd "$SRC" && python3 -c 'import sys; sys.path.insert(0,"lfs"); import version; print(version.deb_version())')"
 pkgdir="$(mktemp -d)"
@@ -55,6 +77,34 @@ mkdir -p "$LIB/lfs" "$LIB/assets" "$pkgdir/usr/bin" \
          "$pkgdir/DEBIAN"
 
 install -m 644 "$SRC/lfs/"*.py "$LIB/lfs/"
+
+# ------------------------------------------------------------- rga embutido
+# Download em Python (o contêiner Debian slim de build não traz curl) e sha256
+# conferido contra o valor fixado acima: um tarball trocado na origem não entra
+# no pacote.
+mkdir -p "$CACHE"
+rgatar="$CACHE/rga-$RGAV-$RGATRIPLE.tar.gz"
+python3 - "$RGAURL" "$rgatar" "$RGASHA" <<'PY'
+import hashlib, os, sys, urllib.request
+url, dest, sha = sys.argv[1:]
+if not (os.path.isfile(dest) and os.path.getsize(dest) > 0):
+    print("  baixando", os.path.basename(dest))
+    with urllib.request.urlopen(url, timeout=120) as r, open(dest + ".parcial", "wb") as f:
+        f.write(r.read())
+    os.replace(dest + ".parcial", dest)   # nunca deixa download interrompido no cache
+h = hashlib.sha256(open(dest, "rb").read()).hexdigest()
+if h != sha:
+    os.remove(dest)
+    sys.exit(f"sha256 do rga não confere: {h} != {sha}")
+PY
+rgatmp="$(mktemp -d)"
+tar -xzf "$rgatar" -C "$rgatmp" --no-same-owner
+rgadir="$rgatmp/ripgrep_all-$RGAV-$RGATRIPLE"
+mkdir -p "$LIB/bin" "$pkgdir/usr/share/doc/$APP/ripgrep-all"
+install -m 755 "$rgadir/rga" "$rgadir/rga-preproc" "$LIB/bin/"
+install -m 644 "$rgadir/LICENSE.md" "$pkgdir/usr/share/doc/$APP/ripgrep-all/LICENSE.md"
+rm -rf "$rgatmp"
+ok "rga $RGAV ($RGATRIPLE) embutido em /usr/lib/$APP/bin"
 install -m 644 "$SRC/assets/"* "$LIB/assets/"
 printf '%s\n' "$(cd "$SRC" && python3 -c 'import sys; sys.path.insert(0,"lfs"); import version; print(version.build_info())')" \
     > "$LIB/VERSION"
@@ -168,6 +218,13 @@ Files: *
 Copyright: 2026 Rodrigo Toledo
 License: GPL-3+
 
+Files: usr/lib/sombrero-file-search/bin/rga usr/lib/sombrero-file-search/bin/rga-preproc
+Copyright: phiresky and the ripgrep-all contributors
+License: AGPL-3+
+Comment: ripgrep-all, unmodified release binaries. Source code of this exact
+ version: https://github.com/phiresky/ripgrep-all/tree/RGAV_PLACEHOLDER
+ Full license text: /usr/share/doc/sombrero-file-search/ripgrep-all/LICENSE.md
+
 License: GPL-3+
  This program is free software: you can redistribute it and/or modify it under
  the terms of the GNU General Public License as published by the Free Software
@@ -181,6 +238,7 @@ License: GPL-3+
  On Debian systems, the complete text of the GNU General Public License version 3
  can be found in "/usr/share/common-licenses/GPL-3".
 EOF
+sed -i "s/RGAV_PLACEHOLDER/$RGAV/" "$pkgdir/usr/share/doc/$APP/copyright"
 chmod 644 "$pkgdir/usr/share/doc/$APP/copyright"
 
 printf '%s (%s) unstable; urgency=low\n\n  * Pacote gerado por packaging/build_deb.sh a partir do commit %s.\n\n -- Rodrigo Toledo <rrdtoledo@gmail.com>  %s\n' \
@@ -251,8 +309,8 @@ Architecture: $ARCH
 Maintainer: Rodrigo Toledo <rrdtoledo@gmail.com>
 Installed-Size: $size_kb
 Depends: python3 (>= 3.10)
-Recommends: ripgrep, fd-find
-Suggests: ripgrep-all, python3-venv, libxcb-cursor0, libgl1
+Recommends: ripgrep, fd-find, poppler-utils, pandoc
+Suggests: python3-venv, libxcb-cursor0, libgl1
 Homepage: https://github.com/Thiopental1976/sombrero-file-search
 Description: broad file search by name and content
  Searches a whole filesystem by file name, by content, by boolean expression
@@ -311,6 +369,8 @@ fi
 # documenta no ldconfig — vale a pena não repetir o erro em outro arquivo.
 lista="$(mktemp)"; dpkg-deb -c "$deb" | awk '{print $NF}' > "$lista"
 for f in ./usr/bin/sfs ./usr/bin/lfs ./usr/bin/$APP ./usr/lib/$APP/lfs/engine.py ./usr/lib/$APP/VERSION \
+         ./usr/lib/$APP/lfs/docs_text.py ./usr/lib/$APP/bin/rga ./usr/lib/$APP/bin/rga-preproc \
+         ./usr/share/doc/$APP/ripgrep-all/LICENSE.md \
          ./usr/share/applications/$APP.desktop ./usr/share/doc/$APP/copyright \
          ./usr/share/man/man1/sfs.1.gz ./usr/share/man/man1/lfs.1.gz; do
   grep -Fxq "$f" "$lista" || { echo "  !! FALTA $f"; probs=1; }
