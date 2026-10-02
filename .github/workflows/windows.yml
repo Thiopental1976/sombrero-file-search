@@ -50,7 +50,9 @@ jobs:
           # PATH, e rga_env() põe a pasta do rg (bin\) no PATH dele
           $pop = Get-ChildItem _dl\poppler -Recurse -Filter pdftotext.exe | Select-Object -First 1
           Copy-Item "$($pop.DirectoryName)\*" -Destination bin -Recurse
-          Get-ChildItem bin -Filter *.exe | ForEach-Object { "$($_.Name)  $((& $_.FullName --version 2>$null | Select-Object -First 1))" }
+          foreach ($e in "rg", "fd", "rga") { & "bin\$e.exe" --version | Select-Object -First 1 }
+          if (-not (Test-Path bin\pdftotext.exe)) { throw "pdftotext.exe faltando" }
+          exit 0          # o último nativo deixaria $LASTEXITCODE do poppler
 
       - name: dependências Python
         run: python -m pip install --disable-pip-version-check PySide6
