@@ -198,6 +198,14 @@ _PT = {
         "o repositório de objetos do ostree (ostree/repo) não foi varrido e nunca é: os arquivos dele têm nome de hash, e os mesmos bytes estão nas implantações",
     "a pruned tree here is never searched: its files are content-addressed (named by hash)":
         "uma árvore podada aqui nunca é varrida: os arquivos dela são endereçados por conteúdo (nome de hash)",
+    "Recycle Bin not searched: this location had live results (--snapshots / 'include snapshots' to always search it)":
+        "Lixeira não varrida: este local teve resultado vivo (--snapshots / 'incluir snapshots' para varrer sempre)",
+    "nothing in the live tree, so the Recycle Bin was searched too; results from it are marked":
+        "nada na árvore viva, então a Lixeira também foi varrida; os resultados dela vêm marcados",
+    "Recycle Bin searched as requested; results from it are marked":
+        "Lixeira varrida como pedido; os resultados dela vêm marcados",
+    "Recycle Bin not searched: the search stopped (cap or cancel) before reaching it":
+        "Lixeira não varrida: a busca parou (teto ou cancelamento) antes de chegar nela",
     "snapshot tree not searched: the search stopped (cap or cancel) before reaching it":
         "árvore de snapshot não varrida: a busca parou (teto ou cancelamento) antes de chegar nela",
     "ostree deployments not searched: the search stopped (cap or cancel) before reaching them":

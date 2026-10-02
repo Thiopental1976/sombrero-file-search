@@ -28,6 +28,20 @@ try:                       # pacote (GUI) e flat (cli.py/testes)
 except ImportError:
     import plat                                  # type: ignore
 
+# Separadores de caminho do SO: "/" no Linux; "\\" e "/" no Windows (o Win32
+# aceita os dois). Contar/cortar só "/" dava profundidade 0 a tudo no Windows,
+# o fallback ignorava --max-depth e a poda de snapshot não reconhecia nada
+# (CI windows-latest 02/10/2026). No Linux "\\" é caractere válido de nome:
+# NÃO é separador lá.
+_SEPS = os.sep + (os.altsep or "")
+_RX_SEPS = re.compile("[" + re.escape(_SEPS) + "]+")
+
+
+def _componentes(path: str) -> list:
+    """Componentes de um caminho, cortando em TODO separador do SO."""
+    p = path.strip(_SEPS)
+    return _RX_SEPS.split(p) if p else []
+
 
 # ---------------------------------------------------------------- detecção
 # binários que o próprio app pode empacotar (ver F6) — procurados além do PATH.
@@ -293,6 +307,9 @@ def classifica_montagens(lines=None) -> dict:
     "local" (disco, partição, LUKS, ZFS, mergerfs…) ou "rede" (NFS, SMB/CIFS,
     sshfs, WebDAV, rclone…). Sistema, pseudo-fs, snaps/AppImage e contêineres
     ficam fora. `lines` injetável p/ teste (formato /proc/mounts)."""
+    if lines is None and plat.IS_WIN:
+        d = _mod_disks()                  # letras de unidade (disks_win)
+        return d.classifica_volumes() if d is not None else {}
     if lines is None:
         try:
             with open("/proc/mounts", encoding="utf-8") as f:
@@ -378,12 +395,19 @@ EXCLUSOES_SNAPSHOT = (
 def eh_snapshot(path: str) -> bool:
     """True se o caminho esta DENTRO de uma arvore de snapshot de sistema.
     Casa por COMPONENTE do caminho (um ou mais, em sequencia), com glob."""
-    comps = path.strip("/").split("/")
+    comps = _componentes(path)
+    # NTFS não distingue caixa ($Recycle.Bin, $RECYCLE.BIN): no Windows o
+    # casamento é sem caixa; no Linux continua exato
+    casa = fnmatch.fnmatch if plat.IS_WIN else fnmatch.fnmatchcase
+    if plat.IS_WIN:
+        comps = [c.lower() for c in comps]
     for m in EXCLUSOES_SNAPSHOT:
         mp = m.split("/")
+        if plat.IS_WIN:
+            mp = [c.lower() for c in mp]
         n = len(mp)
         for i in range(len(comps) - n + 1):
-            if all(fnmatch.fnmatchcase(comps[i + j], mp[j]) for j in range(n)):
+            if all(casa(comps[i + j], mp[j]) for j in range(n)):
                 return True
     return False
 
@@ -396,6 +420,16 @@ def eh_snapshot(path: str) -> bool:
 # distro nem por /run/ostree-booted: um ostree/deploy e um ostree/deploy onde
 # quer que esteja.
 _PADROES_OSTREE = frozenset({"ostree/repo", "ostree/deploy"})
+
+# Windows (F1, 02/10/2026): a Lixeira de cada volume ($RECYCLE.BIN\<SID>\$R…)
+# é árvore podada como o Timeshift — o que o usuário apagou não é o que ele
+# procura, mas se o vivo der zero a busca entra lá e diz que entrou (mesma
+# mecânica, outro texto). É pasta oculta+sistema: sem --hidden o fd/rg nem
+# descem nela; a poda vale para quem pede --hidden. Só no Windows: num disco
+# NTFS montado no Linux a mudança de comportamento não foi decidida.
+_PADROES_LIXEIRA = frozenset({"$RECYCLE.BIN"})
+if plat.IS_WIN:
+    EXCLUSOES_SNAPSHOT = EXCLUSOES_SNAPSHOT + tuple(sorted(_PADROES_LIXEIRA))
 
 # Podadas que o fallback NAO estende: o repositorio de objetos do ostree e
 # content-addressed — ostree/repo/objects/ab/cdef...file, centenas de milhares
@@ -418,7 +452,7 @@ def _achados_snapshot(root: str):
     import glob as _glob
     alvos = [root]
     try:
-        base = os.path.abspath(root).rstrip("/") + "/"
+        base = os.path.abspath(root).rstrip(_SEPS) + os.sep
         alvos += [m for m in user_mounts() if m.startswith(base)]
     except Exception:
         pass
@@ -542,6 +576,15 @@ _TEXTO_PODA = {
         "the ostree object store (ostree/repo) was not searched and never is: its files are named by hash, and the same bytes are in the deployments",
     ("snapshot", "no_fallback"):
         "a pruned tree here is never searched: its files are content-addressed (named by hash)",
+    # Windows: a Lixeira ($RECYCLE.BIN) — mesma mecânica, o texto diz o que é
+    ("recycle", "skipped"):
+        "Recycle Bin not searched: this location had live results (--snapshots / 'include snapshots' to always search it)",
+    ("recycle", "searched"):
+        "nothing in the live tree, so the Recycle Bin was searched too; results from it are marked",
+    ("recycle", "requested"):
+        "Recycle Bin searched as requested; results from it are marked",
+    ("recycle", "stopped"):
+        "Recycle Bin not searched: the search stopped (cap or cancel) before reaching it",
 }
 
 # Strings-fonte (EN-US) que este módulo entrega a t() por VARIÁVEL — a guarda
@@ -1428,16 +1471,30 @@ def _walk_onerror(stats):
     return cb
 
 
-# Separadores de caminho do SO: "/" no Linux; "\\" e "/" no Windows (o Win32
-# aceita os dois). Contar só "/" dava profundidade 0 a tudo no Windows e o
-# fallback ignorava --max-depth (paridade, CI windows-latest 02/10/2026).
-_SEPS = os.sep + (os.altsep or "")
-
-
 def _nivel(p: str) -> int:
     """Quantos separadores há no caminho, sem contar o final."""
     p = p.rstrip(_SEPS)
     return sum(p.count(c) for c in _SEPS)
+
+
+# só HIDDEN: é o que o crate `ignore` (fd/rg) testa no Windows
+# (winapi_util::file::is_hidden) — SYSTEM sozinho não esconde lá, nem aqui
+_ATTR_OCULTO = 0x2                # FILE_ATTRIBUTE_HIDDEN
+
+
+def _oculto(pasta: str, nome: str) -> bool:
+    """Oculto para a busca. Linux: nome com ponto. Windows: ponto OU atributo
+    oculto — é o que o fd/rg fazem lá (crate ignore), e o fallback precisa
+    concordar ($RECYCLE.BIN, System Volume Information, desktop.ini)."""
+    if nome.startswith("."):
+        return True
+    if not plat.IS_WIN:
+        return False
+    try:
+        st = os.stat(os.path.join(pasta, nome), follow_symlinks=False)
+    except OSError:
+        return False
+    return bool(getattr(st, "st_file_attributes", 0) & _ATTR_OCULTO)
 
 
 def _iter_names_python(q: Query, stats=None, cancel=None):
@@ -1476,7 +1533,7 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                 except OSError:
                     pass
             if not q.include_hidden:
-                dns[:] = [d for d in dns if not d.startswith(".")]
+                dns[:] = [d for d in dns if not _oculto(dp, d)]
             if q.excluded_paths:                    # F12b: montagem morta: nem stat
                 dns[:] = [d for d in dns if os.path.join(dp, d) not in q.excluded_paths]
             if q.skip_snapshots:                    # F11: poda a arvore de snapshot
@@ -1516,7 +1573,7 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                 dns[:] = []
             if emit_here:
                 for f in fns:
-                    if not q.include_hidden and f.startswith("."):
+                    if not q.include_hidden and _oculto(dp, f):
                         continue
                     if not match_name(f):
                         continue
@@ -2059,7 +2116,9 @@ def _raiz_montada(root, stats, on_event=lambda ev, info: None) -> bool:
         uma pasta vazia; o programa não sabe — então diz o que viu e pergunta.
     Roda só DEPOIS de existir+ser pasta e depois da sonda de rede (scandir
     numa montagem morta travaria; aqui ela já respondeu)."""
-    r = root.rstrip("/") or "/"
+    r = root.rstrip(_SEPS) or os.sep
+    if plat.IS_WIN and len(r) == 2 and r[1] == ":":
+        r += os.sep                     # "C:" é a pasta atual de C:, não a raiz
     if _eh_mountpoint(r):
         return True
     if r in _fstab_alvos():
@@ -2151,17 +2210,17 @@ def _caminho_vivo(path, arvore, padrao):
       .zfs/snapshot         <arvore>/<nome>/<rel>                  -> <dataset>/<rel>
       @GMT-*  (Samba)       <arvore>/<rel>                         -> <pai da arvore>/<rel>
       ostree/deploy         <arvore>/<os>/deploy/<hash>.N/<rel>    -> /<rel>"""
-    base = arvore.rstrip("/")
-    if not path.startswith(base + "/"):
+    base = arvore.rstrip(_SEPS)
+    if not (path.startswith(base) and path[len(base):len(base) + 1] in tuple(_SEPS)):
         return None
-    comps = path[len(base) + 1:].split("/")
+    comps = _componentes(path[len(base) + 1:])
     if padrao == "timeshift/snapshots*":
         if len(comps) >= 3 and comps[1] == "localhost":
-            return "/" + "/".join(comps[2:])
+            return os.sep + os.sep.join(comps[2:])
     elif padrao == "timeshift-btrfs":
         if len(comps) >= 4 and comps[0] == "snapshots":
             sub = comps[2]
-            raiz = "/" if sub == "@" else "/" + sub.lstrip("@")
+            raiz = os.sep if sub == "@" else os.sep + sub.lstrip("@")
             return os.path.join(raiz, *comps[3:])
     elif padrao == ".snapshots":
         if len(comps) >= 3 and comps[1] == "snapshot":
@@ -2174,7 +2233,7 @@ def _caminho_vivo(path, arvore, padrao):
             return os.path.join(os.path.dirname(base), *comps)
     elif padrao == "ostree/deploy":
         if len(comps) >= 4 and comps[1] == "deploy":
-            return "/" + "/".join(comps[3:])
+            return os.sep + os.sep.join(comps[3:])
     return None
 
 
@@ -2293,7 +2352,9 @@ def _plano_extensao(q, roots, counts, parou, stats, on_event, excluidos=()):
             estender.append(a)
         por_dono.setdefault(a["dono"], []).append((a, modo))
     for dono, lst in por_dono.items():
-        tipo = "ostree" if all(a["padrao"] in _PADROES_OSTREE for a, _m in lst) else "snapshot"
+        tipo = ("ostree" if all(a["padrao"] in _PADROES_OSTREE for a, _m in lst) else
+                "recycle" if all(a["padrao"] in _PADROES_LIXEIRA for a, _m in lst) else
+                "snapshot")
         modos = {m for a, m in lst if a["fallback"]}
         # sem NENHUMA árvore extensível não há decisão de "vivo primeiro" a
         # relatar: só existe o fato de que aquela árvore nunca é varrida
