@@ -23,6 +23,11 @@ import base64, codecs, threading
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
+try:                       # pacote (GUI) e flat (cli.py/testes)
+    from . import plat
+except ImportError:
+    import plat                                  # type: ignore
+
 
 # ---------------------------------------------------------------- detecção
 # binários que o próprio app pode empacotar (ver F6) — procurados além do PATH.
@@ -42,9 +47,10 @@ def _which(*names):
         if p:
             return p
         for d in _APP_BINS:                # fallback: binário empacotado
-            cand = os.path.join(d, n)
-            if os.access(cand, os.X_OK):
-                return cand
+            for arq in plat.exe_candidates(n):   # Windows: rg.exe (os.access não completa)
+                cand = os.path.join(d, arq)
+                if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                    return cand
     return None
 
 RG = _which("rg")                    # ripgrep
@@ -93,8 +99,7 @@ def _sem_comentarios_jsonc(s: str) -> str:
 
 def _rga_config_usuario() -> Optional[dict]:
     """Config do rga do usuário; {} se não há; None se existe e não se lê."""
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    path = os.path.join(base, "ripgrep-all", "config.jsonc")
+    path = plat.rga_user_config()
     try:
         with open(path, encoding="utf-8") as f:
             bruto = f.read()
@@ -134,6 +139,10 @@ def rga_config(usuario: Optional[dict] = None) -> Optional[dict]:
         "binary": sys.executable or "python3",
         "args": ["-I", script, "$input_file_extension"],
     }
+    if plat.frozen():
+        # exe congelado (Windows/PyInstaller): sys.executable é o próprio SFS,
+        # não um Python — o leitor roda como modo --docs-adapter do executável
+        nosso["args"] = ["--docs-adapter", "$input_file_extension"]
     cfg = dict(usuario)
     cfg.pop("$schema", None)       # caminho relativo ao arquivo dele, não ao nosso
     deles = [a for a in (cfg.get("custom_adapters") or [])
@@ -161,8 +170,7 @@ def rga_args() -> list:
         import hashlib
         dados = json.dumps(cfg, ensure_ascii=False, indent=1, sort_keys=True)
         nome = "config-" + hashlib.sha256(dados.encode()).hexdigest()[:16] + ".json"
-        base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-        pasta = os.path.join(base, "sombrero-file-search", "rga")
+        pasta = os.path.join(plat.cache_dir(), "rga")
         path = os.path.join(pasta, nome)
         try:
             if not os.path.isfile(path):
@@ -209,7 +217,8 @@ def _fd_mostra_erros(fd=None) -> bool:
     if fd not in _FD_SHOW_ERRORS:
         try:
             r = subprocess.run([fd, "--help"], stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, timeout=5)
+                               stderr=subprocess.DEVNULL, timeout=5,
+                               **plat.popen_flags())
             if r.returncode == 0:
                 _FD_SHOW_ERRORS[fd] = b"--show-errors" in r.stdout
         except Exception:
@@ -1700,7 +1709,8 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
         try:
             # binário (sem text=): lê bytes e decodifica com surrogateescape p/
             # sobreviver a nomes não-UTF-8 (E2) — o str resultante volta pro os.stat.
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
+                                    **plat.popen_flags())
             if procs is not None:
                 procs.append(proc)     # F11 bug1: quem cancela precisa alcancar
                                        # o processo; read1() so ve o `parar` se
@@ -1838,7 +1848,8 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
                                 text=True, errors="replace",
-                                env=rga_env() if docs else None)
+                                env=rga_env() if docs else None,
+                                **plat.popen_flags())
         if procs is not None:
             procs.append(proc)                 # F11 bug1: idem ao fd
     except OSError:

@@ -565,8 +565,8 @@ class ResultFilterProxy(QSortFilterProxyModel):
 
 
 # ----------------------------------------------------------------- temas
-_CONFIG_BASE = os.path.expanduser(os.environ.get("XDG_CONFIG_HOME", "~/.config"))
-CONFIG_DIR = os.path.join(_CONFIG_BASE, "sombrero-file-search")
+_CONFIG_BASE = engine.plat.config_base()      # %APPDATA% no Windows, XDG no Linux
+CONFIG_DIR = engine.plat.config_dir()
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
 
 
@@ -577,6 +577,8 @@ def _migrate_old_config():
     conservadora: só move se o diretório NOVO ainda não existe e o ANTIGO existe.
     Falha em silêncio — perder a config antiga é um aborrecimento, travar o
     arranque do app por causa dela seria pior."""
+    if engine.plat.IS_WIN:                     # nunca houve "Linux File Search" no Windows
+        return
     old = os.path.join(_CONFIG_BASE, "linux-file-search")
     if os.path.isdir(old) and not os.path.exists(CONFIG_DIR):
         try:

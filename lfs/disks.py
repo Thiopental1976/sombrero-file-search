@@ -491,7 +491,7 @@ def _reap_abandoned():
         _abandoned_pids[:] = still
 
 
-def mount_status(mp: str, timeout: float = 3.0, _stat=os.stat, _statvfs=os.statvfs) -> str:
+def mount_status(mp: str, timeout: float = 3.0, _stat=os.stat, _statvfs=getattr(os, "statvfs", None)) -> str:
     """Sonda de vida de uma montagem (F9a §2.2 + F1/F2). Devolve
     'alive' | 'no_response' | 'broken_mount'.
 
@@ -598,7 +598,7 @@ def mount_status(mp: str, timeout: float = 3.0, _stat=os.stat, _statvfs=os.statv
     return result
 
 
-def mount_alive(mp: str, timeout: float = 3.0, _stat=os.stat, _statvfs=os.statvfs) -> bool:
+def mount_alive(mp: str, timeout: float = 3.0, _stat=os.stat, _statvfs=getattr(os, "statvfs", None)) -> bool:
     """Contrato bool (F9a): True só se a montagem está VIVA e OK. 'no_response'
     (travou) e 'broken_mount' (respondeu quebrada, F2) contam como MORTA. Para o
     aviso distinguir o motivo, use `mount_status` diretamente."""

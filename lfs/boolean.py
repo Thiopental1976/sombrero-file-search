@@ -274,7 +274,7 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
         errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr p/ contar denied
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
-                                    env=_env_do_motor(cmd))
+                                    env=_env_do_motor(cmd), **engine.plat.popen_flags())
         except OSError:
             errf.close()
             if restrict is None:
@@ -334,7 +334,7 @@ def _universe(q: engine.Query, cancel, stats=None) -> set[str]:
         errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
-                                    env=_env_do_motor(cmd))
+                                    env=_env_do_motor(cmd), **engine.plat.popen_flags())
         except OSError:
             errf.close(); proc = None
             # H8b: o mesmo aviso que _files_with_term já dava — aqui o universo
@@ -778,7 +778,7 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                     stderr=errf, text=True, errors="replace",
-                                    env=_env_do_motor(cmd))
+                                    env=_env_do_motor(cmd), **engine.plat.popen_flags())
         except OSError:
             errf.close()
             # H8c: os arquivos continuam no resultado, mas SEM as linhas —

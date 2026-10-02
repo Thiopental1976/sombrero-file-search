@@ -115,7 +115,9 @@ def main():
             and args.min_size > args.max_size):
         ap.error("--min-size is larger than --max-size: nothing could match")
 
-    if args.nice_io:                          # F9b §3.5: busca de fundo cede a vez
+    if args.nice_io and engine.plat.IS_WIN:   # Windows: modo background (CPU+I/O+memória)
+        engine.plat.background_mode()         # e BELOW_NORMAL em cada rg/fd filho
+    elif args.nice_io:                        # F9b §3.5: busca de fundo cede a vez
         try:
             os.nice(19)
         except OSError:
