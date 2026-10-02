@@ -1428,6 +1428,18 @@ def _walk_onerror(stats):
     return cb
 
 
+# Separadores de caminho do SO: "/" no Linux; "\\" e "/" no Windows (o Win32
+# aceita os dois). Contar só "/" dava profundidade 0 a tudo no Windows e o
+# fallback ignorava --max-depth (paridade, CI windows-latest 02/10/2026).
+_SEPS = os.sep + (os.altsep or "")
+
+
+def _nivel(p: str) -> int:
+    """Quantos separadores há no caminho, sem contar o final."""
+    p = p.rstrip(_SEPS)
+    return sum(p.count(c) for c in _SEPS)
+
+
 def _iter_names_python(q: Query, stats=None, cancel=None):
     """Fallback universal: os.walk com profundidade/hidden/symlink/meta/one-fs.
     N2: `stats` recebe 'denied' de diretórios sem permissão (onerror do os.walk)."""
@@ -1443,7 +1455,7 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
     seen_dirs = set() if q.follow_symlinks else None   # E4: corta laço de symlink
     for root in q.paths:
         root = os.path.abspath(os.path.expanduser(root))
-        base_depth = root.rstrip("/").count("/")
+        base_depth = _nivel(root)
         root_dev = None
         if q.one_file_system:                       # B9: não cruzar mounts no fallback
             try: root_dev = os.stat(root).st_dev
@@ -1452,7 +1464,7 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                                     onerror=_walk_onerror(stats)):
             if cancel and cancel():                 # E10: honra cancelamento no fallback
                 return
-            depth = dp.rstrip("/").count("/") - base_depth
+            depth = _nivel(dp) - base_depth
             if seen_dirs is not None:               # E4: não revisita dir já visto (ciclo)
                 try:
                     st_dp = os.stat(dp)
@@ -1741,7 +1753,7 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
                         continue
                     fp = os.fsdecode(raw)         # E2: surrogateescape p/ nomes crus
                     if len(fp) > 1:
-                        fp = fp.rstrip("/")   # fd emite "dir/" com barra final — ela
+                        fp = fp.rstrip(_SEPS)  # fd emite "dir/" ("dir\\" no Windows) — ela
                                               # quebra os.path.basename() na GUI (nome
                                               # vazio). Guarda len>1 preserva a raiz "/".
                     if not fp or (seen is not None and fp in seen):
@@ -1797,6 +1809,13 @@ def rg_flags_comuns(q: Query, matching: bool = True):
         cmd.append("--ignore-case")
     if matching and q.whole_word:
         cmd.append("--word-regexp")
+    if matching:
+        # CRLF (arquivo vindo do Windows, ou qualquer .txt no Windows): sem
+        # --crlf o `$` do rg não casa antes do \r — `laudo$` sumia com o
+        # arquivo inteiro, e o fallback Python (que corta o \r da linha) achava.
+        # Divergência silenciosa achada pelo CI windows-latest em 02/10/2026;
+        # vale igual no Linux para arquivos CRLF.
+        cmd.append("--crlf")
     if not q.recursive:
         cmd += ["--max-depth", "1"]
     elif q.max_depth is not None:
@@ -2340,8 +2359,8 @@ def _raiz_mais_especifica(path, roots):
 
 def _sob(path, root) -> bool:
     """`path` está estritamente dentro de `root`?"""
-    base = root.rstrip("/")
-    return path != base and path.startswith(base + "/")
+    base = root.rstrip(_SEPS)
+    return path != base and path.startswith(base + os.sep)
 
 
 def _query_planejada(q: Query, roots, forca_one_fs: bool, mortas) -> Query:

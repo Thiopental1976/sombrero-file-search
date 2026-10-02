@@ -105,6 +105,33 @@ if cfg is not None:
     finally:
         del sys.frozen
 
+# ------------------------- CRLF: rg e fallback Python concordam nas âncoras
+# (CI windows-latest 02/10/2026: `laudo$` sumia com todo arquivo CRLF no rg)
+if E.RG:
+    tmp = tempfile.mkdtemp(prefix="sfs_crlf_")
+    try:
+        with open(os.path.join(tmp, "crlf.txt"), "wb") as f:
+            f.write(b"laudo\r\nfim\r\n")
+        with open(os.path.join(tmp, "lf.txt"), "wb") as f:
+            f.write(b"laudo\nfim\n")
+        for pad in ("laudo$", "^fim$"):
+            q = E.Query(paths=[tmp], content=pad, content_is_regex=True)
+            a = []; E.search(q, a.append)
+            rg = E.RG; E.RG = ""
+            try:
+                b = []; E.search(q, b.append)
+            finally:
+                E.RG = rg
+            ra = sorted((os.path.basename(m.path), m.lines) for m in a)
+            rb = sorted((os.path.basename(m.path), m.lines) for m in b)
+            ok(ra == rb and len(ra) == 2, f"CRLF: '{pad}' acha os 2 arquivos no rg e no Python ({ra} | {rb})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+# ----------------------- profundidade do fallback Python conta o separador do SO
+ok(E._nivel(os.path.join("a", "b", "c")) == 2 and E._nivel(os.path.join("a", "b") + os.sep) == 1,
+   "_nivel conta os.sep (no Windows contava '/' e --max-depth sumia no fallback)")
+
 # ------------------------------------------------------- só no Windows real
 if REAL_WIN:
     fl = P.popen_flags()
