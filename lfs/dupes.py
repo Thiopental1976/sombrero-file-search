@@ -38,6 +38,13 @@ import os
 import stat as _stat
 from typing import Callable, Dict, List, Optional, Tuple
 
+try:                        # pacote (GUI) e flat (cli.py/testes)
+    from .plat import longpath as _L
+except ImportError:
+    from plat import longpath as _L     # type: ignore
+# _L: caminho > 260 no Windows sem LongPathsEnabled (identidade no Linux). Os
+# caminhos guardados e exportados ficam na forma do usuário; só o I/O usa _L.
+
 HEAD_BYTES = 64 * 1024        # estágio 2: cabeça hasheada
 FULL_BLOCK = 1 << 20          # estágio 3: bloco de leitura (cancel por bloco)
 _HEAD_DIGEST = 16             # 128 bits de cabeça bastam p/ triar
@@ -114,7 +121,7 @@ def _walk(roots, min_size, include_zero, follow_symlinks, cancel, stats):
             for fn in files:
                 p = os.path.join(dirpath, fn)
                 try:
-                    st = os.lstat(p)
+                    st = os.lstat(_L(p))
                 except OSError:
                     stats["denied"] += 1
                     continue
@@ -151,7 +158,7 @@ def _collect(files, min_size, include_zero, follow_symlinks, cancel, stats):
         if cancel():
             break
         try:
-            st = os.lstat(p)
+            st = os.lstat(_L(p))
         except OSError:
             stats["denied"] += 1
             continue
@@ -159,7 +166,7 @@ def _collect(files, min_size, include_zero, follow_symlinks, cancel, stats):
         if _stat.S_ISLNK(mode):
             if follow_symlinks:
                 try:
-                    st = os.stat(p)
+                    st = os.stat(_L(p))
                     mode = st.st_mode
                 except OSError:
                     stats["denied"] += 1
@@ -214,7 +221,7 @@ def _head_and_full(path: str) -> Optional[Tuple[str, Optional[str]]]:
     confia no st_size do walk (o arquivo pode ter crescido desde então); e o
     laço cobre leitura curta, que o read() cru (buffering=0) pode devolver."""
     try:
-        with open(path, "rb", buffering=0) as f:
+        with open(_L(path), "rb", buffering=0) as f:
             partes, falta = [], HEAD_BYTES
             while falta > 0:
                 blk = f.read(falta)
@@ -236,7 +243,7 @@ def _full_digest(path: str, cancel: CancelFn,
                  on_chunk: Callable[[int], None]) -> Optional[str]:
     h = hashlib.blake2b(digest_size=_FULL_DIGEST)
     try:
-        with open(path, "rb", buffering=0) as f:
+        with open(_L(path), "rb", buffering=0) as f:
             while True:
                 if cancel():
                     return None
@@ -419,7 +426,7 @@ def name_verdicts(files, groups: List[DupGroup]) -> List[NameGroup]:
     inode_of: Dict[str, Tuple] = {}
     for p in files:
         try:
-            st = os.lstat(p)
+            st = os.lstat(_L(p))
             inode_of[p] = (st.st_dev, st.st_ino)
         except OSError:
             inode_of[p] = ("?", p)          # não resolvido: trata como único

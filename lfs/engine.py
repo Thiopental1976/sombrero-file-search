@@ -1407,15 +1407,58 @@ def _stat_e_ident(fp):
     PRÓPRIO nó (lstat). Medido na VM Bazzite (09/09/2026): /etc/os-release é
     symlink de /usr/lib/os-release e, com a identidade do alvo, o dedup
     colapsava um no outro — um link é outro objeto, não cópia do alvo. Symlink
-    quebrado: o lstat vale pelos dois (E5: casa por nome, mostra o link)."""
-    lst = os.lstat(fp)
+    quebrado: o lstat vale pelos dois (E5: casa por nome, mostra o link).
+
+    Windows (Bug 1, 03/10/2026): caminho > 260 com LongPathsEnabled=0 (padrão
+    do Windows 11) — o fd/rg listam, e o stat sem o prefixo de caminho longo
+    falhava: o achado saía como "file vanished". plat.longpath é identidade no
+    Linux e em caminho curto; o caminho DEVOLVIDO (fp) segue o do motor."""
+    io = plat.longpath(fp)
+    lst = os.lstat(io)
     if stat.S_ISLNK(lst.st_mode):
         try:
-            st = os.stat(fp)
+            st = os.stat(io)
         except OSError:
             st = lst
         return st, _ident_de(lst)
     return lst, _ident_de(lst)
+
+
+def _resolve_lossy(fp):
+    """Windows (Bug 2, 03/10/2026): o fd/rg imprimem um nome UTF-16 INVÁLIDO
+    (substituto solitário, que o NTFS aceita) trocando cada unidade quebrada por
+    U+FFFD — e o stat desse caminho falha. Resolve pelo diretório pai: o único
+    irmão cujo nome casa com U+FFFD valendo "um substituto solitário (ou o
+    próprio U+FFFD)". Devolve o caminho real, ou None se 0 ou >1 casarem (aí
+    fica o comportamento de antes: stat_failed). Só no Windows, só com U+FFFD."""
+    if not plat.IS_WIN or "\ufffd" not in fp:
+        return None
+    pai, nome = os.path.split(fp)
+    if "\ufffd" in pai:
+        return None                  # pasta quebrada no meio do caminho: fora do escopo
+    rx = re.compile("".join("[\ud800-\udfff\ufffd]" if c == "\ufffd" else re.escape(c)
+                            for c in nome) + r"\Z", re.DOTALL)
+    try:
+        with os.scandir(plat.longpath(pai)) as it:
+            hits = [e.name for e in it if rx.match(e.name)]
+    except OSError:
+        return None
+    return os.path.join(pai, hits[0]) if len(hits) == 1 else None
+
+
+def _stat_resolvendo(fp):
+    """(caminho, stat, ident): _stat_e_ident, e no Windows, se o stat falhar num
+    nome com U+FFFD, tenta o nome real pelo pai (_resolve_lossy). Sem saída:
+    relança o OSError original."""
+    try:
+        st, ident = _stat_e_ident(fp)
+        return fp, st, ident
+    except OSError:
+        real = _resolve_lossy(fp)
+        if real is None:
+            raise
+        st, ident = _stat_e_ident(real)
+        return real, st, ident
 
 
 def _logical_line(text: str) -> str:
@@ -1507,7 +1550,7 @@ def _oculto(pasta: str, nome: str) -> bool:
     if not plat.IS_WIN:
         return False
     try:
-        st = os.stat(os.path.join(pasta, nome), follow_symlinks=False)
+        st = os.stat(plat.longpath(os.path.join(pasta, nome)), follow_symlinks=False)
     except OSError:
         return False
     return bool(getattr(st, "st_file_attributes", 0) & _ATTR_OCULTO)
@@ -1834,7 +1877,9 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
                     if seen is not None:
                         seen.add(fp)
                     try:
-                        st, ident = _stat_e_ident(fp)   # E5: symlink quebrado — mostra o link
+                        # E5: symlink quebrado — mostra o link; Bug 2: nome UTF-16
+                        # inválido que o fd imprimiu com U+FFFD volta ao real
+                        fp, st, ident = _stat_resolvendo(fp)
                         is_dir = stat.S_ISDIR(st.st_mode)
                     except OSError:
                         # H5: o fd listou e nós descartamos — mesma regra
@@ -1969,7 +2014,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
                     cur = None
                     continue
                 try:
-                    st, ident = _stat_e_ident(path)
+                    path, st, ident = _stat_resolvendo(path)   # Bug 2: U+FFFD do rg
                 except OSError:
                     # arquivo dentro de container (ex algo.zip/interno.pdf): sem stat no FS
                     cur = Match(path, 0, 0) if docs else None
@@ -2019,13 +2064,14 @@ def _iter_content_python(q: Query, cancel, stats=None):
         try:
             # T1: FIFO/socket/device fazem open() bloquear pra sempre (pipe sem
             # escritor). O rg pula não-regulares sozinho; no fallback a guarda é nossa.
-            if not stat.S_ISREG(os.stat(m.path, follow_symlinks=q.follow_symlinks).st_mode):
+            if not stat.S_ISREG(os.stat(plat.longpath(m.path),
+                                        follow_symlinks=q.follow_symlinks).st_mode):
                 continue
         except OSError:
             anota_incompleto(stats, "stat_failed", onde=m.path)   # H5: o walker listou
             continue                                            # e o arquivo sumiu
         try:
-            with open(m.path, "r", errors="surrogateescape") as fh:
+            with open(plat.longpath(m.path), "r", errors="surrogateescape") as fh:
                 hit = None
                 for i, line in enumerate(fh, 1):
                     if "\x00" in line:      # provável binário

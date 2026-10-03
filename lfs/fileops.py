@@ -36,6 +36,26 @@ try:                        # pacote (GUI) e flat (cli.py/testes)
 except ImportError:
     import disks, plat
 
+# Caminho longo no Windows (Bug 1, 03/10/2026): sem LongPathsEnabled — o padrão
+# do Windows 11 — toda chamada com caminho > 260 falha (WinError 3) e o arquivo de
+# nome comprido numa pasta funda sumia da cópia SEM entrar em `failed`. Todo I/O
+# deste módulo passa por _L(); os caminhos GUARDADOS (Entry.src, res.copied,
+# res.failed) ficam na forma do usuário. No Linux _L é identidade.
+_L = plat.longpath
+
+
+def _msg(ex) -> str:
+    """Texto do erro para o usuário. No Windows, tira do nome do arquivo o
+    prefixo de caminho longo que _L() acrescentou (o usuário nunca o digitou)."""
+    if plat.IS_WIN and isinstance(ex, OSError):
+        f1, f2 = ex.filename, ex.filename2
+        if any(isinstance(f, str) and f.startswith("\\\\?\\") for f in (f1, f2)):
+            limpa = lambda f: plat.displaypath(f) if isinstance(f, str) else f
+            ex = OSError(ex.errno, ex.strerror, limpa(f1), getattr(ex, "winerror", None),
+                         limpa(f2))
+    return str(ex)
+
+
 BLOCK = 1 << 22                      # 4 MiB: bom para vídeo, e o cancel responde rápido
 
 # Ritmo de escrita em dispositivo removível — o análogo, para pendrive, do que a
@@ -172,8 +192,11 @@ def _nearest_existing(path: str) -> str:
     """Ancestral existente mais próximo — o sistema de arquivos onde de fato se vai
     escrever quando o subdiretório de destino ainda não existe."""
     p = os.path.abspath(path)
-    while p != "/" and not os.path.exists(p):
-        p = os.path.dirname(p)
+    while not os.path.exists(_L(p)):
+        pai = os.path.dirname(p)
+        if pai == p:                 # raiz ("/", "Q:\\" de letra que sumiu): para aqui
+            break                    # (antes: laço eterno numa letra inexistente)
+        p = pai
     return p
 
 
@@ -183,8 +206,8 @@ def probe_write(dest_dir, _opener=open) -> WriteProbe:
     para os testes simularem ENOTSUP/EACCES/EROFS sem hardware. Escreve APENAS no
     diretório de destino (compatível com o §0 do F7 por construção)."""
     target = _nearest_existing(dest_dir)
-    probe = os.path.join(target, ".sombrero-probe-%d-%s"
-                         % (os.getpid(), os.urandom(4).hex()))
+    probe = _L(os.path.join(target, ".sombrero-probe-%d-%s"
+                            % (os.getpid(), os.urandom(4).hex())))
     try:
         f = _opener(probe, "wb")
         try:
@@ -198,7 +221,7 @@ def probe_write(dest_dir, _opener=open) -> WriteProbe:
             f.close()
         return WriteProbe(True)
     except OSError as ex:
-        return WriteProbe(False, ex.errno, _classify_errno(ex.errno), str(ex))
+        return WriteProbe(False, ex.errno, _classify_errno(ex.errno), _msg(ex))
     finally:
         try:
             os.unlink(probe)
@@ -253,9 +276,9 @@ def _walk_entries(src: str, rel_base: str, out: list, errors: list, seen_dirs: s
         dest_key = plat.path_key(dest_abs)
     dest_nome = os.path.basename(dest_key)        # já em caixa/nome longo canônicos
     try:
-        st = os.lstat(src)
+        st = os.lstat(_L(src))
     except OSError as e:
-        errors.append((src, str(e)))
+        errors.append((src, _msg(e)))
         return
     if stat.S_ISLNK(st.st_mode):
         out.append(Entry(src, rel_base, "link"))
@@ -267,13 +290,13 @@ def _walk_entries(src: str, rel_base: str, out: list, errors: list, seen_dirs: s
         seen_dirs.add(key)
         out.append(Entry(src, rel_base, "dir"))
         try:
-            with os.scandir(src) as it:
+            with os.scandir(_L(src)) as it:
                 kids = sorted(it, key=lambda e: e.name)
         except OSError as e:
-            errors.append((src, str(e)))
+            errors.append((src, _msg(e)))
             return
         for e in kids:
-            child = e.path
+            child = os.path.join(src, e.name)      # forma do usuário (e.path viria com \\?\)
             # não copia o destino p/ dentro dele. O nome filtra antes: path_key
             # no Windows abre o arquivo (realpath), caro demais por entrada.
             if os.path.normcase(e.name) == dest_nome and plat.path_key(child) == dest_key:
@@ -324,12 +347,12 @@ def preflight(sources, dest_dir) -> Preflight:
             # sem symlink no destino: vira cópia real do alvo, ou é impossível.
             # Link de PASTA não vira cópia (o walk não desce em link): é pulado
             # com motivo — antes ia para open(pasta) e saía "Permission denied".
-            if os.path.isdir(e.src):
+            if os.path.isdir(_L(e.src)):
                 pf.links_dir.append(e.src)
-            elif os.path.exists(e.src):
+            elif os.path.exists(_L(e.src)):
                 pf.links_degraded.append(e.src)
                 try:
-                    pf.total_bytes += os.stat(e.src).st_size
+                    pf.total_bytes += os.stat(_L(e.src)).st_size
                     pf.total_files += 1
                 except OSError:
                     pass
@@ -356,7 +379,7 @@ def _unique(dst: str) -> str:
     n = 1
     while True:
         cand = os.path.join(d, f"{stem} ({n}){ext}")
-        if not os.path.exists(cand) and not os.path.islink(cand):
+        if not os.path.exists(_L(cand)) and not os.path.islink(_L(cand)):
             return cand
         n += 1
 
@@ -367,7 +390,11 @@ def _drain(fo, desde, ate):
     isso é aceitável — nunca é motivo para falhar uma cópia."""
     try:
         fo.flush()
-        os.fdatasync(fo.fileno())
+        # Windows não tem os.fdatasync: o AttributeError escapava do `except
+        # OSError` e DERRUBAVA a cópia inteira para HD USB/pendrive (destino
+        # removível liga o PACE) no primeiro bloco de 16 MiB. Lá o os.fsync é o
+        # FlushFileBuffers — a mesma promessa ("está no disco").
+        (getattr(os, "fdatasync", None) or os.fsync)(fo.fileno())
         if hasattr(os, "posix_fadvise"):
             os.posix_fadvise(fo.fileno(), desde, ate - desde, os.POSIX_FADV_DONTNEED)
     except OSError:
@@ -383,6 +410,9 @@ def _copy_stream(src, dst, cancel, tick, prog, pace=0):
     done = 0
     drenado = 0
     try:
+        # I/O pela forma longa; os NOMES ficam src/dst (a guarda AST do teste
+        # test_fileops_has_no_destructive_api lê exatamente estes nomes)
+        src, dst = _L(src), _L(dst)
         with open(src, "rb") as fi, open(dst, "wb") as fo:
             while True:
                 if cancel is not None and cancel.is_set():
@@ -424,6 +454,7 @@ def _rm_partial(dst):
     """Remove o parcial que NÓS acabamos de criar no destino. É a única remoção
     do módulo, e só toca um caminho que este mesmo processo abriu para escrita —
     jamais a origem."""
+    dst = _L(dst)                    # idempotente: já longo continua igual
     try:
         os.unlink(dst)
     except OSError:
@@ -435,17 +466,17 @@ def _apply_meta(src, dst, caps):
     e o MTP não tem mtime confiável: tentar e falhar em silêncio é o certo aqui —
     não é erro de cópia, é limite do sistema de arquivos."""
     try:
-        st = os.stat(src)
+        st = os.stat(_L(src))
     except OSError:
         return
     if caps.times:
         try:
-            os.utime(dst, (st.st_atime, st.st_mtime))
+            os.utime(_L(dst), (st.st_atime, st.st_mtime))
         except OSError:
             pass
     if caps.perms:
         try:
-            os.chmod(dst, stat.S_IMODE(st.st_mode))
+            os.chmod(_L(dst), stat.S_IMODE(st.st_mode))
         except OSError:
             pass
 
@@ -522,7 +553,7 @@ def _gio_copy(src, dst, caps, cancel, tick, prog, overwrite, _runner=None):
     if rc != 0:
         raise OSError(errno.EIO, f"gio copy failed ({rc}): {(err or '').strip()[:200]}")
     try:
-        size = os.stat(src).st_size
+        size = os.stat(_L(src)).st_size
     except OSError:
         size = 0
     prog.done_bytes += size              # granularidade por arquivo (bytes indisponíveis)
@@ -543,6 +574,7 @@ def _write_file(src, dst, strategy, caps, cancel, tick, prog, pace, overwrite,
     n = _copy_stream(src, part, cancel, tick, prog, pace)
     if n is None:
         return None                      # cancelado: _copy_stream já removeu o part
+    part, dst = _L(part), _L(dst)        # caminho longo (Windows); identidade no Linux
     try:
         if strategy == STRAT_GUARDED:    # jmtpfs: sem os.replace atômico
             if os.path.lexists(dst):
@@ -637,9 +669,9 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
 
         if e.kind == "dir":
             try:
-                os.makedirs(dst, exist_ok=True)
+                os.makedirs(_L(dst), exist_ok=True)
             except OSError as ex:
-                res.failed.append((e.src, str(ex)))
+                res.failed.append((e.src, _msg(ex)))
             continue
 
         if e.src in too_big:
@@ -653,7 +685,7 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
             # A3: o próprio sanitize colou dois nomes ("a?b"/"a*b" -> "a_b").
             # Não é arquivo pré-existente — é intenção óbvia de adaptar: numera sozinho.
             dst = _unique(dst)
-        elif os.path.lexists(dst):
+        elif os.path.lexists(_L(dst)):
             ans = resolve_conflict(e.src, dst)
             if ans == "cancel":
                 res.cancelled = True
@@ -668,19 +700,19 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
                 overwrite = True          # a estratégia promove o novo por cima do velho
 
         try:
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            os.makedirs(_L(os.path.dirname(dst)), exist_ok=True)
         except OSError as ex:
-            res.failed.append((e.src, str(ex)))
+            res.failed.append((e.src, _msg(ex)))
             continue
 
         prog.current_path = e.src
         try:
             if e.kind == "link" and caps.symlinks:
-                target = os.readlink(e.src)
-                if os.path.lexists(dst):
+                target = os.readlink(_L(e.src))
+                if os.path.lexists(_L(dst)):
                     _rm_partial(dst)              # só o destino, decidido acima
-                os.symlink(target, dst)
-            elif e.kind == "link" and (not os.path.exists(e.src) or os.path.isdir(e.src)):
+                os.symlink(target, _L(dst))
+            elif e.kind == "link" and (not os.path.exists(_L(e.src)) or os.path.isdir(_L(e.src))):
                 res.skipped.append((e.src, SKIP_SYMLINK))
                 continue
             else:
@@ -696,7 +728,7 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
             res.copied.append(dst)
             made_this_op.add(dst)            # A3: marca p/ detectar colisão intra-operação
         except OSError as ex:
-            msg = str(ex)
+            msg = _msg(ex)
             if ex.errno == errno.EFBIG:           # FS recusou o tamanho
                 res.skipped.append((e.src, SKIP_TOO_BIG))
             elif ex.errno == errno.ENOSPC:

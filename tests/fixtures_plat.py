@@ -8,6 +8,8 @@
   so_linux(motivo)         True no Linux; no Windows imprime "~skip <motivo>" —
                            lacuna CONHECIDA, dita, nunca escondida
   arquivo_esparso(p, n)    arquivo de n bytes sem gastar disco (NTFS: FSCTL_SET_SPARSE)
+  nome_de_bytes(b)         nome com codificação quebrada (Linux: byte não-UTF-8;
+                           Windows: o mesmo str = UTF-16 inválido, que o NTFS aceita)
   NOMES_BYTES              nomes com byte não-UTF-8 existem? (só no Linux:
                            NTFS guarda UTF-16, não há byte quebrado)
 """
@@ -124,3 +126,12 @@ def arquivo_esparso(path: str, tamanho: int):
                             None, 0, None, 0, ctypes.byref(ret), None)
         f.seek(tamanho - 1)
         f.write(b"\0")
+
+
+def nome_de_bytes(b: bytes) -> str:
+    """O str que o Python usa para um nome com codificação QUEBRADA. Linux:
+    os.fsdecode (bytes não-UTF-8 viram U+DC80..U+DCFF, surrogateescape).
+    Windows: a MESMA string — lá ela é um nome UTF-16 inválido (substituto
+    solitário) que o NTFS aceita e guarda; o os.fsdecode do Windows (UTF-8
+    estrito/surrogatepass) recusaria os bytes, por isso a decodificação é à mão."""
+    return b.decode("utf-8", "surrogateescape") if WIN else os.fsdecode(b)

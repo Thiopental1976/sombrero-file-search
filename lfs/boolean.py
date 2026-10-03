@@ -311,9 +311,9 @@ def _is_probably_text(path: str, _chunk: int = 8192) -> bool:
     NOT deve ser só-texto, o mesmo domínio dos conjuntos de termo)."""
     try:
         # T1: só arquivo regular; FIFO/socket/device bloqueiam o open() pra sempre.
-        if not stat.S_ISREG(os.stat(path).st_mode):
+        if not stat.S_ISREG(os.stat(engine.plat.longpath(path)).st_mode):
             return False
-        with open(path, "rb") as fh:
+        with open(engine.plat.longpath(path), "rb") as fh:
             return b"\x00" not in fh.read(_chunk)
     except OSError:
         return False
@@ -820,9 +820,10 @@ def _display_lines_py(pos_terms, files, q: engine.Query, cancel) -> dict:
     for fp in files:
         if cancel(): break
         try:
-            if not stat.S_ISREG(os.stat(fp, follow_symlinks=q.follow_symlinks).st_mode):
+            if not stat.S_ISREG(os.stat(engine.plat.longpath(fp),
+                                        follow_symlinks=q.follow_symlinks).st_mode):
                 continue
-            with open(fp, "r", errors="surrogateescape") as fh:   # ver engine._linha_py
+            with open(engine.plat.longpath(fp), "r", errors="surrogateescape") as fh:   # ver engine._linha_py
                 lst: list = []
                 for i, line in enumerate(fh, 1):
                     if "\x00" in line:            # binário: descarta o arquivo inteiro
