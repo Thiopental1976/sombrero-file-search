@@ -100,14 +100,21 @@ jobs:
           if (@($out | Where-Object { $_ -like "*.txt" }).Count -ne 2) { throw "conteúdo: esperava 2" }
           $out = & $sfs $d -c pulmonar -D -l; $out
           if (-not ($out | Where-Object { $_ -like "*relatorio.docx" })) { throw "docx: o leitor embutido não respondeu" }
-          # a janela sobe e fica de pé (sem console, sem traceback)
+          # a janela monta de verdade (o console diz o erro que o SFS.exe não teria onde dizer)
+          & $sfs --gui-selftest
+          if ($LASTEXITCODE -ne 0) { throw "gui-selftest falhou ($LASTEXITCODE)" }
+          # e o SFS.exe de janela sobe e fica de pé
           $p = Start-Process "dist\SombreroFileSearch\SFS.exe" -PassThru
           Start-Sleep 8
-          if ($p.HasExited) { throw "SFS.exe saiu sozinho (código $($p.ExitCode))" }
+          if ($p.HasExited) {
+            Get-Content "$env:LOCALAPPDATA\Sombrero File Search\crash.log" -ErrorAction SilentlyContinue
+            throw "SFS.exe saiu sozinho (código $($p.ExitCode))"
+          }
           Stop-Process $p
           exit 0
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: SombreroFileSearch-windows-x64
           path: dist/SombreroFileSearch-*-windows-x64.zip
