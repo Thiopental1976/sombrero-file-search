@@ -2704,6 +2704,18 @@ class MainWindow(QMainWindow):
         esperamos a thread SAIR de fato antes de aceitar o fechamento. Bombeamos
         eventos p/ a UI não congelar; após um teto generoso (o cancelamento já é
         checado a cada bloco/linha, então some em ~1s), forçamos como último recurso."""
+        self._encerra_threads()
+        super().closeEvent(ev)
+
+    def _encerra_threads(self):
+        """Corpo do closeEvent, também ligado ao aboutToQuit (03/10/2026): sair SEM
+        passar pelo fechamento da janela (fim de sessão, app.quit()) destruía o
+        CopyWorker — que vive a sessão inteira dormindo na fila — ainda rodando, e
+        o Qt aborta o processo ("QThread: Destroyed while thread is still
+        running", SIGABRT). Idempotente: a segunda chamada não faz nada."""
+        if getattr(self, "_threads_encerradas", False):
+            return
+        self._threads_encerradas = True
         self._tick.stop()
         for tab in self._all_tabs():              # F5: uma busca viva por aba
             tab.stop()
@@ -2724,7 +2736,6 @@ class MainWindow(QMainWindow):
                 self.copier.terminate()           # último recurso (job travado num I/O)
                 self.copier.wait(2000)
         self._stop_media()
-        super().closeEvent(ev)
 
     @staticmethod
     def _denied(tab) -> int:
@@ -3514,10 +3525,50 @@ class MainWindow(QMainWindow):
         mnu.exec(self.table.viewport().mapToGlobal(pos))
 
 
+def _liga_registro_de_queda():
+    """Caixa-preta da GUI (03/10/2026, campo: a janela SUMIU no meio de uma busca
+    multidisco e não sobrou rastro — aberta pelo menu, não há terminal para o
+    stderr). Grava em $XDG_CACHE_HOME/sombrero-file-search/queda.log:
+      - faulthandler: pilha de TODAS as threads em SIGSEGV/SIGABRT/SIGBUS/SIGFPE;
+      - exceção Python não tratada (thread principal, slots e threading);
+      - mensagens fatais/críticas do próprio Qt (qFatal vem antes do abort).
+    Arquivo passa de 1 MB → recomeça. Nada sai da máquina. Devolve o caminho."""
+    import faulthandler, traceback
+    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+    base = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+                        "sombrero-file-search")
+    try:
+        os.makedirs(base, exist_ok=True)
+        caminho = os.path.join(base, "queda.log")
+        modo = "w" if os.path.exists(caminho) and os.path.getsize(caminho) > 1 << 20 else "a"
+        fh = open(caminho, modo, encoding="utf-8", buffering=1)
+    except OSError:
+        return None
+    fh.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} início pid={os.getpid()} "
+             f"versão={version.RELEASE} {version.build_info()}\n")
+    faulthandler.enable(file=fh, all_threads=True)
+
+    def _excecao(tipo, valor, tb, onde="principal"):
+        fh.write(f"--- {time.strftime('%H:%M:%S')} exceção não tratada ({onde})\n")
+        fh.write("".join(traceback.format_exception(tipo, valor, tb)))
+        sys.__excepthook__(tipo, valor, tb)
+    sys.excepthook = _excecao
+    threading.excepthook = lambda a: _excecao(a.exc_type, a.exc_value, a.exc_traceback,
+                                              f"thread {a.thread.name if a.thread else '?'}")
+
+    def _qt(tipo, ctx, msg):
+        if tipo in (QtMsgType.QtFatalMsg, QtMsgType.QtCriticalMsg):
+            fh.write(f"--- {time.strftime('%H:%M:%S')} Qt {tipo.name}: {msg}\n")
+        sys.stderr.write(msg + "\n")
+    qInstallMessageHandler(_qt)
+    return caminho
+
+
 def main():
     # Migração do rebranding: só no arranque REAL da GUI, nunca no import (assim
     # importar o módulo — em teste ou ferramenta — não mexe no ~/.config do usuário).
     _migrate_old_config()
+    _liga_registro_de_queda()
     app = QApplication(sys.argv)
     app.setApplicationName("Sombrero File Search")
     app.setApplicationDisplayName("Sombrero File Search")
@@ -3528,6 +3579,7 @@ def main():
     if os.path.exists(ico):
         app.setWindowIcon(QIcon(ico))
     w = MainWindow(); w.show()
+    app.aboutToQuit.connect(w._encerra_threads)
     sys.exit(app.exec())
 
 
