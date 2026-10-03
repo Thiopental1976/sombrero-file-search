@@ -404,6 +404,25 @@ def test_user_mounts_parsing():
     print("ok  UX  user_mounts: /dev/* sob /media|/mnt|/run/media (espaço decodificado)")
 
 
+def test_user_mounts_sem_acesso_fica_fora():
+    """03/10/2026, campo: o SSD do Luca montado TAMBÉM em /home/luca/Jogos, fechado
+    por ACL, entrava no "Todos os discos" e deixava toda busca "incompleta".
+    Montagem que o usuário não abre não é candidata. (os.access simulado: rodando
+    como root, chmod 000 não fecharia nada.)"""
+    lines = ["/dev/sdg3 /mnt/SSD128Gb ext4 rw 0 0\n",
+             "/dev/sdg3 /mnt/Fechado ext4 rw 0 0\n"]
+    orig = os.access
+    os.access = lambda p, m, *a, **k: p != "/mnt/Fechado"
+    try:
+        got = engine.user_mounts(lines, so_acessiveis=True)
+        assert got == ["/mnt/SSD128Gb"], got
+        # tabela injetada sem pedir o filtro: comportamento antigo (testes de parsing)
+        assert engine.user_mounts(lines) == ["/mnt/Fechado", "/mnt/SSD128Gb"]
+    finally:
+        os.access = orig
+    print("ok  UX  user_mounts: montagem sem permissão de leitura fica fora do 'Todos os discos'")
+
+
 def test_var_mnt_bazzite_disk_detection():
     """Bazzite/ostree monta discos secundários em /var/mnt (o /mnt da imagem é
     ro) — sem esse prefixo o disco vira "só uma pasta": fora do menu Discos ▾,
@@ -2937,8 +2956,11 @@ def test_a6_persistent_copy_worker():
     assert any(c.func.attr == "get" for c in _calls_attr(run, "get")), \
         "run() deve bloquear em self.q.get()"
     assert "shutdown" in _methods(cw), "falta o desligamento limpo (shutdown)"
+    # 03/10/2026: o corpo do closeEvent virou _encerra_threads (também no aboutToQuit)
     close = _func_in_class(mw, "closeEvent")
-    assert _calls_attr(close, "shutdown"), "closeEvent deve chamar copier.shutdown()"
+    assert _calls_attr(close, "_encerra_threads"), "closeEvent deve chamar _encerra_threads()"
+    enc = _func_in_class(mw, "_encerra_threads")
+    assert _calls_attr(enc, "shutdown"), "_encerra_threads deve chamar copier.shutdown()"
     print("ok  A6   CopyWorker persistente: 1 thread p/ a sessão, fila bloqueante, shutdown limpo")
 
 
@@ -3097,6 +3119,49 @@ def test_window_minimum_allows_edge_tiling():
     finally:
         win.close()
     print(f"ok  GUI  min-size {ms.width()}x{ms.height()} ≤ 620x480: edge-tiling topo/base preservado")
+
+
+def test_sair_sem_fechar_janela_nao_aborta():
+    """03/10/2026, campo: a GUI sumiu no meio de uma busca e não deixou rastro.
+    (1) Sair do app SEM passar pelo closeEvent (fim de sessão, app.quit()) destruía
+    o CopyWorker — vivo a sessão inteira, dormindo na fila — e o Qt abortava o
+    processo (SIGABRT). aboutToQuit agora roda o mesmo encerramento. A trava prova
+    as duas coisas: sem o gancho aborta; com ele, sai limpo.
+    (2) A caixa-preta (queda.log em $XDG_CACHE_HOME) é criada no arranque.
+    Em subprocesso: o aborto mataria a própria suíte."""
+    try:
+        import PySide6  # noqa: F401
+    except ImportError:
+        print("--  GUI  sair sem fechar a janela: pulado (sem PySide6)")
+        return
+    tmp = tempfile.mkdtemp(prefix="sfs_quit_")
+    try:
+        prog = (
+            "import sys; sys.path.insert(0, %r)\n"
+            "import app as A\n"
+            "from PySide6.QtWidgets import QApplication\n"
+            "from PySide6.QtCore import QTimer\n"
+            "log = A._liga_registro_de_queda()\n"
+            "qa = QApplication([]); w = A.MainWindow()\n"
+            "if sys.argv[1] == 'com': qa.aboutToQuit.connect(w._encerra_threads)\n"
+            "QTimer.singleShot(300, qa.quit); qa.exec()\n"
+            "del w; print('SAIU', log)\n") % os.path.join(RAIZ, "lfs")
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
+                   XDG_CACHE_HOME=os.path.join(tmp, "cache"),
+                   XDG_CONFIG_HOME=os.path.join(tmp, "config"))
+        r_sem = subprocess.run([sys.executable, "-c", prog, "sem"], env=env,
+                               capture_output=True, text=True, timeout=60)
+        r_com = subprocess.run([sys.executable, "-c", prog, "com"], env=env,
+                               capture_output=True, text=True, timeout=60)
+        assert r_sem.returncode != 0, "sem o gancho deveria abortar (a trava não prova nada)"
+        assert r_com.returncode == 0 and "SAIU" in r_com.stdout, (r_com.returncode, r_com.stderr[-800:])
+        log = os.path.join(tmp, "cache", "sombrero-file-search", "queda.log")
+        texto = open(log, encoding="utf-8").read()
+        assert "início pid=" in texto, texto[:300]
+        assert "QThread: Destroyed" in texto, "o aborto do Qt não ficou registrado na caixa-preta"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("ok  GUI  sair sem fechar a janela não aborta; queda.log registra o aborto do Qt")
 
 
 def test_natural_sort_names():
@@ -4318,7 +4383,9 @@ def main():
            test_t2_boolean_lines_without_rg, test_one_file_system_fallback,
            test_boolean_parser, test_boolean_unterminated_quote,
            test_boolean_empty_quoted_term, test_name_contains_semantics,
-           test_user_mounts_parsing, test_var_mnt_bazzite_disk_detection,
+           test_user_mounts_parsing, test_user_mounts_sem_acesso_fica_fora,
+           test_sair_sem_fechar_janela_nao_aborta,
+           test_var_mnt_bazzite_disk_detection,
            test_fd_case_sensitive,
            test_and_progressive_correctness, test_and_progressive_restricts,
            test_glob_to_regex, test_fd_merge_single_pass,

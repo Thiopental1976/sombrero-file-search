@@ -347,11 +347,21 @@ def classifica_montagens(lines=None) -> dict:
     return out
 
 
-def user_mounts(lines=None):
+def user_mounts(lines=None, so_acessiveis=None):
     """Discos LOCAIS de usuário (ver classifica_montagens): os candidatos da busca
-    MULTIDISCOS na GUI ("Discos ▾" e "Todos os discos"). `lines` injetável p/ teste."""
+    MULTIDISCOS na GUI ("Discos ▾" e "Todos os discos"). `lines` injetável p/ teste.
+
+    03/10/2026 (teste de campo no ServidorCedro): a montagem que o usuário NÃO
+    consegue abrir fica fora. Lá o SSD do Luca é montado também em
+    /home/luca/Jogos, fechado por ACL; "Todos os discos" o incluía, e toda busca
+    multidisco terminava "incompleta" por um disco que nunca seria lido. Só vale
+    para a leitura real (`so_acessiveis` = lines is None): a tabela injetada nos
+    testes tem pontos de montagem que não existem nesta máquina."""
+    if so_acessiveis is None:
+        so_acessiveis = lines is None
     return sorted(mp for mp, (cl, _f, _s) in classifica_montagens(lines).items()
-                  if cl == "local")
+                  if cl == "local"
+                  and (not so_acessiveis or os.access(mp, os.R_OK | os.X_OK)))
 
 
 def network_mounts(lines=None):
