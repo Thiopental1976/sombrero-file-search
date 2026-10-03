@@ -155,7 +155,12 @@ def rga_config(usuario: Optional[dict] = None) -> Optional[dict]:
     }
     if plat.frozen():
         # exe congelado (Windows/PyInstaller): sys.executable é o próprio SFS,
-        # não um Python — o leitor roda como modo --docs-adapter do executável
+        # não um Python — o leitor roda como modo --docs-adapter. Sempre pelo
+        # sfs.exe de CONSOLE ao lado (F3): o rga conversa por stdin/stdout, e
+        # o SFS.exe de janela pode não ter stdout nenhum.
+        cons = os.path.join(os.path.dirname(sys.executable), "sfs.exe")
+        if os.path.exists(cons):
+            nosso["binary"] = cons
         nosso["args"] = ["--docs-adapter", "$input_file_extension"]
     cfg = dict(usuario)
     cfg.pop("$schema", None)       # caminho relativo ao arquivo dele, não ao nosso

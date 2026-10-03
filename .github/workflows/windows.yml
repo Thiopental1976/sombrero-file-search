@@ -77,6 +77,42 @@ jobs:
       - name: paridade rg ↔ Python (test_parity_rg_python)
         run: python tests\test_parity_rg_python.py
 
+      # F3: o pacote que vai no pendrive do Luca. Monta com PyInstaller (onedir,
+      # SFS.exe + sfs.exe) e prova o EXECUTÁVEL, não o código-fonte: nome, conteúdo
+      # e documento (.docx pelo rga -> sfs.exe --docs-adapter).
+      - name: pacote Windows (F3)
+        run: |
+          python -m pip install --disable-pip-version-check pyinstaller pillow
+          .\packaging\windows\build_windows.ps1
+
+      - name: aceite F3 — o executável empacotado busca de verdade
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sfs = "dist\SombreroFileSearch\sfs.exe"
+          $d = Join-Path $env:RUNNER_TEMP "sfs_f3"
+          New-Item -ItemType Directory -Force "$d\sub" | Out-Null
+          "laudo" | Set-Content "$d\a.txt"; "laudo" | Set-Content "$d\sub\b.txt"
+          python packaging\windows\faz_docx.py "$d\relatorio.docx" "parecer pulmonar"
+          & $sfs --version
+          $out = & $sfs $d -n "*.txt" -l; $out
+          if (@($out | Where-Object { $_ -like "*.txt" }).Count -ne 2) { throw "nome: esperava 2 .txt" }
+          $out = & $sfs $d -c laudo -l; $out
+          if (@($out | Where-Object { $_ -like "*.txt" }).Count -ne 2) { throw "conteúdo: esperava 2" }
+          $out = & $sfs $d -c pulmonar -D -l; $out
+          if (-not ($out | Where-Object { $_ -like "*relatorio.docx" })) { throw "docx: o leitor embutido não respondeu" }
+          # a janela sobe e fica de pé (sem console, sem traceback)
+          $p = Start-Process "dist\SombreroFileSearch\SFS.exe" -PassThru
+          Start-Sleep 8
+          if ($p.HasExited) { throw "SFS.exe saiu sozinho (código $($p.ExitCode))" }
+          Stop-Process $p
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SombreroFileSearch-windows-x64
+          path: dist/SombreroFileSearch-*-windows-x64.zip
+          retention-days: 30
+
       # Informativo na F0: lista o que ainda é só-Linux. Vira obrigatório na F1,
       # com cada falha Windows-only pinada em LACUNAS_CONHECIDAS.
       - name: auditoria e demais suítes (informativo)
