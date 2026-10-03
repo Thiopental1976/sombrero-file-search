@@ -12,5 +12,5 @@ ZIP=$(ls "$D"/*.zip)
 cp packaging/windows/LEIA-ME.txt "$D/LEIA-ME.txt"
 gh release create "$TAG" "$ZIP" "$D/LEIA-ME.txt" --target windows --prerelease \
   --title "Sombrero File Search $REL para Windows (prévia)" \
-  --notes "Versão para Windows 10/11 (x64). Baixe o .zip, leia o LEIA-ME.txt (desbloquear antes de extrair) e abra SFS.exe. Sem instalador e sem administrador."
+  --notes "Versão para Windows 10/11 (x64). Baixe o .zip, leia o LEIA-ME.txt (desbloquear antes de extrair) e abra SombreroFileSearch.exe. Sem instalador e sem administrador."
 echo "publicado: $TAG"

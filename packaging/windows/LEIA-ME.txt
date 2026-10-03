@@ -8,8 +8,8 @@ Instalar (uma vez só):
    (Isso evita a tela azul "O Windows protegeu o computador".)
 3. Botão direito no .zip -> "Extrair Tudo..." -> escolha uma pasta sua,
    por exemplo Documentos.
-4. Entre na pasta SombreroFileSearch e abra o SFS.exe.
-   Dica: botão direito no SFS.exe -> "Mostrar mais opções" ->
+4. Entre na pasta SombreroFileSearch e abra o SombreroFileSearch.exe.
+   Dica: botão direito no SombreroFileSearch.exe -> "Mostrar mais opções" ->
    "Enviar para" -> "Área de trabalho (criar atalho)".
 
 Se a tela azul aparecer mesmo assim: clique em "Mais informações" e depois

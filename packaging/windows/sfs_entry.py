@@ -3,7 +3,7 @@
 """Pontos de entrada do pacote Windows (F3, PyInstaller onedir).
 
 Dois executáveis saem do mesmo código:
-  SFS.exe   janela (sem console)         -> app.main()
+  SombreroFileSearch.exe   janela (sem console)         -> app.main()
   sfs.exe   console (CLI + leitor do rga) -> cli, ou `--docs-adapter <ext>`
 
 O leitor de docx/odt/epub roda como filho do rga e conversa por stdin/stdout:
@@ -63,7 +63,7 @@ def gui() -> None:
 
 def _gui_selftest() -> int:
     """`sfs.exe --gui-selftest`: monta a janela de verdade (plugin de plataforma
-    real), roda o laço de eventos 3 s e fecha. Diz no CONSOLE o que o SFS.exe de
+    real), roda o laço de eventos 3 s e fecha. Diz no CONSOLE o que o SombreroFileSearch.exe de
     janela não tem onde dizer. 0 = a janela subiu."""
     import traceback
     try:

@@ -1,7 +1,8 @@
 # -*- mode: python -*-
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Pacote Windows do SFS (F3): `pyinstaller packaging\windows\sfs.spec` na raiz do repo.
-# Saída: dist\SombreroFileSearch\{SFS.exe, sfs.exe, _internal\}; o build_windows.ps1
+# Saída: dist\SombreroFileSearch\{SombreroFileSearch.exe, sfs.exe, _internal\};
+# (NÃO "SFS.exe" + "sfs.exe": no Windows é o MESMO arquivo — o segundo sobrescrevia o primeiro); o build_windows.ps1
 # põe bin\ (motores), assets\, LICENSE e VERSION ao lado — onde engine.py e app.py
 # procuram (dirname(dirname(__file__)) do módulo = a pasta do pacote).
 import os
@@ -28,12 +29,14 @@ def analise(script):
                     hiddenimports=MODS, excludes=FORA, noarchive=False)
 
 
+NOME_GUI, NOME_CLI = "SombreroFileSearch", "sfs"
+assert NOME_GUI.lower() != NOME_CLI.lower(), "NTFS: nomes iguais sem caixa = um exe sobrescreve o outro"
 a_gui, a_cli = analise("sfs_gui.py"), analise("sfs_cli.py")
-MERGE((a_gui, "sfs_gui", "SFS"), (a_cli, "sfs_cli", "sfs"))
+MERGE((a_gui, "sfs_gui", NOME_GUI), (a_cli, "sfs_cli", NOME_CLI))
 
-exe_gui = EXE(PYZ(a_gui.pure), a_gui.scripts, [], exclude_binaries=True, name="SFS",
+exe_gui = EXE(PYZ(a_gui.pure), a_gui.scripts, [], exclude_binaries=True, name=NOME_GUI,
               console=False, icon=ICO if os.path.exists(ICO) else None)
-exe_cli = EXE(PYZ(a_cli.pure), a_cli.scripts, [], exclude_binaries=True, name="sfs",
+exe_cli = EXE(PYZ(a_cli.pure), a_cli.scripts, [], exclude_binaries=True, name=NOME_CLI,
               console=True, icon=ICO if os.path.exists(ICO) else None)
 COLLECT(exe_gui, a_gui.binaries, a_gui.datas, exe_cli, a_cli.binaries, a_cli.datas,
         name="SombreroFileSearch")
