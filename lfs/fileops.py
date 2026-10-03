@@ -32,9 +32,9 @@ import errno, os, shutil, stat, subprocess, time
 from urllib.parse import quote
 
 try:                        # pacote (GUI) e flat (cli.py/testes)
-    from . import disks
+    from . import disks, plat
 except ImportError:
-    import disks
+    import disks, plat
 
 BLOCK = 1 << 22                      # 4 MiB: bom para vídeo, e o cancel responde rápido
 
@@ -244,10 +244,13 @@ class CopyResult:
 
 # ------------------------------------------------------------------ planejamento
 def _walk_entries(src: str, rel_base: str, out: list, errors: list, seen_dirs: set,
-                  dest_abs: str):
+                  dest_abs: str, dest_key: str = None):
     """Enumera `src` recursivamente. Guarda (st_dev, st_ino) contra ciclo de
     symlink de diretório, e nunca desce para dentro do PRÓPRIO destino (copiar
     uma pasta para dentro dela mesma seria recursão infinita)."""
+    if dest_key is None:
+        dest_key = plat.path_key(dest_abs)
+    dest_nome = os.path.basename(dest_key)        # já em caixa/nome longo canônicos
     try:
         st = os.lstat(src)
     except OSError as e:
@@ -270,10 +273,12 @@ def _walk_entries(src: str, rel_base: str, out: list, errors: list, seen_dirs: s
             return
         for e in kids:
             child = e.path
-            if os.path.abspath(child) == dest_abs:  # não copia o destino p/ dentro dele
+            # não copia o destino p/ dentro dele. O nome filtra antes: path_key
+            # no Windows abre o arquivo (realpath), caro demais por entrada.
+            if os.path.normcase(e.name) == dest_nome and plat.path_key(child) == dest_key:
                 continue
             _walk_entries(child, os.path.join(rel_base, e.name), out, errors,
-                          seen_dirs, dest_abs)
+                          seen_dirs, dest_abs, dest_key)
         return
     if stat.S_ISREG(st.st_mode):
         out.append(Entry(src, rel_base, "file", st.st_size))
@@ -299,7 +304,9 @@ def preflight(sources, dest_dir) -> Preflight:
     seen_dirs = set()
     for s in sources:
         s = os.path.abspath(s)
-        if dest_abs == s or dest_abs.startswith(s + os.sep):
+        # Windows: caixa e nome 8.3 não enganam (C:\Fotos ≡ c:\FOTOS); a raiz
+        # do volume também é pega (antes "/" + os.sep nunca casava)
+        if plat.same_or_under(dest_abs, s):
             pf.errors.append((s, SKIP_LOOP))
             continue
         _walk_entries(s, os.path.basename(s.rstrip(os.sep)) or s,

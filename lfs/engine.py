@@ -2208,7 +2208,7 @@ def _arvores_podadas(roots, q_paths, excluidos=()):
             dono = _raiz_mais_especifica(rp, roots)
             if dono is None:
                 continue
-            if any(rp == e or _sob(rp, e) for e in excluidos):
+            if any(_sob_ou_igual(rp, e) for e in excluidos):
                 continue
             m = montagem(rp)
             if m is not None and m not in monts_vivas:
@@ -2417,13 +2417,13 @@ def _origem_de(plano):
 
     def origem(path):
         for a in ordem:
-            if path == a["arvore"] or _sob(path, a["arvore"]):
+            if _sob_ou_igual(path, a["arvore"]):
                 return (a["arvore"], a["padrao"])
         return None
 
     def dono(path):
         for a in ordem:
-            if path == a["arvore"] or _sob(path, a["arvore"]):
+            if _sob_ou_igual(path, a["arvore"]):
                 return a["dono"]
         return ordem[0]["dono"] if ordem else None
     return origem, dono
@@ -2435,15 +2435,24 @@ def _raiz_mais_especifica(path, roots):
     melhor, tam = None, -1
     for r in roots:
         ra = os.path.abspath(os.path.expanduser(r))
-        if (path == ra or _sob(path, ra)) and len(ra) > tam:
+        if _sob_ou_igual(path, ra) and len(ra) > tam:
             melhor, tam = r, len(ra)
     return melhor
 
 
 def _sob(path, root) -> bool:
-    """`path` está estritamente dentro de `root`?"""
-    base = root.rstrip(_SEPS)
+    """`path` está estritamente dentro de `root`? normcase: no Windows a caixa
+    não distingue pasta (C:\\Users ≡ c:\\users) e `/` vale `\\`; no Linux é
+    identidade."""
+    path = os.path.normcase(path)
+    base = os.path.normcase(root).rstrip(_SEPS)
     return path != base and path.startswith(base + os.sep)
+
+
+def _sob_ou_igual(path, root) -> bool:
+    """`path` é `root` (mesma regra de caixa do _sob) ou está dentro dele."""
+    return (os.path.normcase(path).rstrip(_SEPS) == os.path.normcase(root).rstrip(_SEPS)
+            or _sob(path, root))
 
 
 def _query_planejada(q: Query, roots, forca_one_fs: bool, mortas) -> Query:
@@ -2510,8 +2519,7 @@ def _atribuidor(roots):
 
     def attribute(path):
         for r in ordered:
-            base = r.rstrip("/")
-            if path == base or path == r or path.startswith(base + os.sep):
+            if path == r or _sob_ou_igual(path, r):
                 counts[r] += 1
                 return
         if roots:

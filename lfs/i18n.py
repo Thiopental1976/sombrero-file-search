@@ -248,6 +248,7 @@ _PT = {
     "Copy path(s)": "Copiar caminho(s)",
     "Open with": "Abrir com",
     "Other command…": "Outro comando…",
+    "Choose another app…": "Escolher outro aplicativo…",
     "Command (the file paths are appended):":
         "Comando (os caminhos dos arquivos são anexados):",
     "Open containing folder": "Abrir pasta do item",

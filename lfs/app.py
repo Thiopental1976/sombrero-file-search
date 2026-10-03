@@ -42,6 +42,7 @@ except ImportError:                     # QtMultimedia opcional (portabilidade)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine, boolean, disks, fileops, xdg, version, searches, humane, resultfilter, dupes, copyjobs
 from engine import Query, Match
+xdg = engine.plat.shell()       # xdg.py no Linux, shell_win.py no Windows (mesmo contrato)
 from i18n import t
 
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
@@ -155,6 +156,13 @@ def path_to_uri(path: str) -> str:
     apontaria para um arquivo que não existe, e o gerenciador diria só "não
     encontrado". fsencode + quote preserva byte a byte, que é como o
     text/uri-list é definido."""
+    if engine.plat.IS_WIN:
+        # Windows: separador '\', letra de unidade (file:///C:/...) e UNC
+        # (\\srv\share -> file://srv/share). Nome lá é sempre Unicode.
+        p = os.path.abspath(path).replace("\\", "/")
+        if p.startswith("//"):
+            return "file:" + quote(os.fsencode(p), safe="/")
+        return "file:///" + quote(os.fsencode(p), safe="/:")
     return "file://" + quote(os.fsencode(os.path.abspath(path)), safe="/")
 
 
@@ -261,6 +269,8 @@ def build_paths_mime(paths) -> QMimeData:
     md.setUrls([url_local(p) for p in paths])          # text/uri-list
     # soltar em terminal/editor: nome não-UTF-8 vai na forma que o shell entende
     md.setText("\n".join(engine.caminho_para_shell(p) for p in paths))
+    if engine.plat.IS_WIN:
+        return md                 # o Qt já converte as URLs em CF_HDROP (Explorer)
     enc = "\n".join(path_to_uri(p) for p in paths)
     md.setData("x-special/gnome-copied-files",
                QByteArray(("copy\n" + enc).encode("ascii")))
@@ -3127,6 +3137,12 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         dirs = list(dict.fromkeys(os.path.dirname(p) for p in paths))
+        if engine.plat.IS_WIN:
+            # Explorer na pasta COM os itens selecionados; senão, só a pasta
+            if not xdg.reveal(list(paths)):
+                for d in dirs:
+                    QDesktopServices.openUrl(url_local(d))
+            return
         # A janela tem que abrir no gerenciador PADRÃO DO USUÁRIO. O ShowItems é
         # ativado por nome no barramento, e quem registra o FileManager1 pode não
         # ser o padrão dele (no Mint o Nemo registra mesmo se o padrão for outro).
@@ -3222,7 +3238,12 @@ class MainWindow(QMainWindow):
         for app in xdg.apps_for(paths[0]):
             mnu.addAction(app.name, lambda _=False, a=app: xdg.launch(a, paths))
         mnu.addSeparator()
-        mnu.addAction(t("Other command…"), self.open_with_other)
+        if engine.plat.IS_WIN:
+            # a caixa nativa do Windows: lista completa, Loja, "Sempre usar"
+            mnu.addAction(t("Choose another app…"),
+                          lambda: xdg.choose_app(paths[0], int(self.winId())))
+        else:
+            mnu.addAction(t("Other command…"), self.open_with_other)
 
     def open_with_other(self):
         ms = self._sel_matches()

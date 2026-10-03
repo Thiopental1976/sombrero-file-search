@@ -124,6 +124,30 @@ def displaypath(p: str) -> str:
     return p
 
 
+# ------------------------------------------------------- comparar caminhos
+def path_key(p: str) -> str:
+    """Chave de COMPARAÇÃO de caminho (nunca para abrir/mostrar). Windows: o
+    NTFS não diferencia caixa, então `C:\\Fotos` e `c:\\fotos` são a mesma
+    pasta — normcase baixa a caixa e troca `/` por `\\`; realpath expande nome
+    curto 8.3 (`PROGRA~1`) e junções. Linux: abspath puro, como sempre foi
+    (realpath lá mudaria a semântica de symlink do acervo)."""
+    p = os.path.abspath(p)
+    if IS_WIN:
+        p = os.path.normcase(os.path.realpath(p))
+    return p
+
+
+def same_or_under(path: str, root: str) -> bool:
+    """`path` é `root` ou está dentro dele? Pelas chaves de path_key. Cobre a
+    raiz do volume (`/`, `C:\\`), onde `root + os.sep` nunca casaria."""
+    a, b = path_key(path), path_key(root)
+    if a == b:
+        return True
+    if not b.endswith(os.sep):
+        b += os.sep
+    return a.startswith(b)
+
+
 # ---------------------------------------------------------- módulos por SO
 def disks():
     """O módulo de topologia de disco da plataforma (contrato de disks.py)."""
