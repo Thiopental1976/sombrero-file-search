@@ -674,7 +674,23 @@ def resumo_incompleto(stats, tr=None):
 
 # ---------------------------------------------------------------- utilidades
 _ERRNO_MONTAGEM_MORTA = frozenset({107, 116, 112, 19})   # ENOTCONN ESTALE EHOSTDOWN ENODEV
-_RX_ERRO_MOTOR = re.compile(r"^(?:\[fd error\]|rg|fd|fdfind)?:?\s*(/.*?): ([^:]*)\(os error (\d+)\)\s*$")
+if plat.IS_WIN:
+    # No Windows o "(os error N)" do rg/fd é o winerror: BAD_NETPATH, UNEXP_NET_ERR,
+    # NETNAME_DELETED, BAD_NET_NAME, SEM_TIMEOUT, NO_NETWORK, NETWORK_UNREACHABLE,
+    # HOST_UNREACHABLE, NOT_CONNECTED (o mesmo conjunto da sonda do disks_win)
+    _ERRNO_MONTAGEM_MORTA = frozenset({53, 59, 64, 67, 121, 1222, 1231, 1232, 2250})
+# caminho do queixume: "/x" no Linux; "C:\x", "C:/x" ou "\\srv\share" no Windows
+_RX_ERRO_MOTOR = re.compile(
+    r"^(?:\[fd error\]|rg|fd|fdfind)?:?\s*((?:/|[A-Za-z]:[\\/]|\\\\).*?): ([^:]*)\(os error (\d+)\)\s*$")
+
+
+def _eh_negado(linha: str) -> bool:
+    """Queixa de PERMISSÃO do rg/fd. Linux: "Permission denied". Windows: "Access
+    is denied. (os error 5)" — 5 é ERROR_ACCESS_DENIED lá (no Linux, 5 é EIO:
+    por isso a regra pelo número só vale no Windows)."""
+    if "ermission denied" in linha:
+        return True
+    return plat.IS_WIN and ("ccess is denied" in linha or "(os error 5)" in linha)
 
 
 def _linha_de_montagem_morta(linha: str):
@@ -1191,7 +1207,7 @@ def _reap(proc, errf=None, stats=None):
             try:
                 errf.seek(0)
                 linhas = errf.readlines()
-                d = sum(1 for L in linhas if "ermission denied" in L)
+                d = sum(1 for L in linhas if _eh_negado(L))
                 if d:
                     stats["denied"] = stats.get("denied", 0) + d
                     anota_incompleto(stats, "permission_denied", n=d,
@@ -1223,7 +1239,7 @@ def _reap(proc, errf=None, stats=None):
                 # e a de nome, "read error". Nada ficou de fora (o ancestral é
                 # varrido nesta mesma busca), então não é incompleto: é o mesmo
                 # corte que o walker Python faz calado (E4, seen_dirs).
-                benigna = lambda L: "ermission denied" in L or "File system loop found" in L
+                benigna = lambda L: _eh_negado(L) or "File system loop found" in L
                 lacos = sum(1 for L in linhas if "File system loop found" in L)
                 motivo = next((L.strip() for L in linhas
                                if L.strip() and not benigna(L)), "")
@@ -1889,7 +1905,7 @@ def rg_flags_comuns(q: Query, matching: bool = True):
         # F12b: no rg '!/abs' NÃO ancora (medido, rg 14.1); '!**/abs' casa o
         # caminho absoluto inteiro como sufixo — exato na prática, e um falso
         # positivo exigiria outro caminho que TERMINE com este inteiro.
-        cmd += ["--glob", "!**" + e]
+        cmd += ["--glob", "!**" + _glob_de_caminho(e)]
     if q.rg_threads is not None:
         # 09/09/2026: o booleano particionado por disco escolhe o pool por
         # classe (_jobs_para_classe) e o carrega na Query do grupo — antes o
@@ -2451,6 +2467,21 @@ def _separa_raizes_com_mortas(grupos, excluidos):
     return out
 
 
+def _glob_de_caminho(p: str) -> str:
+    """Caminho -> forma de GLOB do rg/fd. Linux: o próprio. Windows: sem a
+    letra e com '/' — o globset normaliza o caminho do Windows para '/' antes de
+    casar, e no glob a '\\' é ESCAPE: '!**F:\\x\\NAS' nunca casava, e a montagem
+    de rede MORTA sob a raiz era varrida assim mesmo (VM, 02/10/2026). UNC:
+    '\\\\srv\\share\\x' -> '//srv/share/x'."""
+    if not plat.IS_WIN:
+        return p
+    if len(p) >= 2 and p[1] == ":":
+        p = p[2:]
+    p = p.replace("\\", "/")
+    # metacaracteres de glob no nome viram literais
+    return re.sub(r"([\[\]{}*?!])", r"[\1]", p)
+
+
 def _excludes_fd(q: Query):
     """`--exclude` do fd para Query.excluded_paths, relativo à raiz (única, por
     _separa_raizes_com_mortas) e ancorado com '/'."""
@@ -2458,7 +2489,7 @@ def _excludes_fd(q: Query):
     for r in q.paths:
         for e in q.excluded_paths:
             if _sob(e, r):
-                flags += ["--exclude", "/" + os.path.relpath(e, r)]
+                flags += ["--exclude", "/" + _glob_de_caminho(os.path.relpath(e, r)).lstrip("/")]
     return flags
 
 

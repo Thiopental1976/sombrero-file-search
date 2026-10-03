@@ -42,6 +42,19 @@ NOMES = {                                   # rótulo -> bytes do nome no disco
     "nfd_mac":        __import__("unicodedata").normalize("NFD", "exame_médico_mac.txt").encode(),
 }
 
+def _utf8(b):
+    try:
+        b.decode("utf-8"); return True
+    except UnicodeDecodeError:
+        return False
+
+if os.name == "nt":
+    # NTFS guarda o nome em UTF-16: um nome em BYTES de outra codificação não
+    # existe no Windows (só no Linux, vindo de disco/zip antigo). Lacuna dita.
+    _leg = sorted(k for k, b in NOMES.items() if not _utf8(b))
+    print("~skip  [só Linux] nomes em codificação legada:", ", ".join(_leg))
+    NOMES = {k: b for k, b in NOMES.items() if _utf8(b)}
+
 T = tempfile.mkdtemp(prefix="sfs_nomeleg_")
 try:
     tb = os.fsencode(T)
@@ -75,10 +88,11 @@ try:
          {"laudo_cp1252", "MEDICO_cp1252", "normal_utf8", "nfd_mac"},      "4+ globs com acento: variantes na fusão"),
     ]
     for globs, esperado, oque in casos:
+        esperado = esperado & set(NOMES)          # no Windows sem os legados
         a, b = busca(globs), busca(globs, python=True)
         ok(a == esperado, f"[fd    ] {oque} ({sorted(a)})")
         ok(b == esperado, f"[python] {oque} ({sorted(b)})")
-    ok(busca([g("médico")], case_sensitive=True) == {"laudo_cp1252", "normal_utf8", "nfd_mac"},
+    ok(busca([g("médico")], case_sensitive=True) == {"laudo_cp1252", "normal_utf8", "nfd_mac"} & set(NOMES),
        "caixa sensível: médico não casa MÉDICO")
 
     # o dialeto Python do _glob_to_regex não mudou (test_glob_to_regex o usa)

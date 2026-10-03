@@ -190,7 +190,8 @@ def _com_chaves(mapa, fn):
     def fake(p):
         ap = os.path.abspath(p)
         for r, k in mapa.items():
-            if ap == r or ap.startswith(r.rstrip("/") + "/"):
+            rr = os.path.abspath(r)       # Windows: "/A" vira "F:\\A" dos dois lados
+            if ap == rr or ap.startswith(rr.rstrip(os.sep) + os.sep):
                 return k
         return real(p)
     E._chave_de_disco = fake
@@ -420,6 +421,16 @@ TESTES = (test_sys_disks_desce_pelos_slaves, test_sys_disks_ciclo_nao_trava,
           test_fallback_python_particiona,
           test_booleano_por_grupo_rg, test_booleano_por_grupo_fallback,
           test_assinaturas_publicas)
+
+# Topologia do LINUX (/sys/block, slaves de dm/md, flag USB do sysfs): no
+# Windows as primitivas são as do disks_win (test_disks_win cobre); estes
+# fingimentos de sysfs não chegam lá. Lacuna dita, não escondida.
+_SO_LINUX = {test_sys_disks_desce_pelos_slaves, test_sys_disks_ciclo_nao_trava,
+             test_sys_disk_um_nome_continua, test_rotational_conjunto,
+             test_is_removable_conjunto, test_link_speed_conjunto, test_chave_de_disco_conjunto}
+if os.name == "nt":
+    print("~skip  [só Linux] " + ", ".join(sorted(f.__name__ for f in _SO_LINUX)))
+    TESTES = tuple(f for f in TESTES if f not in _SO_LINUX)
 
 for fn in TESTES:
     print(f"--- {fn.__name__}")

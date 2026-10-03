@@ -485,6 +485,12 @@ def mount_status(mp, timeout=3.0, _stat=os.stat, _statvfs=shutil.disk_usage, _po
             return "no_response"
     res = {}
 
+    def _morto(e, conjunto_posix):
+        # winerror real do Windows OU errno POSIX/WSA sem winerror (socket,
+        # injeção de teste) — a mesma tabela do Linux, para o contrato bater
+        w = getattr(e, "winerror", None)
+        return w in _DEAD_WINERRORS or (w is None and e.errno in conjunto_posix)
+
     def sonda():
         res["tid"] = threading.get_ident()
         try:
@@ -492,11 +498,11 @@ def mount_status(mp, timeout=3.0, _stat=os.stat, _statvfs=shutil.disk_usage, _po
             try:
                 _statvfs(mp)
             except OSError as e:
-                if getattr(e, "winerror", None) in _DEAD_WINERRORS or e.errno in (errno.ETIMEDOUT,):
+                if _morto(e, _L._DEAD_STATVFS_ERRNOS):
                     res["r"] = "broken_mount"; return
             res["r"] = "alive"
         except OSError as e:
-            res["r"] = "broken_mount" if getattr(e, "winerror", None) in _DEAD_WINERRORS else "alive"
+            res["r"] = "broken_mount" if _morto(e, _L._DEAD_MOUNT_ERRNOS) else "alive"
         except BaseException:
             res["r"] = "alive"
 

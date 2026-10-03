@@ -11,6 +11,12 @@ import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lfs import disks, engine as E
 
+if os.name == "nt":
+    # Tabelas sintéticas de /proc/mounts + sysfs: a topologia do LINUX. A do
+    # Windows (letras, PhysicalDrive, seek penalty, rede) é test_disks_win.
+    print("~skip  [só Linux] topologias de /proc/mounts (Windows: test_disks_win.py)")
+    sys.exit(0)
+
 falhas = []
 def ok(cond, nome):
     print(("ok    " if cond else "FALHA ") + nome)

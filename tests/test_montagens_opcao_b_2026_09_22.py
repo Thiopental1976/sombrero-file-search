@@ -81,20 +81,23 @@ ok("tmpfs" in engine._FS_NAO_USUARIO and "zram" in engine._FS_NAO_USUARIO,
 
 # planejar_raizes: raiz de REDE não leva stat antes da sonda (NAS congelado
 # pendurava 150 s, 22/09/2026) — o stat do motor vira uma armadilha
-chamados = []
-orig_dev, orig_ident = engine._st_dev, engine._ident
-engine._st_dev = lambda p: chamados.append(("st_dev", p)) or 1
-engine._ident = lambda p: chamados.append(("ident", p)) or (1, 1)
-try:
-    mnt = [("//nas/c", "/var/mnt/NAS", "cifs"), ("/dev/sda1", "/var/mnt/HD", "ext4")]
-    engine.planejar_raizes(["/var/mnt/NAS"], False, {}, mounts=mnt)
-    ok(not any(p == "/var/mnt/NAS" for _k, p in chamados),
-       f"raiz de rede: nenhum stat no plano ({chamados})")
-    chamados.clear()
-    engine.planejar_raizes(["/var/mnt/HD"], False, {}, mounts=mnt)
-    ok(any(p == "/var/mnt/HD" for _k, p in chamados), "raiz local segue levando stat (bind/identidade)")
-finally:
-    engine._st_dev, engine._ident = orig_dev, orig_ident
+if os.name != "nt":
+    chamados = []
+    orig_dev, orig_ident = engine._st_dev, engine._ident
+    engine._st_dev = lambda p: chamados.append(("st_dev", p)) or 1
+    engine._ident = lambda p: chamados.append(("ident", p)) or (1, 1)
+    try:
+        mnt = [("//nas/c", "/var/mnt/NAS", "cifs"), ("/dev/sda1", "/var/mnt/HD", "ext4")]
+        engine.planejar_raizes(["/var/mnt/NAS"], False, {}, mounts=mnt)
+        ok(not any(p == "/var/mnt/NAS" for _k, p in chamados),
+           f"raiz de rede: nenhum stat no plano ({chamados})")
+        chamados.clear()
+        engine.planejar_raizes(["/var/mnt/HD"], False, {}, mounts=mnt)
+        ok(any(p == "/var/mnt/HD" for _k, p in chamados), "raiz local segue levando stat (bind/identidade)")
+    finally:
+        engine._st_dev, engine._ident = orig_dev, orig_ident
+else:
+    print('~skip  [só Linux] tabela /var/mnt do Linux; a versão Windows (UNC/letra de rede sem stat) está em test_disks_win')
 ok(engine.user_mounts(["/dev/sdc1 /media/rodrigo/Backup\\040Externo ext4 rw 0 0\n"])
    == ["/media/rodrigo/Backup Externo"], "espaço escapado (\\040) segue decodificado")
 ok(isinstance(engine.user_mounts(), list) and isinstance(engine.network_mounts(), list),

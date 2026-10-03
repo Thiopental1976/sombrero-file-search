@@ -15,6 +15,10 @@ import os, shutil, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lfs import engine as E
 
+# caminhos no separador do SO: no Windows join(raiz, "a/b") dá barras misturadas,
+# e um `not in` com barra errada passaria por acaso
+J = lambda *a: os.path.normpath(os.path.join(*a))
+
 falhas = []
 def ok(cond, nome):
     print(("ok    " if cond else "FALHA ") + nome)
@@ -27,7 +31,7 @@ def arvore():
                 "timeshift/snapshots/2026-09-01/usr/achado.txt",
                 "timeshift/snapshots-daily/2026-09-01/usr/achado.txt",
                 ".snapshots/3/snapshot/achado.txt"):
-        p = os.path.join(raiz, rel)
+        p = J(raiz, rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, "w") as f:
             f.write("laudo\n")
@@ -37,7 +41,7 @@ def arvore():
 def busca(q):
     out = []
     E.search(q, out.append)
-    return sorted(m.path for m in out)
+    return sorted(os.path.normpath(m.path) for m in out)
 
 
 def com_backend(nome, fn):
@@ -58,7 +62,7 @@ try:
             # 1) root FORA: só o normal aparece
             q = E.Query(paths=[raiz], name_patterns=["achado.txt"], **q_extra)
             r = com_backend(backend, lambda: busca(q))
-            ok(r == [os.path.join(raiz, "normal/achado.txt")],
+            ok(r == [J(raiz, "normal/achado.txt")],
                f"[{modo}/{backend}] root fora: snapshot escondido, normal aparece")
 
             # 2) bug2: padrão de nome que casa o próprio diretório 'snapshots'
@@ -69,28 +73,28 @@ try:
                    f"[{modo}/{backend}] bug2: glob '*' não reabre a árvore de snapshot")
 
             # 3) bug3: root DENTRO do snapshot -> quem aponta pra lá quer aquilo
-            dentro = os.path.join(raiz, "timeshift/snapshots/2026-09-01")
+            dentro = J(raiz, "timeshift/snapshots/2026-09-01")
             q3 = E.Query(paths=[dentro], name_patterns=["achado.txt"], **q_extra)
             r3 = com_backend(backend, lambda: busca(q3))
-            ok(r3 == [os.path.join(dentro, "usr/achado.txt")],
+            ok(r3 == [J(dentro, "usr/achado.txt")],
                f"[{modo}/{backend}] bug3: root dentro do snapshot acha o que está lá")
 
     # 4) o padrão do snapper mora num diretório OCULTO: só aparece com hidden,
     #    e é aí que a exclusão dele precisa valer.
     q4 = E.Query(paths=[raiz], name_patterns=["achado.txt"], include_hidden=True)
     r4 = busca(q4)
-    ok(r4 == [os.path.join(raiz, "normal/achado.txt")],
+    ok(r4 == [J(raiz, "normal/achado.txt")],
        "com --hidden, .snapshots (snapper) continua excluído")
 
     # 5) o auto-desligar (bug3) é POR GRUPO, não pela consulta inteira: buscar
     #    dentro de um snapshot E na raiz normal ao mesmo tempo não pode reabrir
     #    os snapshots do lado normal.
-    dentro = os.path.join(raiz, "timeshift/snapshots/2026-09-01")
+    dentro = J(raiz, "timeshift/snapshots/2026-09-01")
     q_mix = E.Query(paths=[dentro, raiz], name_patterns=["achado.txt"])
     r_mix = busca(q_mix)
-    ok(os.path.join(dentro, "usr/achado.txt") in r_mix,
+    ok(J(dentro, "usr/achado.txt") in r_mix,
        "consulta mista: o root dentro do snapshot acha o que está lá")
-    ok(os.path.join(raiz, "timeshift/snapshots-daily/2026-09-01/usr/achado.txt") not in r_mix,
+    ok(J(raiz, "timeshift/snapshots-daily/2026-09-01/usr/achado.txt") not in r_mix,
        "consulta mista: o root normal NÃO reabre as outras árvores de snapshot")
 
     # 6) desligável

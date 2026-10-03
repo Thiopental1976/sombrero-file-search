@@ -24,6 +24,8 @@ RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 LFS = os.path.join(RAIZ, "lfs")
 sys.path.insert(0, LFS)
 import engine, docs_text                                     # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixtures_plat as FP                                   # noqa: E402
 
 falhas = []
 def ok(cond, msg):
@@ -130,7 +132,7 @@ try:
     ok(nosso["args"][0] == "-I" and nosso["args"][1].endswith("docs_text.py"), "adaptador roda o leitor isolado (-I)")
 
     xdg = os.path.join(T, "xdg"); os.makedirs(os.path.join(xdg, "ripgrep-all"))
-    velho = os.environ.get("XDG_CONFIG_HOME"); os.environ["XDG_CONFIG_HOME"] = xdg
+    velho = os.environ.get(FP.ENV_CONFIG); os.environ[FP.ENV_CONFIG] = xdg
     try:
         with open(os.path.join(xdg, "ripgrep-all", "config.jsonc"), "w") as f:
             f.write('{\n // comentário\n "custom_adapters": [ /* bloco */ {"name":"url","description":"http://x//y",'
@@ -145,11 +147,11 @@ try:
         os.remove(os.path.join(xdg, "ripgrep-all", "config.jsonc"))
         ok(engine._rga_config_usuario() == {}, "sem config do usuário: {}")
     finally:
-        if velho is None: os.environ.pop("XDG_CONFIG_HOME", None)
-        else: os.environ["XDG_CONFIG_HOME"] = velho
+        if velho is None: os.environ.pop(FP.ENV_CONFIG, None)
+        else: os.environ[FP.ENV_CONFIG] = velho
 
-    cache = os.path.join(T, "cache_cfg"); velho_c = os.environ.get("XDG_CACHE_HOME")
-    os.environ["XDG_CACHE_HOME"] = cache; engine._rga_args_cache = None
+    cache = os.path.join(T, "cache_cfg"); velho_c = os.environ.get(FP.ENV_CACHE)
+    os.environ[FP.ENV_CACHE] = cache; engine._rga_args_cache = None
     try:
         a1 = engine.rga_args()
         ok(len(a1) == 1 and os.path.isfile(a1[0].split("=", 1)[1]), f"rga_args grava o config no cache ({a1})")
@@ -159,8 +161,8 @@ try:
            "config apagado do cache no meio da sessão: é recriado, não fica apontando para o nada")
     finally:
         engine._rga_args_cache = None
-        if velho_c is None: os.environ.pop("XDG_CACHE_HOME", None)
-        else: os.environ["XDG_CACHE_HOME"] = velho_c
+        if velho_c is None: os.environ.pop(FP.ENV_CACHE, None)
+        else: os.environ[FP.ENV_CACHE] = velho_c
 
     # ------------------------------------------------------------ 3. bin/ ao lado de lfs/
     ok(os.path.realpath(engine._APP_BINS[0]) == os.path.realpath(os.path.join(RAIZ, "bin")),
@@ -188,8 +190,9 @@ try:
         engine.RG = rg_orig
 
     # ------------------------------------------------------------ 5. ponta a ponta
-    rga = shutil.which("rga")
-    rg = shutil.which("rg")
+    rga = shutil.which("rga") or engine.RGA      # Windows: bin\rga.exe (fora do PATH)
+    rg = shutil.which("rg") or engine.RG
+    EXE = ".exe" if FP.WIN else ""
     if not (rga and rg):
         print("(pulado: sem rga/rg nesta máquina)")
     else:
@@ -197,15 +200,18 @@ try:
         # também na pasta dele — um rga ao lado de um pandoc falsearia o teste
         p = os.path.join(T, "path"); os.makedirs(p)
         for b in ("rga", "rga-preproc"):
-            src = os.path.realpath(shutil.which(b) or os.path.join(os.path.dirname(os.path.realpath(rga)), b))
-            shutil.copy2(src, os.path.join(p, b))
-        for b in ("rg", "sh"):
-            os.symlink(os.path.realpath(shutil.which(b)), os.path.join(p, b))
+            src = os.path.realpath(shutil.which(b) or os.path.join(os.path.dirname(os.path.realpath(rga)), b + EXE))
+            shutil.copy2(src, os.path.join(p, b + EXE))
+        if FP.WIN:                                   # sem symlink nem sh no Windows
+            shutil.copy2(os.path.realpath(rg), os.path.join(p, "rg.exe"))
+        else:
+            for b in ("rg", "sh"):
+                os.symlink(os.path.realpath(shutil.which(b)), os.path.join(p, b))
         docs = os.path.join(T, "docs"); os.makedirs(docs)
         for n, dados in (("a.docx", DOCX), ("b.odt", ODT), ("c.epub", EPUB)):
             with open(os.path.join(docs, n), "wb") as f: f.write(dados)
-        env = dict(os.environ, PATH=p, XDG_CACHE_HOME=os.path.join(T, "cache"),
-                   XDG_CONFIG_HOME=os.path.join(T, "sem_config"))
+        env = dict(os.environ, PATH=p, **{FP.ENV_CACHE: os.path.join(T, "cache"),
+                                          FP.ENV_CONFIG: os.path.join(T, "sem_config")})
         def busca(termo):
             r = subprocess.run([sys.executable, os.path.join(LFS, "cli.py"), docs, "-D", "-c", termo, "-l"],
                                capture_output=True, text=True, env=env, timeout=120)

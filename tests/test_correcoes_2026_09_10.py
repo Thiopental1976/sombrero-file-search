@@ -146,6 +146,9 @@ def test_preview_nao_conta_bind_duas_vezes():
     MESMA identidade de `planejar_raizes`: duas montagens que são o mesmo
     diretório contam uma. Simulado com symlink — `os.stat` devolve o mesmo
     (st_dev, st_ino), que é exatamente o que um bind mount faz."""
+    if os.name == "nt":                  # montagem DENTRO de pasta (bind/ostree) é do Linux;
+        print("~skip  [só Linux] test_preview_nao_conta_bind_duas_vezes: montagens aninhadas (v1 do Windows não tem pastas montadas)")
+        return
     raiz = tempfile.mkdtemp(prefix="sfs_prev_")
     try:
         var = os.path.join(raiz, "var"); os.makedirs(var)
@@ -175,6 +178,9 @@ def test_diferenca_conhecida_preview_lista_montagem_do_mesmo_fs():
     fronteira (o NAS, o pendrive), e uma montagem do mesmo sistema de arquivos
     continua listada. Efeito: o número do preview pode ser MAIOR que o de raízes
     efetivas. Fica pinado aqui para que mudar isso seja decisão, não acidente."""
+    if os.name == "nt":                  # montagem DENTRO de pasta (bind/ostree) é do Linux;
+        print("~skip  [só Linux] test_diferenca_conhecida_preview_lista_montagem_do_mesmo_fs: montagens aninhadas (v1 do Windows não tem pastas montadas)")
+        return
     raiz = tempfile.mkdtemp(prefix="sfs_prev2_")
     try:
         var = os.path.join(raiz, "var"); os.makedirs(var)
