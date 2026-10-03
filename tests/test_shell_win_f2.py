@@ -29,7 +29,7 @@ try:
     ok(P.same_or_under(os.path.join(src, "x"), src) and P.same_or_under(src, src),
        "same_or_under: dentro e igual")
     ok(not P.same_or_under(src + "2", src), "same_or_under: prefixo de nome não é 'dentro'")
-    raiz = os.path.abspath(os.sep)
+    raiz = os.path.splitdrive(tmp)[0] + os.sep       # o volume do tmp (no CI, C:; o cwd é D:)
     ok(P.same_or_under(tmp, raiz), f"same_or_under: tudo está sob a raiz do volume ({raiz})")
 
     if REAL_WIN:
@@ -49,6 +49,32 @@ try:
     else:
         ok(not P.same_or_under(src.upper(), src),
            "Linux: caixa distingue pasta (FOTOS ≠ Fotos), como sempre")
+
+    # ------------------------- link de PASTA num destino sem symlink: pulado
+    alvo = os.path.join(tmp, "alvo_dir"); os.makedirs(alvo)
+    with open(os.path.join(alvo, "f.txt"), "w") as f:
+        f.write("x")
+    org = os.path.join(tmp, "org"); os.makedirs(org)
+    try:
+        os.symlink(alvo, os.path.join(org, "atalho"), target_is_directory=True)
+        tem_link = True
+    except OSError:                                    # Windows sem privilégio
+        tem_link = False
+        print("~skip  link de pasta: este usuário não cria symlink")
+    if tem_link:
+        dst = os.path.join(tmp, "dst"); os.makedirs(dst)
+        caps_reais = F.disks.dest_caps
+        def sem_symlink(d):
+            c = caps_reais(d); c.symlinks = False; return c
+        F.disks.dest_caps = sem_symlink
+        try:
+            pf = F.preflight([org], dst)
+            ok(pf.links_dir and not pf.links_degraded, "preflight: link de pasta vai p/ links_dir, não vira 'cópia'")
+            res = F.copy_to([org], dst)
+            ok(not res.failed and any(r == F.SKIP_SYMLINK for _, r in res.skipped),
+               f"cópia: link de pasta é PULADO com motivo, não falha (failed={res.failed})")
+        finally:
+            F.disks.dest_caps = caps_reais
 
     # -------------------------------------------- motor: raiz × achado
     if REAL_WIN:

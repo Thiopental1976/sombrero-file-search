@@ -249,6 +249,8 @@ _PT = {
     "Open with": "Abrir com",
     "Other command…": "Outro comando…",
     "Choose another app…": "Escolher outro aplicativo…",
+    "{n} folder link(s) cannot be recreated on {fs} and will be skipped.":
+        "{n} atalho(s) de pasta não podem ser recriados em {fs} e serão pulados.",
     "Command (the file paths are appended):":
         "Comando (os caminhos dos arquivos são anexados):",
     "Open containing folder": "Abrir pasta do item",

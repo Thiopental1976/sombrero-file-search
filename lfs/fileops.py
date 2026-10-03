@@ -62,7 +62,7 @@ PACE = 1 << 24
 # a GUI é que traduz (i18n mora na borda, como nos rótulos do boolean.on_phase).
 SKIP_TOO_BIG = "too_big"             # não cabe no limite do FS de destino (FAT32)
 SKIP_BAD_NAME = "bad_name"           # nome ilegal no destino e o usuário não adaptou
-SKIP_SYMLINK = "symlink_unsupported"  # destino não tem symlink e o alvo sumiu
+SKIP_SYMLINK = "symlink_unsupported"  # destino sem symlink e o alvo sumiu ou é pasta
 SKIP_CONFLICT = "conflict_skip"      # já existe e o usuário escolheu Pular
 SKIP_CANCELLED = "cancelled"
 SKIP_LOOP = "dest_inside_source"     # copiar uma pasta para dentro dela mesma
@@ -100,6 +100,7 @@ class Preflight:
         self.bad_names: list[tuple] = []    # (src, motivo) — nome ilegal no destino
         self.links_degraded: list[str] = []  # symlinks que virarão cópia real
         self.links_broken: list[str] = []   # symlinks quebrados, impossíveis no destino
+        self.links_dir: list[str] = []      # symlinks de PASTA, sem como recriar no destino
         self.errors: list[tuple] = []       # (src, erro) na varredura
         self.write_probe = None             # WriteProbe: dá pra gravar aqui? (§1.1)
         self.strategy = ""                  # ATOMIC|GUARDED|GIO|BLOCKED (decidido no preflight)
@@ -127,7 +128,7 @@ class Preflight:
     @property
     def has_warnings(self) -> bool:
         return bool(self.too_big or self.bad_names or self.links_degraded
-                    or self.links_broken or not self.fits)
+                    or self.links_broken or self.links_dir or not self.fits)
 
 
 # ---- estratégias de escrita (decididas UMA vez no preflight, nunca por exceção)
@@ -320,8 +321,12 @@ def preflight(sources, dest_dir) -> Preflight:
             if caps.max_file is not None and e.size > caps.max_file:
                 pf.too_big.append((e.src, e.size))
         elif e.kind == "link" and not caps.symlinks:
-            # sem symlink no destino: vira cópia real do alvo, ou é impossível
-            if os.path.exists(e.src):
+            # sem symlink no destino: vira cópia real do alvo, ou é impossível.
+            # Link de PASTA não vira cópia (o walk não desce em link): é pulado
+            # com motivo — antes ia para open(pasta) e saía "Permission denied".
+            if os.path.isdir(e.src):
+                pf.links_dir.append(e.src)
+            elif os.path.exists(e.src):
                 pf.links_degraded.append(e.src)
                 try:
                     pf.total_bytes += os.stat(e.src).st_size
@@ -675,7 +680,7 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
                 if os.path.lexists(dst):
                     _rm_partial(dst)              # só o destino, decidido acima
                 os.symlink(target, dst)
-            elif e.kind == "link" and not os.path.exists(e.src):
+            elif e.kind == "link" and (not os.path.exists(e.src) or os.path.isdir(e.src)):
                 res.skipped.append((e.src, SKIP_SYMLINK))
                 continue
             else:

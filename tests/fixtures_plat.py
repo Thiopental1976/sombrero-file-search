@@ -7,6 +7,7 @@
   pode_negar_leitura()     False quando negar não tem efeito (root no Linux)
   so_linux(motivo)         True no Linux; no Windows imprime "~skip <motivo>" —
                            lacuna CONHECIDA, dita, nunca escondida
+  arquivo_esparso(p, n)    arquivo de n bytes sem gastar disco (NTFS: FSCTL_SET_SPARSE)
   NOMES_BYTES              nomes com byte não-UTF-8 existem? (só no Linux:
                            NTFS guarda UTF-16, não há byte quebrado)
 """
@@ -98,3 +99,28 @@ def pode_symlink() -> bool:
         finally:
             shutil.rmtree(d, ignore_errors=True)
     return _PODE_LINK
+
+
+def arquivo_esparso(path: str, tamanho: int):
+    """Cria `path` com `tamanho` bytes SEM gastar disco. No Linux o truncate já
+    deixa buraco; no NTFS não: SetEndOfFile num arquivo comum ALOCA os 5 GiB
+    (medido na VM: minutos de escrita, e o disco enche). Lá é preciso marcar o
+    arquivo como esparso (FSCTL_SET_SPARSE) e estender ESCREVENDO o último
+    byte: o f.truncate() do Python no Windows é o _chsize_s do CRT, que estende
+    gravando zeros um bloco por vez — desfaz o esparso (medido)."""
+    with open(path, "wb") as f:
+        if not WIN or tamanho <= 0:
+            f.truncate(max(tamanho, 0))
+            return
+        import ctypes, msvcrt
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.DeviceIoControl.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p,
+                                        wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                                        ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+        ret = wintypes.DWORD()
+        FSCTL_SET_SPARSE = 0x000900C4
+        k32.DeviceIoControl(msvcrt.get_osfhandle(f.fileno()), FSCTL_SET_SPARSE,
+                            None, 0, None, 0, ctypes.byref(ret), None)
+        f.seek(tamanho - 1)
+        f.write(b"\0")

@@ -1002,6 +1002,9 @@ class PreflightDialog(QDialog):
         if pf.links_broken:
             warn.append(t("{n} broken symlink(s) cannot be copied to {fs} and "
                           "will be skipped.", n=len(pf.links_broken), fs=pf.caps.label))
+        if pf.links_dir:
+            warn.append(t("{n} folder link(s) cannot be recreated on {fs} and "
+                          "will be skipped.", n=len(pf.links_dir), fs=pf.caps.label))
         for src, err in pf.errors[:10]:
             warn.append("%s: %s" % (src, err))
         self.details.setPlainText("\n".join(warn) if warn else

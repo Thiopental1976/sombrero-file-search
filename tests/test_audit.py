@@ -16,6 +16,7 @@ import engine, boolean, i18n, humane, dupes, disks, fileops, copyjobs
 from engine import Query
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_parity_rg_python import test_parity_directed_and_property
+from fixtures_plat import WIN, pode_symlink, arquivo_esparso
 
 
 def _tree():
@@ -612,7 +613,9 @@ def test_fd_merge_single_pass():
         real_popen = subprocess.Popen
         n_popen = {"fd": 0}
         def spy(cmd, *a, **k):
-            if cmd and os.path.basename(str(cmd[0])) in ("fd", "fdfind"):
+            # Windows: o binário é "fd.exe" — compara sem a extensão
+            nome = os.path.splitext(os.path.basename(str(cmd[0])))[0].lower() if cmd else ""
+            if nome in ("fd", "fdfind"):
                 n_popen["fd"] += 1
             return real_popen(cmd, *a, **k)
         subprocess.Popen = spy
@@ -1055,6 +1058,9 @@ def test_copy_hostile_names():
 def test_copy_symlinks_and_cycles():
     """§6.2: symlink vira symlink; link quebrado é copiado como link; ciclo de
     diretório não trava a varredura (guarda st_dev/st_ino)."""
+    if WIN and not pode_symlink():
+        print("~skip  F7 symlink/ciclo: usuário comum do Windows não cria symlink "
+              "(WinError 1314) — não há origem com link para copiar"); return
     src = tempfile.mkdtemp(prefix="lfs_cp_lnk_")
     dst = tempfile.mkdtemp(prefix="lfs_cp_dst_")
     try:
@@ -1063,9 +1069,29 @@ def test_copy_symlinks_and_cycles():
         os.symlink("alvo.txt", os.path.join(src, "bom.lnk"))
         os.symlink("nao_existe.txt", os.path.join(src, "quebrado.lnk"))
         os.makedirs(os.path.join(src, "sub"))
-        os.symlink(src, os.path.join(src, "sub", "ciclo"))     # aponta p/ a raiz
+        os.symlink(src, os.path.join(src, "sub", "ciclo"),      # aponta p/ a raiz
+                   target_is_directory=True)                    # (Windows: link de PASTA)
         res = fileops.copy_to([src], dst)             # não pode rodar para sempre
         base = os.path.join(dst, os.path.basename(src))
+        if WIN:
+            # Windows: dest_caps dá symlinks=False em todo volume (o usuário
+            # comum não cria link) — link de arquivo vira CÓPIA do alvo, link
+            # quebrado é pulado com motivo, e o ciclo não trava (chegar aqui já
+            # prova). O link de PASTA degradado cai em `failed` (open() de pasta
+            # = Permission denied): dito, nunca silencioso — ver o relatório.
+            bom = os.path.join(base, "bom.lnk")
+            assert not os.path.islink(bom) and open(bom).read() == "alvo", \
+                "link de arquivo devia virar cópia real do alvo"
+            motivos = {os.path.basename(p): r for p, r in res.skipped}
+            assert motivos.get("quebrado.lnk") == fileops.SKIP_SYMLINK, res.skipped
+            assert not os.path.lexists(os.path.join(base, "quebrado.lnk"))
+            assert not os.path.islink(os.path.join(base, "sub", "ciclo")), "criou symlink"
+            ciclo = os.path.join(src, "sub", "ciclo")
+            dito = {p for p, _ in res.failed} | {p for p, _ in res.skipped}
+            assert ciclo in dito, f"link de pasta sumiu sem aviso: {res.failed} {res.skipped}"
+            assert {p for p, _ in res.failed} <= {ciclo}, res.failed
+            print("ok  F7   (Windows) symlink vira cópia, quebrado pulado c/ motivo, ciclo não trava")
+            return
         assert os.path.islink(os.path.join(base, "bom.lnk")), "symlink virou arquivo"
         assert os.readlink(os.path.join(base, "bom.lnk")) == "alvo.txt"
         assert os.path.islink(os.path.join(base, "quebrado.lnk")), \
@@ -1418,11 +1444,22 @@ def test_mount_alive_watchdog():
         elapsed = time.time() - t0
         assert dead == "no_response", "montagem travada deveria dar no_response"
         assert elapsed < 2.0, f"mount_status NÃO respeitou o timeout (levou {elapsed:.1f}s)"
-        # o filho preso ficou registrado p/ reap oportunista, não perdido
-        assert disks._abandoned_pids, "sonda travada deveria ter sido abandonada (F1)"
+        if WIN:
+            # Windows não tem fork: a sonda é uma THREAD daemon (disks_win.
+            # mount_status). Abandonar = a thread presa segue viva, daemon (não
+            # impede a saída do processo), e o chamador já voltou. Não há pid
+            # para reap — _abandoned_pids é do caminho fork do Linux.
+            import threading as _th
+            presas = [t for t in _th.enumerate() if t.name == "sfs-sonda" and t.is_alive()]
+            assert presas and all(t.daemon for t in presas), \
+                "sonda travada deveria ter sido abandonada como thread daemon (F1/Windows)"
+        else:
+            # o filho preso ficou registrado p/ reap oportunista, não perdido
+            assert disks._abandoned_pids, "sonda travada deveria ter sido abandonada (F1)"
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    print("ok  F9a  mount_status: viva/quebrada/travada via processo, sem zumbi (F1/F2)")
+    print("ok  F9a  mount_status: viva/quebrada/travada via "
+          + ("thread daemon (Windows)" if WIN else "processo") + ", sem zumbi (F1/F2)")
 
 
 def test_planejar_expande_montagens():
@@ -1545,9 +1582,30 @@ def test_excluded_paths_todos_os_backends():
         assert g == [["/outra"], [d]], g
         assert engine._excludes_fd(engine.Query(**base)) == ["--exclude", "/x"]
         flags = engine.rg_flags_comuns(engine.Query(**base))
-        assert flags[-2:] == ["--glob", "!**" + morta], flags[-2:]
+        # Windows: o glob do rg sai sem a letra e com '/' (_glob_de_caminho — o
+        # globset casa contra o caminho já normalizado para '/'); Linux: o próprio
+        glob_morta = engine._glob_de_caminho(morta) if WIN else morta
+        assert flags[-2:] == ["--glob", "!**" + glob_morta], flags[-2:]
     finally:
         shutil.rmtree(d, ignore_errors=True)
+    if WIN:
+        # _reap no Windows: o "(os error N)" é winerror — 53 (BAD_NETPATH) é
+        # montagem morta; 1117 (IO_DEVICE) segue read_error. O perfil de FUSE
+        # sob /mnt (abaixo) não existe no Windows: disks_win cobre os volumes.
+        errf = tempfile.TemporaryFile(mode="w+")
+        errf.write("[fd error]: \\\\nas\\video: The network path was not found. (os error 53)\n"
+                   "[fd error]: E:\\d\\f: The request could not be performed because of "
+                   "an I/O device error. (os error 1117)\n")
+        class P:  # processo já morto, rc 0
+            returncode = 0
+            def poll(self): return 0
+        st = {}
+        engine._reap(P(), errf, st)
+        mot = {(e["motivo"], e["onde"]) for e in st["incompleto"]}
+        assert mot == {("dead_mount", "\\\\nas\\video"), ("read_error", "")}, mot
+        assert engine._jobs_para_classe(["unknown"]) is None
+        print("ok  F12b excluded_paths: nenhum motor toca montagem condenada; winerror morto = dead_mount")
+        return
     # _reap: errno de montagem morta -> dead_mount no caminho; EIO segue read_error
     errf = tempfile.TemporaryFile(mode="w+")
     errf.write("[fd error]: /mnt/nas: Socket not connected (os error 107)\n"
@@ -1894,30 +1952,45 @@ def test_preflight_flags_fat_problems():
     try:
         with open(os.path.join(src, "ok.mp4"), "w") as f:
             f.write("pequeno")
-        ilegal = os.path.join(src, "cena: 12?.mp4")
-        with open(ilegal, "w") as f:
-            f.write("nome ilegal em FAT")
-        os.symlink("ok.mp4", os.path.join(src, "atalho.lnk"))
+        # Windows: "cena: 12?.mp4" NÃO EXISTE na origem — o Win32 proíbe : e ?
+        # em qualquer FS (o open cria "cena" + fluxo alternativo " 12?.mp4" no
+        # NTFS). Nome ilegal-no-FAT-mas-legal-na-origem é coisa do Linux; lá o
+        # Windows dá o mesmo charset a todo destino (disks_win._caps_win).
+        com_ilegal = not WIN
+        com_link = not WIN or pode_symlink()      # usuário comum: WinError 1314
+        if com_ilegal:
+            ilegal = os.path.join(src, "cena: 12?.mp4")
+            with open(ilegal, "w") as f:
+                f.write("nome ilegal em FAT")
+        if com_link:
+            os.symlink("ok.mp4", os.path.join(src, "atalho.lnk"))
         grande = os.path.join(src, "gigante.mkv")
-        with open(grande, "wb") as f:                   # esparso: 5 GiB sem gastar disco
-            f.truncate(5 * (1 << 30))
+        arquivo_esparso(grande, 5 * (1 << 30))         # esparso: 5 GiB sem gastar disco
         pf = fileops.preflight([src], dst)
         assert [p for p, _ in pf.too_big] == [grande], pf.too_big
-        assert [os.path.basename(p) for p, _ in pf.bad_names] == ["cena: 12?.mp4"]
-        assert pf.links_degraded, "symlink em FAT devia virar cópia real"
+        assert [os.path.basename(p) for p, _ in pf.bad_names] == \
+            (["cena: 12?.mp4"] if com_ilegal else []), pf.bad_names
+        if com_link:
+            assert pf.links_degraded, "symlink em FAT devia virar cópia real"
         # sem adaptar: pula com motivo. Adaptando: copia com nome legal.
         res = fileops.copy_to([src], dst, plan=pf)
         motivos = dict((os.path.basename(p), r) for p, r in res.skipped)
         assert motivos.get("gigante.mkv") == fileops.SKIP_TOO_BIG, motivos
-        assert motivos.get("cena: 12?.mp4") == fileops.SKIP_BAD_NAME, motivos
+        if com_ilegal:
+            assert motivos.get("cena: 12?.mp4") == fileops.SKIP_BAD_NAME, motivos
         res2 = fileops.copy_to([src], dst, plan=pf, sanitize_names=True)
         base = os.path.join(dst, os.path.basename(src))
-        assert os.path.exists(os.path.join(base, "cena_ 12_.mp4")), os.listdir(base)
-        assert not os.path.islink(os.path.join(base, "atalho.lnk")), \
-            "criou symlink num FS que não tem symlink"
-        assert res2.copied
+        if com_ilegal:
+            assert os.path.exists(os.path.join(base, "cena_ 12_.mp4")), os.listdir(base)
+        if com_link:
+            assert not os.path.islink(os.path.join(base, "atalho.lnk")), \
+                "criou symlink num FS que não tem symlink"
+        if com_ilegal:
+            assert res2.copied, (res2.copied, res2.skipped, res2.failed)
+        else:   # sem o nome ilegal, o 2º lote só reencontra o que o 1º copiou
+            assert os.path.join(base, "ok.mp4") in res.copied, (res.copied, res.failed)
         print("ok  F7   destino FAT32: >4 GiB e nome ilegal pulados com motivo; "
-              "com 'adaptar', copia")
+              "com 'adaptar', copia" + (" (Windows: sem nome ilegal na origem)" if WIN else ""))
     finally:
         disks.dest_caps = old
         shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
@@ -2577,8 +2650,7 @@ def test_a4_1_copy_bytes_excludes_too_big():
         with open(os.path.join(src, "ok.mp4"), "w") as f:
             f.write("x" * 100)
         grande = os.path.join(src, "gigante.mkv")
-        with open(grande, "wb") as f:
-            f.truncate(5 * (1 << 30))               # esparso, >4 GiB do FAT
+        arquivo_esparso(grande, 5 * (1 << 30))      # esparso, >4 GiB do FAT
         pf = fileops.preflight([src], dst)
         assert [p for p, _ in pf.too_big] == [grande]
         # total_bytes inclui o gigante; copy_bytes NÃO
@@ -2596,6 +2668,9 @@ def test_a4_1_copy_bytes_excludes_too_big():
 def test_a4_2_native_symlink_counts_in_total():
     """A4.2: symlink recriado como link nativo incrementa done_files no loop;
     o preflight tem que contá-lo em total_files, senão a barra passa de 100%."""
+    if WIN and not pode_symlink():
+        print("~skip  A4.2: usuário comum do Windows não cria symlink (WinError 1314) — "
+              "sem symlink na origem não há o que contar"); return
     src = tempfile.mkdtemp(prefix="lfs_a42_")
     dst = tempfile.mkdtemp(prefix="lfs_a42_dst_")
     try:
@@ -2611,6 +2686,16 @@ def test_a4_2_native_symlink_counts_in_total():
         total = seen[-1][1]
         assert done_max <= total, (done_max, total)
         base = os.path.join(dst, os.path.basename(src))
+        if WIN:
+            # Windows: dest_caps diz symlinks=False em todo volume (usuário comum
+            # não cria symlink) — o link vira CÓPIA do alvo, contada em total_files
+            # via links_degraded. A invariante A4.2 (done <= total) é a mesma.
+            at = os.path.join(base, "atalho")
+            assert not os.path.islink(at) and os.path.isfile(at), "symlink devia virar cópia real"
+            assert open(at).read() == "conteudo", "cópia degradada com conteúdo errado"
+            assert pf.links_degraded, "preflight devia anunciar o link degradado"
+            print("ok  A4.2 symlink degradado (Windows) entra em total_files (done nunca passa total)")
+            return
         assert os.path.islink(os.path.join(base, "atalho")), "symlink devia ser nativo"
         print("ok  A4.2 symlink nativo entra em total_files (done nunca passa total)")
     finally:
@@ -4184,6 +4269,38 @@ def main():
            test_dupes_parity_with_oracle,
            # Campanha 2 / Bloco 1 — paridade rg ↔ fallback Python
            test_parity_directed_and_property]
+    # Só-Linux LEGÍTIMOS: exercitam /proc/mounts, sysfs, /mnt|/media, gvfs/MTP,
+    # plocate ou o Bazzite — topologia que não existe no Windows (lá quem
+    # responde é disks_win, coberto por tests/test_disks_win.py). Ficam na lista
+    # no Linux; no Windows saem DITOS, um a um, com o motivo.
+    so_linux = {
+        test_var_mnt_bazzite_disk_detection:
+            "/proc/mounts do Bazzite/ostree (/var/mnt); Windows usa letras de unidade",
+        test_mnt_serializes:
+            "trava SMR por prefixo /mnt|/media; no Windows é 'volume que não é o do "
+            "sistema' (test_disks_win: search_profile)",
+        test_mount_entry_sees_mtp_gvfs:
+            "MTP via gvfsd-fuse no /proc/mounts; alvo Windows sem MTP",
+        test_search_profile_classification:
+            "nfs/cifs/sshfs/gvfs/autofs do /proc/mounts; rede no Windows = letra "
+            "mapeada/UNC (test_disks_win)",
+        test_planejar_expande_montagens:
+            "montagens SOB '/' (mounts_under); Windows v1 não tem pasta montada "
+            "(disks_win.mounts_under = [])",
+        test_list_search_targets_boundary_visibility:
+            "montagens-filhas de /mnt no /proc/mounts; idem (sem pasta montada no Windows)",
+        test_a4_4_sys_disk_whole_disk:
+            "/sys/block (mmcblk0/nvme0n1); Windows usa PhysicalDriveN via IOCTL",
+        test_indexed_symlink_root_translates:
+            "índice plocate (Linux); não há indexed no Windows",
+        test_volume_label_prefers_label:
+            "label por /dev/disk/by-label + basename de /run/media; Windows usa "
+            "GetVolumeInformation (test_disks_win: volume_label)",
+    }
+    if WIN:
+        for fn, motivo in so_linux.items():
+            print(f"~skip  [só Linux] {fn.__name__}: {motivo}")
+        fns = [fn for fn in fns if fn not in so_linux]
     fail = 0
     for fn in fns:
         try:

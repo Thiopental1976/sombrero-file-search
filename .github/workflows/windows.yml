@@ -87,7 +87,7 @@ jobs:
             python $_.FullName *> "_dl\$($_.BaseName).log"
             $rc = $LASTEXITCODE
             "{0,3}  {1}" -f $rc, $_.Name
-            if ($rc -ne 0) { $falhas += $_.Name; Get-Content "_dl\$($_.BaseName).log" | Select-String -Pattern '^(FALHA|FALHOU|Traceback)' | Select-Object -First 15 }
+            if ($rc -ne 0) { $falhas += $_.Name; Get-Content "_dl\$($_.BaseName).log" | Select-String -Pattern '^(FALHA|FALHOU|ERRO|Traceback)' | Select-Object -First 40 }
           }
           "--- suítes com falha no Windows: $($falhas.Count)"
           $falhas
