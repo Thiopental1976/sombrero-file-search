@@ -2199,6 +2199,12 @@ def _arvores_podadas(roots, q_paths, excluidos=()):
             if rp in vistos:
                 continue
             vistos.add(rp)
+            if plat.IS_WIN:
+                # realpath do Windows expande nome curto 8.3 (C:\Users\RUNNER~1 ->
+                # runneradmin): a árvore deixava de estar "sob" a raiz digitada e
+                # sumia em silêncio. Lá o realpath só deduplica; a árvore segue na
+                # forma do usuário, a mesma dos achados vivos (dedup por caminho)
+                rp = os.path.abspath(p)
             dono = _raiz_mais_especifica(rp, roots)
             if dono is None:
                 continue

@@ -104,5 +104,31 @@ try:
 finally:
     shutil.rmtree(raiz, ignore_errors=True)
 
+# 7) Windows: raiz digitada em nome curto 8.3 (o TEMP do runner do CI é
+#    C:\Users\RUNNER~1\...). O realpath expandia o nome e a árvore de snapshot
+#    deixava de estar "sob" a raiz: --snapshots devolvia só o vivo, calado.
+if os.name == "nt":
+    import ctypes
+    longa = tempfile.mkdtemp(prefix="sfs-snap-nome-bem-comprido-")
+    buf = ctypes.create_unicode_buffer(32768)
+    n = ctypes.windll.kernel32.GetShortPathNameW(longa, buf, len(buf))
+    curta = buf.value if n else longa
+    try:
+        if os.path.normcase(curta) == os.path.normcase(longa):
+            print("~skip  volume sem nomes 8.3: nada a provar aqui")
+        else:
+            for rel in ("normal/achado.txt", ".snapshots/3/snapshot/achado.txt"):
+                p = J(longa, rel)
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                open(p, "w").close()
+            for backend in ("nativo", "python"):
+                r = com_backend(backend, lambda: busca(E.Query(
+                    paths=[curta], name_patterns=["achado.txt"],
+                    include_hidden=True, skip_snapshots=False)))
+                ok(J(curta, ".snapshots/3/snapshot/achado.txt") in r and len(r) == 2,
+                   f"[{backend}] raiz em nome 8.3: --snapshots acha a árvore, na forma digitada ({r})")
+    finally:
+        shutil.rmtree(longa, ignore_errors=True)
+
 print(f"\n{'FALHOU: ' + '; '.join(falhas) if falhas else 'todos os testes passaram'}")
 sys.exit(1 if falhas else 0)
