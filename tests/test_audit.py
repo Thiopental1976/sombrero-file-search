@@ -17,7 +17,7 @@ from engine import Query
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_parity_rg_python import test_parity_directed_and_property
 from fixtures_plat import (WIN, pode_symlink, arquivo_esparso, nome_de_bytes,
-                           pode_negar_leitura, deny_read, allow_read)
+                           pode_negar_leitura, deny_read, allow_read, ENV_CACHE, ENV_CONFIG)
 import plat
 
 
@@ -3127,7 +3127,7 @@ def test_sair_sem_fechar_janela_nao_aborta():
     o CopyWorker — vivo a sessão inteira, dormindo na fila — e o Qt abortava o
     processo (SIGABRT). aboutToQuit agora roda o mesmo encerramento. A trava prova
     as duas coisas: sem o gancho aborta; com ele, sai limpo.
-    (2) A caixa-preta (queda.log em $XDG_CACHE_HOME) é criada no arranque.
+    (2) A caixa-preta (queda.log na pasta de cache do SO) é criada no arranque.
     Em subprocesso: o aborto mataria a própria suíte."""
     try:
         import PySide6  # noqa: F401
@@ -3146,16 +3146,18 @@ def test_sair_sem_fechar_janela_nao_aborta():
             "if sys.argv[1] == 'com': qa.aboutToQuit.connect(w._encerra_threads)\n"
             "QTimer.singleShot(300, qa.quit); qa.exec()\n"
             "del w; print('SAIU', log)\n") % os.path.join(RAIZ, "lfs")
-        env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
-                   XDG_CACHE_HOME=os.path.join(tmp, "cache"),
-                   XDG_CONFIG_HOME=os.path.join(tmp, "config"))
+        # a variável que plat.cache_dir()/config_dir() leem: XDG_* no Linux,
+        # LOCALAPPDATA/APPDATA no Windows (o queda.log segue o SO desde 05/10)
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+        env[ENV_CACHE] = os.path.join(tmp, "cache")
+        env[ENV_CONFIG] = os.path.join(tmp, "config")
         r_sem = subprocess.run([sys.executable, "-c", prog, "sem"], env=env,
                                capture_output=True, text=True, timeout=60)
         r_com = subprocess.run([sys.executable, "-c", prog, "com"], env=env,
                                capture_output=True, text=True, timeout=60)
         assert r_sem.returncode != 0, "sem o gancho deveria abortar (a trava não prova nada)"
         assert r_com.returncode == 0 and "SAIU" in r_com.stdout, (r_com.returncode, r_com.stderr[-800:])
-        log = os.path.join(tmp, "cache", "sombrero-file-search", "queda.log")
+        log = os.path.join(tmp, "cache", plat.app_dir_name(), "queda.log")
         texto = open(log, encoding="utf-8").read()
         assert "início pid=" in texto, texto[:300]
         assert "QThread: Destroyed" in texto, "o aborto do Qt não ficou registrado na caixa-preta"
