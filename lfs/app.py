@@ -3561,8 +3561,7 @@ def _liga_registro_de_queda():
     Arquivo passa de 1 MB → recomeça. Nada sai da máquina. Devolve o caminho."""
     import faulthandler, traceback
     from PySide6.QtCore import QtMsgType, qInstallMessageHandler
-    base = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
-                        "sombrero-file-search")
+    base = engine.plat.cache_dir()      # XDG no Linux; %LOCALAPPDATA% no Windows
     try:
         os.makedirs(base, exist_ok=True)
         caminho = os.path.join(base, "queda.log")
@@ -3585,7 +3584,10 @@ def _liga_registro_de_queda():
     def _qt(tipo, ctx, msg):
         if tipo in (QtMsgType.QtFatalMsg, QtMsgType.QtCriticalMsg):
             fh.write(f"--- {time.strftime('%H:%M:%S')} Qt {tipo.name}: {msg}\n")
-        sys.stderr.write(msg + "\n")
+        # exe de janela no Windows: sys.stderr é None. Escrever nele derrubava a GUI
+        # no primeiro aviso do Qt (05/10/2026, VM: aviso de DPI ao abrir pela tarefa)
+        if sys.stderr is not None:
+            sys.stderr.write(msg + "\n")
     qInstallMessageHandler(_qt)
     return caminho
 

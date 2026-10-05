@@ -136,6 +136,25 @@ try:
            "Windows: clipboard leva URLs (CF_HDROP), sem formatos do GNOME/KDE")
     elif A is not None:
         ok(A.path_to_uri("/tmp/a b") == "file:///tmp/a%20b", "Linux: path_to_uri inalterado")
+    if A is not None:
+        # exe de janela (Windows): sys.stderr = None. Um aviso do Qt derrubava a GUI
+        # na abertura (05/10/2026) — o registro de queda escrevia no stderr inexistente
+        # (no Linux o PySide engole a exceção do tratador; no exe do Windows ela sobe
+        # e derruba a janela — por isso o tratador é chamado direto aqui)
+        from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+        os.environ["LOCALAPPDATA" if REAL_WIN else "XDG_CACHE_HOME"] = tmp
+        A._liga_registro_de_queda()
+        tratador = qInstallMessageHandler(None)
+        antes, sys.stderr = sys.stderr, None
+        try:
+            for tipo in (QtMsgType.QtInfoMsg, QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg):
+                tratador(tipo, None, "aviso de teste sem stderr")
+            sem_queda = True
+        except Exception as e:
+            sem_queda = repr(e)
+        finally:
+            sys.stderr = antes
+        ok(sem_queda is True, f"GUI sem stderr: aviso do Qt não derruba ({sem_queda})")
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 

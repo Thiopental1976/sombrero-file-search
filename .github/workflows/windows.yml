@@ -103,11 +103,15 @@ jobs:
           # a janela monta de verdade (o console diz o erro que o SombreroFileSearch.exe não teria onde dizer)
           & $sfs --gui-selftest
           if ($LASTEXITCODE -ne 0) { throw "gui-selftest falhou ($LASTEXITCODE)" }
-          # e o SombreroFileSearch.exe de janela sobe e fica de pé
+          # e o SombreroFileSearch.exe de janela sobe e fica de pé — com TODO aviso do Qt
+          # ligado: exe de janela não tem stderr, e um aviso já derrubou a GUI (05/10/2026)
+          $env:QT_LOGGING_RULES = "*.debug=true"
           $p = Start-Process "dist\SombreroFileSearch\SombreroFileSearch.exe" -PassThru
+          Remove-Item Env:QT_LOGGING_RULES
           Start-Sleep 8
           if ($p.HasExited) {
             Get-Content "$env:LOCALAPPDATA\Sombrero File Search\crash.log" -ErrorAction SilentlyContinue
+            Get-Content "$env:LOCALAPPDATA\Sombrero File Search\queda.log" -Tail 40 -ErrorAction SilentlyContinue
             throw "SombreroFileSearch.exe saiu sozinho (código $($p.ExitCode))"
           }
           Stop-Process $p
