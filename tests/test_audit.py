@@ -4568,6 +4568,8 @@ def main():
     # responde é disks_win, coberto por tests/test_disks_win.py). Ficam na lista
     # no Linux; no Windows saem DITOS, um a um, com o motivo.
     so_linux = {
+        test_montagem_de_appimage_nao_e_disco:
+            "AppImage e montagens FUSE em /tmp/.mount_* só existem no Linux",
         test_eject_command_prefers_gio_then_udisks:
             "passos gio/udisksctl e LUKS do sysfs; no Windows a ejeção é v2 "
             "(disks_win.eject_command devolve None: sem passos, sem botão)",
