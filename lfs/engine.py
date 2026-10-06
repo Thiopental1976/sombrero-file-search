@@ -18,29 +18,207 @@ O motor NÃO depende de Qt. A GUI o consome via callbacks/geradores, num thread,
 pra interface nunca travar (foi o defeito do menu do Cinnamon: busca síncrona).
 """
 from __future__ import annotations
-import os, re, fnmatch, shutil, subprocess, json, stat, time, tempfile
+import os, re, fnmatch, shutil, subprocess, json, stat, sys, time, tempfile
 import base64, codecs, threading
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
+try:                       # pacote (GUI) e flat (cli.py/testes)
+    from . import plat
+except ImportError:
+    import plat                                  # type: ignore
+
+# Separadores de caminho do SO: "/" no Linux; "\\" e "/" no Windows (o Win32
+# aceita os dois). Contar/cortar só "/" dava profundidade 0 a tudo no Windows,
+# o fallback ignorava --max-depth e a poda de snapshot não reconhecia nada
+# (CI windows-latest 02/10/2026). No Linux "\\" é caractere válido de nome:
+# NÃO é separador lá.
+_SEPS = os.sep + (os.altsep or "")
+_RX_SEPS = re.compile("[" + re.escape(_SEPS) + "]+")
+
+
+def _componentes(path: str) -> list:
+    """Componentes de um caminho, cortando em TODO separador do SO."""
+    p = path.strip(_SEPS)
+    return _RX_SEPS.split(p) if p else []
+
 
 # ---------------------------------------------------------------- detecção
-# binários que o próprio app pode empacotar (ver F6) — procurados além do PATH
-_APP_BIN = os.path.expanduser("~/.local/share/sombrero-file-search/bin")
+# binários que o próprio app pode empacotar (ver F6) — procurados além do PATH.
+# 28/09/2026: era só ~/.local/share/sombrero-file-search/bin, o lugar do
+# install.sh. O .deb (/usr/lib/sombrero-file-search) e o AppImage põem o código
+# em outro lugar, então o rga que eles embutem nunca seria achado — foi como o
+# ServidorCedro ficou sem modo documentos. A pasta bin/ AO LADO de lfs/ vale
+# para os três canais; a do HOME fica para instalações antigas.
+_APP_BINS = [
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin"),
+    os.path.expanduser("~/.local/share/sombrero-file-search/bin"),
+]
 
 def _which(*names):
     for n in names:
         p = shutil.which(n)
         if p:
             return p
-        cand = os.path.join(_APP_BIN, n)   # fallback: binário empacotado
-        if os.access(cand, os.X_OK):
-            return cand
+        for d in _APP_BINS:                # fallback: binário empacotado
+            for arq in plat.exe_candidates(n):   # Windows: rg.exe (os.access não completa)
+                cand = os.path.join(d, arq)
+                if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                    return cand
     return None
 
 RG = _which("rg")                    # ripgrep
 FD = _which("fd", "fdfind")          # fd (Debian/Mint = fdfind)
 RGA = _which("rga", "ripgrep-all")   # ripgrep-all: busca DENTRO de PDF/docx/epub/zip…
+
+
+# ------------------------------------------- rga: docx/odt/epub sem pandoc (28/09/2026)
+# O rga lê docx/odt/epub pelo pandoc (~160–200 MB, ausente na maioria das
+# máquinas). O SFS registra o seu próprio leitor (lfs/docs_text.py, só stdlib)
+# como "custom adapter" do rga, por um arquivo de configuração passado em
+# --rga-config-file. Medido no rga 0.10.10: o adaptador personalizado vem ANTES
+# dos internos na prioridade, então ganha do pandoc nesses três formatos; o
+# pandoc continua servindo os que só ele lê (fb2, ipynb, html).
+#
+# Armadilha medida: --rga-config-file SUBSTITUI o config.jsonc do usuário, não
+# soma. Os adaptadores que o usuário escreveu são copiados para o nosso arquivo,
+# e na FRENTE do nosso (a escolha explícita dele vence). Se o arquivo dele não
+# puder ser lido, o SFS não passa config nenhuma: o rga roda como o usuário o
+# deixou, com pandoc — perder o docx sem pandoc é menos grave que atropelar a
+# configuração de alguém.
+_RGA_ADAPTADOR = "sombrero_docs"
+_rga_args_cache: Optional[list] = None
+
+
+def _sem_comentarios_jsonc(s: str) -> str:
+    """Tira // e /* */ do JSONC, respeitando strings ("http://…" fica)."""
+    out, i, n = [], 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == '"':
+            j = i + 1
+            while j < n and s[j] != '"':
+                j += 2 if s[j] == "\\" else 1
+            out.append(s[i:j + 1]); i = j + 1
+        elif s.startswith("//", i):
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+        elif s.startswith("/*", i):
+            j = s.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        else:
+            out.append(c); i += 1
+    return "".join(out)
+
+
+def _rga_config_usuario() -> Optional[dict]:
+    """Config do rga do usuário; {} se não há; None se existe e não se lê."""
+    path = plat.rga_user_config()
+    try:
+        with open(path, encoding="utf-8") as f:
+            bruto = f.read()
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeDecodeError):
+        return None
+    try:
+        cfg = json.loads(_sem_comentarios_jsonc(bruto))
+    except ValueError:
+        return None
+    return cfg if isinstance(cfg, dict) else None
+
+
+def rga_config(usuario: Optional[dict] = None) -> Optional[dict]:
+    """A configuração que o SFS entrega ao rga, ou None para não entregar nada."""
+    if usuario is None:
+        usuario = _rga_config_usuario()
+        if usuario is None:
+            return None
+    try:
+        from . import docs_text                # engine importado como lfs.engine
+    except ImportError:
+        try:
+            import docs_text                   # lfs/ no sys.path (app.py, cli.py, testes)
+        except ImportError:
+            return None
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs_text.py")
+    nosso = {
+        "name": _RGA_ADAPTADOR,
+        "description": "Sombrero File Search: text of docx/odt/epub without pandoc",
+        "version": docs_text.VERSAO,
+        "extensions": list(docs_text.EXTENSOES),
+        "mimetypes": list(docs_text.MIMETYPES),
+        # -I: o leitor é só stdlib; isolado, nenhum PYTHONPATH/site do usuário
+        # entra no meio de cada arquivo extraído
+        "binary": sys.executable or "python3",
+        "args": ["-I", script, "$input_file_extension"],
+    }
+    if plat.frozen():
+        # exe congelado (Windows/PyInstaller): sys.executable é o próprio SFS,
+        # não um Python — o leitor roda como modo --docs-adapter. Sempre pelo
+        # sfs.exe de CONSOLE ao lado (F3): o rga conversa por stdin/stdout, e
+        # o SombreroFileSearch.exe de janela pode não ter stdout nenhum.
+        cons = os.path.join(os.path.dirname(sys.executable), "sfs.exe")
+        if os.path.exists(cons):
+            nosso["binary"] = cons
+        nosso["args"] = ["--docs-adapter", "$input_file_extension"]
+    cfg = dict(usuario)
+    cfg.pop("$schema", None)       # caminho relativo ao arquivo dele, não ao nosso
+    deles = [a for a in (cfg.get("custom_adapters") or [])
+             if isinstance(a, dict) and a.get("name") != _RGA_ADAPTADOR]
+    cfg["custom_adapters"] = deles + [nosso]
+    return cfg
+
+
+def rga_args() -> list:
+    """Argumentos do rga que ligam o leitor do SFS ([] = rga como veio).
+
+    O arquivo mora no cache do usuário, com o hash do conteúdo no nome: dois
+    SFS abertos (um .deb e um AppImage, por exemplo) geram configs diferentes —
+    o caminho do Python muda — e nenhum sobrescreve o do outro."""
+    global _rga_args_cache
+    # Cache por processo — mas se o arquivo sumiu (limpador de ~/.cache numa
+    # sessão longa da GUI), recria: um --rga-config-file apontando para o nada
+    # derrubaria TODA busca em documentos até reabrir o programa.
+    if _rga_args_cache is not None and all(
+            os.path.isfile(a.split("=", 1)[1]) for a in _rga_args_cache):
+        return list(_rga_args_cache)
+    args = []
+    cfg = rga_config()
+    if cfg is not None:
+        import hashlib
+        dados = json.dumps(cfg, ensure_ascii=False, indent=1, sort_keys=True)
+        nome = "config-" + hashlib.sha256(dados.encode()).hexdigest()[:16] + ".json"
+        pasta = os.path.join(plat.cache_dir(), "rga")
+        path = os.path.join(pasta, nome)
+        try:
+            if not os.path.isfile(path):
+                os.makedirs(pasta, exist_ok=True)
+                fd, tmp = tempfile.mkstemp(dir=pasta, prefix=".config-")
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(dados)
+                os.replace(tmp, path)
+            args = ["--rga-config-file=" + path]
+        except OSError:
+            args = []                  # HOME só-leitura: rga como veio (com pandoc)
+    _rga_args_cache = args
+    return list(args)
+
+
+def rga_env() -> Optional[dict]:
+    """Ambiente para rodar o rga. Medido: o rga procura o `rg` no PATH, e só
+    nele — com o rg empacotado fora do PATH (install.sh numa sessão que ainda
+    não tem ~/.local/bin, rg embutido no .deb), o rga saía com "Could not find
+    executable rg" e o modo documentos inteiro morria. None = herdar o atual."""
+    if not RG:
+        return None
+    pasta = os.path.dirname(RG)
+    atual = os.environ.get("PATH", "")
+    if pasta in atual.split(os.pathsep):
+        return None
+    env = dict(os.environ)
+    env["PATH"] = atual + os.pathsep + pasta if atual else pasta
+    return env
 
 # H1 (Fable 5.1, 08/09/2026): o fd ENGOLE "Permission denied" a menos que receba
 # --show-errors — medido: pasta chmod 000, rc=0, stderr vazio. Como a busca por
@@ -58,7 +236,8 @@ def _fd_mostra_erros(fd=None) -> bool:
     if fd not in _FD_SHOW_ERRORS:
         try:
             r = subprocess.run([fd, "--help"], stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, timeout=5)
+                               stderr=subprocess.DEVNULL, timeout=5,
+                               **plat.popen_flags())
             if r.returncode == 0:
                 _FD_SHOW_ERRORS[fd] = b"--show-errors" in r.stdout
         except Exception:
@@ -133,6 +312,9 @@ def classifica_montagens(lines=None) -> dict:
     "local" (disco, partição, LUKS, ZFS, mergerfs…) ou "rede" (NFS, SMB/CIFS,
     sshfs, WebDAV, rclone…). Sistema, pseudo-fs, snaps/AppImage e contêineres
     ficam fora. `lines` injetável p/ teste (formato /proc/mounts)."""
+    if lines is None and plat.IS_WIN:
+        d = _mod_disks()                  # letras de unidade (disks_win)
+        return d.classifica_volumes() if d is not None else {}
     if lines is None:
         try:
             with open("/proc/mounts", encoding="utf-8") as f:
@@ -228,12 +410,19 @@ EXCLUSOES_SNAPSHOT = (
 def eh_snapshot(path: str) -> bool:
     """True se o caminho esta DENTRO de uma arvore de snapshot de sistema.
     Casa por COMPONENTE do caminho (um ou mais, em sequencia), com glob."""
-    comps = path.strip("/").split("/")
+    comps = _componentes(path)
+    # NTFS não distingue caixa ($Recycle.Bin, $RECYCLE.BIN): no Windows o
+    # casamento é sem caixa; no Linux continua exato
+    casa = fnmatch.fnmatch if plat.IS_WIN else fnmatch.fnmatchcase
+    if plat.IS_WIN:
+        comps = [c.lower() for c in comps]
     for m in EXCLUSOES_SNAPSHOT:
         mp = m.split("/")
+        if plat.IS_WIN:
+            mp = [c.lower() for c in mp]
         n = len(mp)
         for i in range(len(comps) - n + 1):
-            if all(fnmatch.fnmatchcase(comps[i + j], mp[j]) for j in range(n)):
+            if all(casa(comps[i + j], mp[j]) for j in range(n)):
                 return True
     return False
 
@@ -246,6 +435,16 @@ def eh_snapshot(path: str) -> bool:
 # distro nem por /run/ostree-booted: um ostree/deploy e um ostree/deploy onde
 # quer que esteja.
 _PADROES_OSTREE = frozenset({"ostree/repo", "ostree/deploy"})
+
+# Windows (F1, 02/10/2026): a Lixeira de cada volume ($RECYCLE.BIN\<SID>\$R…)
+# é árvore podada como o Timeshift — o que o usuário apagou não é o que ele
+# procura, mas se o vivo der zero a busca entra lá e diz que entrou (mesma
+# mecânica, outro texto). É pasta oculta+sistema: sem --hidden o fd/rg nem
+# descem nela; a poda vale para quem pede --hidden. Só no Windows: num disco
+# NTFS montado no Linux a mudança de comportamento não foi decidida.
+_PADROES_LIXEIRA = frozenset({"$RECYCLE.BIN"})
+if plat.IS_WIN:
+    EXCLUSOES_SNAPSHOT = EXCLUSOES_SNAPSHOT + tuple(sorted(_PADROES_LIXEIRA))
 
 # Podadas que o fallback NAO estende: o repositorio de objetos do ostree e
 # content-addressed — ostree/repo/objects/ab/cdef...file, centenas de milhares
@@ -268,7 +467,7 @@ def _achados_snapshot(root: str):
     import glob as _glob
     alvos = [root]
     try:
-        base = os.path.abspath(root).rstrip("/") + "/"
+        base = os.path.abspath(root).rstrip(_SEPS) + os.sep
         alvos += [m for m in user_mounts() if m.startswith(base)]
     except Exception:
         pass
@@ -392,6 +591,15 @@ _TEXTO_PODA = {
         "the ostree object store (ostree/repo) was not searched and never is: its files are named by hash, and the same bytes are in the deployments",
     ("snapshot", "no_fallback"):
         "a pruned tree here is never searched: its files are content-addressed (named by hash)",
+    # Windows: a Lixeira ($RECYCLE.BIN) — mesma mecânica, o texto diz o que é
+    ("recycle", "skipped"):
+        "Recycle Bin not searched: this location had live results (--snapshots / 'include snapshots' to always search it)",
+    ("recycle", "searched"):
+        "nothing in the live tree, so the Recycle Bin was searched too; results from it are marked",
+    ("recycle", "requested"):
+        "Recycle Bin searched as requested; results from it are marked",
+    ("recycle", "stopped"):
+        "Recycle Bin not searched: the search stopped (cap or cancel) before reaching it",
 }
 
 # Strings-fonte (EN-US) que este módulo entrega a t() por VARIÁVEL — a guarda
@@ -481,7 +689,23 @@ def resumo_incompleto(stats, tr=None):
 
 # ---------------------------------------------------------------- utilidades
 _ERRNO_MONTAGEM_MORTA = frozenset({107, 116, 112, 19})   # ENOTCONN ESTALE EHOSTDOWN ENODEV
-_RX_ERRO_MOTOR = re.compile(r"^(?:\[fd error\]|rg|fd|fdfind)?:?\s*(/.*?): ([^:]*)\(os error (\d+)\)\s*$")
+if plat.IS_WIN:
+    # No Windows o "(os error N)" do rg/fd é o winerror: BAD_NETPATH, UNEXP_NET_ERR,
+    # NETNAME_DELETED, BAD_NET_NAME, SEM_TIMEOUT, NO_NETWORK, NETWORK_UNREACHABLE,
+    # HOST_UNREACHABLE, NOT_CONNECTED (o mesmo conjunto da sonda do disks_win)
+    _ERRNO_MONTAGEM_MORTA = frozenset({53, 59, 64, 67, 121, 1222, 1231, 1232, 2250})
+# caminho do queixume: "/x" no Linux; "C:\x", "C:/x" ou "\\srv\share" no Windows
+_RX_ERRO_MOTOR = re.compile(
+    r"^(?:\[fd error\]|rg|fd|fdfind)?:?\s*((?:/|[A-Za-z]:[\\/]|\\\\).*?): ([^:]*)\(os error (\d+)\)\s*$")
+
+
+def _eh_negado(linha: str) -> bool:
+    """Queixa de PERMISSÃO do rg/fd. Linux: "Permission denied". Windows: "Access
+    is denied. (os error 5)" — 5 é ERROR_ACCESS_DENIED lá (no Linux, 5 é EIO:
+    por isso a regra pelo número só vale no Windows)."""
+    if "ermission denied" in linha:
+        return True
+    return plat.IS_WIN and ("ccess is denied" in linha or "(os error 5)" in linha)
 
 
 def _linha_de_montagem_morta(linha: str):
@@ -998,7 +1222,7 @@ def _reap(proc, errf=None, stats=None):
             try:
                 errf.seek(0)
                 linhas = errf.readlines()
-                d = sum(1 for L in linhas if "ermission denied" in L)
+                d = sum(1 for L in linhas if _eh_negado(L))
                 if d:
                     stats["denied"] = stats.get("denied", 0) + d
                     anota_incompleto(stats, "permission_denied", n=d,
@@ -1030,7 +1254,7 @@ def _reap(proc, errf=None, stats=None):
                 # e a de nome, "read error". Nada ficou de fora (o ancestral é
                 # varrido nesta mesma busca), então não é incompleto: é o mesmo
                 # corte que o walker Python faz calado (E4, seen_dirs).
-                benigna = lambda L: "ermission denied" in L or "File system loop found" in L
+                benigna = lambda L: _eh_negado(L) or "File system loop found" in L
                 lacos = sum(1 for L in linhas if "File system loop found" in L)
                 motivo = next((L.strip() for L in linhas
                                if L.strip() and not benigna(L)), "")
@@ -1198,15 +1422,58 @@ def _stat_e_ident(fp):
     PRÓPRIO nó (lstat). Medido na VM Bazzite (09/09/2026): /etc/os-release é
     symlink de /usr/lib/os-release e, com a identidade do alvo, o dedup
     colapsava um no outro — um link é outro objeto, não cópia do alvo. Symlink
-    quebrado: o lstat vale pelos dois (E5: casa por nome, mostra o link)."""
-    lst = os.lstat(fp)
+    quebrado: o lstat vale pelos dois (E5: casa por nome, mostra o link).
+
+    Windows (Bug 1, 03/10/2026): caminho > 260 com LongPathsEnabled=0 (padrão
+    do Windows 11) — o fd/rg listam, e o stat sem o prefixo de caminho longo
+    falhava: o achado saía como "file vanished". plat.longpath é identidade no
+    Linux e em caminho curto; o caminho DEVOLVIDO (fp) segue o do motor."""
+    io = plat.longpath(fp)
+    lst = os.lstat(io)
     if stat.S_ISLNK(lst.st_mode):
         try:
-            st = os.stat(fp)
+            st = os.stat(io)
         except OSError:
             st = lst
         return st, _ident_de(lst)
     return lst, _ident_de(lst)
+
+
+def _resolve_lossy(fp):
+    """Windows (Bug 2, 03/10/2026): o fd/rg imprimem um nome UTF-16 INVÁLIDO
+    (substituto solitário, que o NTFS aceita) trocando cada unidade quebrada por
+    U+FFFD — e o stat desse caminho falha. Resolve pelo diretório pai: o único
+    irmão cujo nome casa com U+FFFD valendo "um substituto solitário (ou o
+    próprio U+FFFD)". Devolve o caminho real, ou None se 0 ou >1 casarem (aí
+    fica o comportamento de antes: stat_failed). Só no Windows, só com U+FFFD."""
+    if not plat.IS_WIN or "\ufffd" not in fp:
+        return None
+    pai, nome = os.path.split(fp)
+    if "\ufffd" in pai:
+        return None                  # pasta quebrada no meio do caminho: fora do escopo
+    rx = re.compile("".join("[\ud800-\udfff\ufffd]" if c == "\ufffd" else re.escape(c)
+                            for c in nome) + r"\Z", re.DOTALL)
+    try:
+        with os.scandir(plat.longpath(pai)) as it:
+            hits = [e.name for e in it if rx.match(e.name)]
+    except OSError:
+        return None
+    return os.path.join(pai, hits[0]) if len(hits) == 1 else None
+
+
+def _stat_resolvendo(fp):
+    """(caminho, stat, ident): _stat_e_ident, e no Windows, se o stat falhar num
+    nome com U+FFFD, tenta o nome real pelo pai (_resolve_lossy). Sem saída:
+    relança o OSError original."""
+    try:
+        st, ident = _stat_e_ident(fp)
+        return fp, st, ident
+    except OSError:
+        real = _resolve_lossy(fp)
+        if real is None:
+            raise
+        st, ident = _stat_e_ident(real)
+        return real, st, ident
 
 
 def _logical_line(text: str) -> str:
@@ -1278,6 +1545,32 @@ def _walk_onerror(stats):
     return cb
 
 
+def _nivel(p: str) -> int:
+    """Quantos separadores há no caminho, sem contar o final."""
+    p = p.rstrip(_SEPS)
+    return sum(p.count(c) for c in _SEPS)
+
+
+# só HIDDEN: é o que o crate `ignore` (fd/rg) testa no Windows
+# (winapi_util::file::is_hidden) — SYSTEM sozinho não esconde lá, nem aqui
+_ATTR_OCULTO = 0x2                # FILE_ATTRIBUTE_HIDDEN
+
+
+def _oculto(pasta: str, nome: str) -> bool:
+    """Oculto para a busca. Linux: nome com ponto. Windows: ponto OU atributo
+    oculto — é o que o fd/rg fazem lá (crate ignore), e o fallback precisa
+    concordar ($RECYCLE.BIN, System Volume Information, desktop.ini)."""
+    if nome.startswith("."):
+        return True
+    if not plat.IS_WIN:
+        return False
+    try:
+        st = os.stat(plat.longpath(os.path.join(pasta, nome)), follow_symlinks=False)
+    except OSError:
+        return False
+    return bool(getattr(st, "st_file_attributes", 0) & _ATTR_OCULTO)
+
+
 def _iter_names_python(q: Query, stats=None, cancel=None):
     """Fallback universal: os.walk com profundidade/hidden/symlink/meta/one-fs.
     N2: `stats` recebe 'denied' de diretórios sem permissão (onerror do os.walk)."""
@@ -1293,7 +1586,7 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
     seen_dirs = set() if q.follow_symlinks else None   # E4: corta laço de symlink
     for root in q.paths:
         root = os.path.abspath(os.path.expanduser(root))
-        base_depth = root.rstrip("/").count("/")
+        base_depth = _nivel(root)
         root_dev = None
         if q.one_file_system:                       # B9: não cruzar mounts no fallback
             try: root_dev = os.stat(root).st_dev
@@ -1302,7 +1595,7 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                                     onerror=_walk_onerror(stats)):
             if cancel and cancel():                 # E10: honra cancelamento no fallback
                 return
-            depth = dp.rstrip("/").count("/") - base_depth
+            depth = _nivel(dp) - base_depth
             if seen_dirs is not None:               # E4: não revisita dir já visto (ciclo)
                 try:
                     st_dp = os.stat(dp)
@@ -1314,7 +1607,7 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                 except OSError:
                     pass
             if not q.include_hidden:
-                dns[:] = [d for d in dns if not d.startswith(".")]
+                dns[:] = [d for d in dns if not _oculto(dp, d)]
             if q.excluded_paths:                    # F12b: montagem morta: nem stat
                 dns[:] = [d for d in dns if os.path.join(dp, d) not in q.excluded_paths]
             if q.skip_snapshots:                    # F11: poda a arvore de snapshot
@@ -1354,7 +1647,7 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                 dns[:] = []
             if emit_here:
                 for f in fns:
-                    if not q.include_hidden and f.startswith("."):
+                    if not q.include_hidden and _oculto(dp, f):
                         continue
                     if not match_name(f):
                         continue
@@ -1559,7 +1852,8 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
         try:
             # binário (sem text=): lê bytes e decodifica com surrogateescape p/
             # sobreviver a nomes não-UTF-8 (E2) — o str resultante volta pro os.stat.
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
+                                    **plat.popen_flags())
             if procs is not None:
                 procs.append(proc)     # F11 bug1: quem cancela precisa alcancar
                                        # o processo; read1() so ve o `parar` se
@@ -1590,7 +1884,7 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
                         continue
                     fp = os.fsdecode(raw)         # E2: surrogateescape p/ nomes crus
                     if len(fp) > 1:
-                        fp = fp.rstrip("/")   # fd emite "dir/" com barra final — ela
+                        fp = fp.rstrip(_SEPS)  # fd emite "dir/" ("dir\\" no Windows) — ela
                                               # quebra os.path.basename() na GUI (nome
                                               # vazio). Guarda len>1 preserva a raiz "/".
                     if not fp or (seen is not None and fp in seen):
@@ -1598,7 +1892,9 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
                     if seen is not None:
                         seen.add(fp)
                     try:
-                        st, ident = _stat_e_ident(fp)   # E5: symlink quebrado — mostra o link
+                        # E5: symlink quebrado — mostra o link; Bug 2: nome UTF-16
+                        # inválido que o fd imprimiu com U+FFFD volta ao real
+                        fp, st, ident = _stat_resolvendo(fp)
                         is_dir = stat.S_ISDIR(st.st_mode)
                     except OSError:
                         # H5: o fd listou e nós descartamos — mesma regra
@@ -1646,6 +1942,13 @@ def rg_flags_comuns(q: Query, matching: bool = True):
         cmd.append("--ignore-case")
     if matching and q.whole_word:
         cmd.append("--word-regexp")
+    if matching:
+        # CRLF (arquivo vindo do Windows, ou qualquer .txt no Windows): sem
+        # --crlf o `$` do rg não casa antes do \r — `laudo$` sumia com o
+        # arquivo inteiro, e o fallback Python (que corta o \r da linha) achava.
+        # Divergência silenciosa achada pelo CI windows-latest em 02/10/2026;
+        # vale igual no Linux para arquivos CRLF.
+        cmd.append("--crlf")
     if not q.recursive:
         cmd += ["--max-depth", "1"]
     elif q.max_depth is not None:
@@ -1662,7 +1965,7 @@ def rg_flags_comuns(q: Query, matching: bool = True):
         # F12b: no rg '!/abs' NÃO ancora (medido, rg 14.1); '!**/abs' casa o
         # caminho absoluto inteiro como sufixo — exato na prática, e um falso
         # positivo exigiria outro caminho que TERMINE com este inteiro.
-        cmd += ["--glob", "!**" + e]
+        cmd += ["--glob", "!**" + _glob_de_caminho(e)]
     if q.rg_threads is not None:
         # 09/09/2026: o booleano particionado por disco escolhe o pool por
         # classe (_jobs_para_classe) e o carrega na Query do grupo — antes o
@@ -1680,7 +1983,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
     """
     docs = bool(q.documents and RGA)
     binary = RGA if docs else RG
-    cmd = [binary, "--json"]
+    cmd = [binary] + (rga_args() if docs else []) + ["--json"]
     if jobs and not docs:
         cmd += ["--threads", str(jobs)]        # F11: idem ao fd, ver _grupos_por_disco
     if not docs:                               # --encoding é do rg; rga já extrai UTF-8
@@ -1696,7 +1999,9 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
     errf = tempfile.TemporaryFile(mode="w+")
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
-                                text=True, errors="replace")
+                                text=True, errors="replace",
+                                env=rga_env() if docs else None,
+                                **plat.popen_flags())
         if procs is not None:
             procs.append(proc)                 # F11 bug1: idem ao fd
     except OSError:
@@ -1724,7 +2029,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
                     cur = None
                     continue
                 try:
-                    st, ident = _stat_e_ident(path)
+                    path, st, ident = _stat_resolvendo(path)   # Bug 2: U+FFFD do rg
                 except OSError:
                     # arquivo dentro de container (ex algo.zip/interno.pdf): sem stat no FS
                     cur = Match(path, 0, 0) if docs else None
@@ -1774,13 +2079,14 @@ def _iter_content_python(q: Query, cancel, stats=None):
         try:
             # T1: FIFO/socket/device fazem open() bloquear pra sempre (pipe sem
             # escritor). O rg pula não-regulares sozinho; no fallback a guarda é nossa.
-            if not stat.S_ISREG(os.stat(m.path, follow_symlinks=q.follow_symlinks).st_mode):
+            if not stat.S_ISREG(os.stat(plat.longpath(m.path),
+                                        follow_symlinks=q.follow_symlinks).st_mode):
                 continue
         except OSError:
             anota_incompleto(stats, "stat_failed", onde=m.path)   # H5: o walker listou
             continue                                            # e o arquivo sumiu
         try:
-            with open(m.path, "r", errors="surrogateescape") as fh:
+            with open(plat.longpath(m.path), "r", errors="surrogateescape") as fh:
                 hit = None
                 for i, line in enumerate(fh, 1):
                     if "\x00" in line:      # provável binário
@@ -1887,7 +2193,9 @@ def _raiz_montada(root, stats, on_event=lambda ev, info: None) -> bool:
         uma pasta vazia; o programa não sabe — então diz o que viu e pergunta.
     Roda só DEPOIS de existir+ser pasta e depois da sonda de rede (scandir
     numa montagem morta travaria; aqui ela já respondeu)."""
-    r = root.rstrip("/") or "/"
+    r = root.rstrip(_SEPS) or os.sep
+    if plat.IS_WIN and len(r) == 2 and r[1] == ":":
+        r += os.sep                     # "C:" é a pasta atual de C:, não a raiz
     if _eh_mountpoint(r):
         return True
     if r in _fstab_alvos():
@@ -1952,10 +2260,16 @@ def _arvores_podadas(roots, q_paths, excluidos=()):
             if rp in vistos:
                 continue
             vistos.add(rp)
+            if plat.IS_WIN:
+                # realpath do Windows expande nome curto 8.3 (C:\Users\RUNNER~1 ->
+                # runneradmin): a árvore deixava de estar "sob" a raiz digitada e
+                # sumia em silêncio. Lá o realpath só deduplica; a árvore segue na
+                # forma do usuário, a mesma dos achados vivos (dedup por caminho)
+                rp = os.path.abspath(p)
             dono = _raiz_mais_especifica(rp, roots)
             if dono is None:
                 continue
-            if any(rp == e or _sob(rp, e) for e in excluidos):
+            if any(_sob_ou_igual(rp, e) for e in excluidos):
                 continue
             m = montagem(rp)
             if m is not None and m not in monts_vivas:
@@ -1979,17 +2293,17 @@ def _caminho_vivo(path, arvore, padrao):
       .zfs/snapshot         <arvore>/<nome>/<rel>                  -> <dataset>/<rel>
       @GMT-*  (Samba)       <arvore>/<rel>                         -> <pai da arvore>/<rel>
       ostree/deploy         <arvore>/<os>/deploy/<hash>.N/<rel>    -> /<rel>"""
-    base = arvore.rstrip("/")
-    if not path.startswith(base + "/"):
+    base = arvore.rstrip(_SEPS)
+    if not (path.startswith(base) and path[len(base):len(base) + 1] in tuple(_SEPS)):
         return None
-    comps = path[len(base) + 1:].split("/")
+    comps = _componentes(path[len(base) + 1:])
     if padrao == "timeshift/snapshots*":
         if len(comps) >= 3 and comps[1] == "localhost":
-            return "/" + "/".join(comps[2:])
+            return os.sep + os.sep.join(comps[2:])
     elif padrao == "timeshift-btrfs":
         if len(comps) >= 4 and comps[0] == "snapshots":
             sub = comps[2]
-            raiz = "/" if sub == "@" else "/" + sub.lstrip("@")
+            raiz = os.sep if sub == "@" else os.sep + sub.lstrip("@")
             return os.path.join(raiz, *comps[3:])
     elif padrao == ".snapshots":
         if len(comps) >= 3 and comps[1] == "snapshot":
@@ -2002,7 +2316,7 @@ def _caminho_vivo(path, arvore, padrao):
             return os.path.join(os.path.dirname(base), *comps)
     elif padrao == "ostree/deploy":
         if len(comps) >= 4 and comps[1] == "deploy":
-            return "/" + "/".join(comps[3:])
+            return os.sep + os.sep.join(comps[3:])
     return None
 
 
@@ -2121,7 +2435,9 @@ def _plano_extensao(q, roots, counts, parou, stats, on_event, excluidos=()):
             estender.append(a)
         por_dono.setdefault(a["dono"], []).append((a, modo))
     for dono, lst in por_dono.items():
-        tipo = "ostree" if all(a["padrao"] in _PADROES_OSTREE for a, _m in lst) else "snapshot"
+        tipo = ("ostree" if all(a["padrao"] in _PADROES_OSTREE for a, _m in lst) else
+                "recycle" if all(a["padrao"] in _PADROES_LIXEIRA for a, _m in lst) else
+                "snapshot")
         modos = {m for a, m in lst if a["fallback"]}
         # sem NENHUMA árvore extensível não há decisão de "vivo primeiro" a
         # relatar: só existe o fato de que aquela árvore nunca é varrida
@@ -2162,13 +2478,13 @@ def _origem_de(plano):
 
     def origem(path):
         for a in ordem:
-            if path == a["arvore"] or _sob(path, a["arvore"]):
+            if _sob_ou_igual(path, a["arvore"]):
                 return (a["arvore"], a["padrao"])
         return None
 
     def dono(path):
         for a in ordem:
-            if path == a["arvore"] or _sob(path, a["arvore"]):
+            if _sob_ou_igual(path, a["arvore"]):
                 return a["dono"]
         return ordem[0]["dono"] if ordem else None
     return origem, dono
@@ -2180,15 +2496,24 @@ def _raiz_mais_especifica(path, roots):
     melhor, tam = None, -1
     for r in roots:
         ra = os.path.abspath(os.path.expanduser(r))
-        if (path == ra or _sob(path, ra)) and len(ra) > tam:
+        if _sob_ou_igual(path, ra) and len(ra) > tam:
             melhor, tam = r, len(ra)
     return melhor
 
 
 def _sob(path, root) -> bool:
-    """`path` está estritamente dentro de `root`?"""
-    base = root.rstrip("/")
-    return path != base and path.startswith(base + "/")
+    """`path` está estritamente dentro de `root`? normcase: no Windows a caixa
+    não distingue pasta (C:\\Users ≡ c:\\users) e `/` vale `\\`; no Linux é
+    identidade."""
+    path = os.path.normcase(path)
+    base = os.path.normcase(root).rstrip(_SEPS)
+    return path != base and path.startswith(base + os.sep)
+
+
+def _sob_ou_igual(path, root) -> bool:
+    """`path` é `root` (mesma regra de caixa do _sob) ou está dentro dele."""
+    return (os.path.normcase(path).rstrip(_SEPS) == os.path.normcase(root).rstrip(_SEPS)
+            or _sob(path, root))
 
 
 def _query_planejada(q: Query, roots, forca_one_fs: bool, mortas) -> Query:
@@ -2218,6 +2543,21 @@ def _separa_raizes_com_mortas(grupos, excluidos):
     return out
 
 
+def _glob_de_caminho(p: str) -> str:
+    """Caminho -> forma de GLOB do rg/fd. Linux: o próprio. Windows: sem a
+    letra e com '/' — o globset normaliza o caminho do Windows para '/' antes de
+    casar, e no glob a '\\' é ESCAPE: '!**F:\\x\\NAS' nunca casava, e a montagem
+    de rede MORTA sob a raiz era varrida assim mesmo (VM, 02/10/2026). UNC:
+    '\\\\srv\\share\\x' -> '//srv/share/x'."""
+    if not plat.IS_WIN:
+        return p
+    if len(p) >= 2 and p[1] == ":":
+        p = p[2:]
+    p = p.replace("\\", "/")
+    # metacaracteres de glob no nome viram literais
+    return re.sub(r"([\[\]{}*?!])", r"[\1]", p)
+
+
 def _excludes_fd(q: Query):
     """`--exclude` do fd para Query.excluded_paths, relativo à raiz (única, por
     _separa_raizes_com_mortas) e ancorado com '/'."""
@@ -2225,7 +2565,7 @@ def _excludes_fd(q: Query):
     for r in q.paths:
         for e in q.excluded_paths:
             if _sob(e, r):
-                flags += ["--exclude", "/" + os.path.relpath(e, r)]
+                flags += ["--exclude", "/" + _glob_de_caminho(os.path.relpath(e, r)).lstrip("/")]
     return flags
 
 
@@ -2240,8 +2580,7 @@ def _atribuidor(roots):
 
     def attribute(path):
         for r in ordered:
-            base = r.rstrip("/")
-            if path == base or path == r or path.startswith(base + os.sep):
+            if path == r or _sob_ou_igual(path, r):
                 counts[r] += 1
                 return
         if roots:
@@ -2339,6 +2678,10 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
                     fstype = ""
                 if fstype.lower() in _PSEUDO_FS:
                     continue
+                if _eh_appimage(mp, fstype):          # fora, calado: nenhum motor entra
+                    if mortas is not None:
+                        mortas.append(mp)
+                    continue
                 status = disks.mount_status(mp, timeout=probe_timeout)
                 if status != "alive":
                     _condena_montagem(mp, fstype, None, status, stats, on_event, mortas)
@@ -2384,6 +2727,13 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
             if fstype in _PSEUDO_FS:
                 podadas.append(mp); seen.add(mp)
                 continue
+            if _eh_appimage(mp, fstype):
+                # não é disco: nem raiz, nem linha no painel, nem erro — e excluída,
+                # para o motor da raiz-mãe não descer nela
+                seen.add(mp)
+                if mortas is not None:
+                    mortas.append(mp)
+                continue
             if prof is not None and not prof.enumerate_default:
                 seen.add(mp)
                 anota_incompleto(stats, "mount_not_entered", onde=mp,
@@ -2422,6 +2772,16 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
     if podadas and stats is not None:
         stats.setdefault("pruned_mounts", []).extend(podadas)
     return roots, expandidas, bool(expandidas)
+
+
+def _eh_appimage(mp: str, fstype: str) -> bool:
+    """Montagem que um AppImage faz de SI MESMO (/tmp/.mount_XXXXXX, FUSE com o
+    nome do arquivo como tipo). Não é disco do usuário: viva, é o miolo de um
+    programa; morta (o AppImage fechou sem desmontar), só dá erro. 06/10/2026, no
+    ServidorCedro: 58 sobras do AppImage 1.1.0 do próprio SFS sob /tmp e
+    /mnt/optane/tmp viravam 29 linhas vermelhas de "broken mount" no painel."""
+    return (fstype or "").lower().startswith("fuse") and \
+        os.path.basename(mp.rstrip("/")).startswith(".mount_")
 
 
 def _condena_montagem(mp, fstype, klass, status, stats, on_event, mortas, path=None,

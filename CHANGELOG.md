@@ -6,6 +6,34 @@ The project follows [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PAT
 Detailed rationale and measurements live in the commit messages and in
 [`docs/TECHNICAL_DOCUMENTATION.md`](docs/TECHNICAL_DOCUMENTATION.md).
 
+## [Unreleased]
+
+### Changed
+
+- **Document search works out of the box in every channel.** `ripgrep-all`
+  (`rga`) is now bundled in the AppImage and in the .deb (it is not packaged by
+  Debian/Ubuntu/Mint, so with the .deb the *docs* mode simply did not exist).
+  Pinned to v0.10.10, sha256-checked at build time; license and source link
+  shipped alongside (AGPL-3.0-or-later).
+- **docx, odt and epub no longer need pandoc.** Sombrero reads them itself
+  (`lfs/docs_text.py`, Python standard library only), registered as an `rga`
+  custom adapter. pandoc is ~160–200 MB; bundling it would have made the .deb
+  ~20× larger. When installed, pandoc still covers the rarer formats (fb2, ipynb,
+  html). Checked against pandoc on 101 real documents: no text lost. The user's
+  own `rga` configuration is kept: their custom adapters are copied in, ahead of
+  Sombrero's; an unreadable configuration is left alone (Sombrero then passes none).
+- **The .deb is now per architecture** (`amd64`, `arm64`) instead of `all`,
+  because the bundled `rga` is native code. It now recommends `poppler-utils`
+  (PDF) and `pandoc` (rare formats); `ripgrep-all` left *Suggests*.
+
+### Fixed
+
+- **Bundled engines are found in every channel.** The engine only looked for
+  bundled binaries under `~/.local/share/sombrero-file-search/bin` (the
+  `install.sh` location); it now also looks in `bin/` next to its own code.
+- **`rga` no longer fails when `rg` is bundled but not on `PATH`.** `rga` looks
+  for `rg` only on `PATH`; the engine now adds `rg`'s folder when running `rga`.
+
 ## [1.2.0] — 2026-09-22
 
 Search that stops losing files it should have found — legacy encodings, odd file

@@ -90,24 +90,27 @@ import runpy; runpy.run_path({os.path.join(LFS, "cli.py")!r}, run_name="__main__
     ok("mount broken — skipped: /mnt/nas" in r.stderr, "texto diz 'broken' para montagem quebrada")
 
     # ---------------------------------------------------------- 7. --index pré-confere tudo
-    boa, podada = os.path.join(T, "boa"), os.path.join(T, "podada")
-    os.makedirs(boa); os.makedirs(podada)
-    open(os.path.join(boa, "laudo.txt"), "w").close()
-    conf = indexed.parse_updatedb_conf(f'PRUNEPATHS="{podada}"')
-    q = engine.Query(paths=[boa, podada], name_patterns=["*laudo*"])
-    saiu = []
-    try:
-        for m in indexed.search_indexed(q, conf=conf, mounts=[],
-                                        _run=lambda a: (os.path.join(boa, "laudo.txt") + "\0").encode()):
-            saiu.append(m.path)
-        ok(False, "raiz podada deveria recusar")
-    except indexed.IndexError_:
-        pass
-    ok(saiu == [], f"nenhum resultado sai antes da recusa ({saiu})")
-    ok([m.path for m in indexed.search_indexed(engine.Query(paths=[boa], name_patterns=["*laudo*"]),
-                                               conf=conf, mounts=[],
-                                               _run=lambda a: (os.path.join(boa, "laudo.txt") + "\0").encode())]
-       == [os.path.join(boa, "laudo.txt")], "raiz íntegra sozinha segue funcionando")
+    if os.name != "nt":
+        boa, podada = os.path.join(T, "boa"), os.path.join(T, "podada")
+        os.makedirs(boa); os.makedirs(podada)
+        open(os.path.join(boa, "laudo.txt"), "w").close()
+        conf = indexed.parse_updatedb_conf(f'PRUNEPATHS="{podada}"')
+        q = engine.Query(paths=[boa, podada], name_patterns=["*laudo*"])
+        saiu = []
+        try:
+            for m in indexed.search_indexed(q, conf=conf, mounts=[],
+                                            _run=lambda a: (os.path.join(boa, "laudo.txt") + "\0").encode()):
+                saiu.append(m.path)
+            ok(False, "raiz podada deveria recusar")
+        except indexed.IndexError_:
+            pass
+        ok(saiu == [], f"nenhum resultado sai antes da recusa ({saiu})")
+        ok([m.path for m in indexed.search_indexed(engine.Query(paths=[boa], name_patterns=["*laudo*"]),
+                                                   conf=conf, mounts=[],
+                                                   _run=lambda a: (os.path.join(boa, "laudo.txt") + "\0").encode())]
+           == [os.path.join(boa, "laudo.txt")], "raiz íntegra sozinha segue funcionando")
+    else:
+        print('~skip  [só Linux] --index usa o plocate do Linux (no Windows não existe índice)')
 finally:
     shutil.rmtree(T, ignore_errors=True)
 

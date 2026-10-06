@@ -59,7 +59,8 @@ def _from_file(root: str) -> str:
 def _git(root: str, *args) -> str:
     try:
         out = subprocess.run(("git", "-C", root) + args, capture_output=True,
-                             timeout=4)
+                             timeout=4,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if out.returncode != 0:
             return ""
         return out.stdout.decode("utf-8", "replace").strip()

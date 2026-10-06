@@ -28,6 +28,8 @@ nativo (fd/rg) e Python, e no booleano:
 import json, os, shutil, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lfs import engine as E, boolean as B
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixtures_plat as FP
 
 falhas = []
 def ok(cond, nome):
@@ -87,7 +89,10 @@ casos = [
 ]
 for path, arv, pat, esp in casos:
     r = T(path, arv, pat)
-    ok(r == esp, f"_caminho_vivo[{pat}] {path} -> {r!r} (esperado {esp!r})")
+    # separador do SO: no Windows o caminho vivo sai com '\\' (normpath iguala)
+    igual = (r is None and esp is None) or (r is not None and esp is not None
+                                            and os.path.normpath(r) == os.path.normpath(esp))
+    ok(igual, f"_caminho_vivo[{pat}] {path} -> {r!r} (esperado {esp!r})")
 
 
 # ---------------------------------------------------------------- fixture Timeshift
@@ -188,10 +193,13 @@ try:
     ok(motivos(st) == [], "Mint sem snapshot: funil vazio, nada de snapshot no caminho")
     # symlink para um resultado é OUTRO objeto (Bazzite: /etc/os-release ->
     # /usr/lib/os-release ficava colapsado): dois resultados, sem cópia
-    os.symlink(a, os.path.join(raiz, "docs", "link_a.txt"))
-    n, out, st, evs = busca(E.Query(paths=[raiz], name_patterns=["*a.txt"]))
-    ok(n == 2 and all(m.copies == [] for m in out), f"symlink do resultado não é cópia dele (n={n})")
-    os.unlink(os.path.join(raiz, "docs", "link_a.txt"))
+    if FP.pode_symlink():                # Windows sem modo desenvolvedor: WinError 1314
+        os.symlink(a, os.path.join(raiz, "docs", "link_a.txt"))
+        n, out, st, evs = busca(E.Query(paths=[raiz], name_patterns=["*a.txt"]))
+        ok(n == 2 and all(m.copies == [] for m in out), f"symlink do resultado não é cópia dele (n={n})")
+        os.unlink(os.path.join(raiz, "docs", "link_a.txt"))
+    else:
+        print("~skip  [SO] sem permissão de criar symlink: 'symlink não é cópia' pulado")
     # mesma raiz duas vezes ("/" e "/home"): o mesmo caminho não é cópia
     n, out, st, evs = busca(E.Query(paths=[raiz, os.path.join(raiz, "docs")], name_patterns=["a.txt"]))
     ok(n == 1 and out[0].copies == [], "raiz repetida: o mesmo caminho colapsa SEM virar cópia")
@@ -250,30 +258,33 @@ finally:
 
 
 # ---------------------------------------------------------------- ostree: mesmo caminho
-raiz = tempfile.mkdtemp(prefix="sfs-ot-")
-try:
-    dep = os.path.join(raiz, "sysroot", "ostree", "deploy", "default", "deploy")
-    escreve(os.path.join(dep, "abc.1", "usr", "lib", "antigo.conf"), "laudo antigo\n")
-    escreve(os.path.join(raiz, "sysroot", "ostree", "repo", "objects", "ab", "antigo.conf"), "laudo antigo\n")
-    escreve(os.path.join(raiz, "usr", "lib", "vivo.conf"), "laudo vivo\n")
-    os.symlink("sysroot/ostree", os.path.join(raiz, "ostree"))
-    n, out, st, evs = busca(E.Query(paths=[raiz], name_patterns=["antigo.conf"]))
-    ok(n == 1 and out[0].path == os.path.join(dep, "abc.1", "usr", "lib", "antigo.conf")
-       and out[0].snapshot == os.path.join(raiz, "sysroot", "ostree", "deploy"),
-       f"ostree: só na implantação antiga -> achado no fallback, origem = ostree/deploy (n={n})")
-    ok(motivos(st) == ["snapshots_searched"]
-       and st["incompleto"][0]["detalhe"] == E._TEXTO_PODA[("ostree", "searched")],
-       "ostree: MESMO motivo do Timeshift, texto do ostree")
-    ok(not any("/repo/" in m.path for m in out), "ostree/repo nunca é estendido")
-    ev = [i for e, i in evs if e == "snapshots_searched"]
-    ok(ev and ev[0]["ostree"] is True and ev[0]["trees"] == [os.path.join(raiz, "sysroot", "ostree", "deploy")],
-       "painel: evento comum com marca ostree, só o deploy nas árvores")
-    n, out, st, evs = busca(E.Query(paths=[raiz], name_patterns=["vivo.conf"]))
-    ok(n == 1 and motivos(st) == ["snapshots_skipped"]
-       and st["incompleto"][0]["detalhe"] == E._TEXTO_PODA[("ostree", "skipped")],
-       "ostree: vivo com achado -> implantações puladas, texto honesto")
-finally:
-    shutil.rmtree(raiz, ignore_errors=True)
+if os.name != "nt":
+    raiz = tempfile.mkdtemp(prefix="sfs-ot-")
+    try:
+        dep = os.path.join(raiz, "sysroot", "ostree", "deploy", "default", "deploy")
+        escreve(os.path.join(dep, "abc.1", "usr", "lib", "antigo.conf"), "laudo antigo\n")
+        escreve(os.path.join(raiz, "sysroot", "ostree", "repo", "objects", "ab", "antigo.conf"), "laudo antigo\n")
+        escreve(os.path.join(raiz, "usr", "lib", "vivo.conf"), "laudo vivo\n")
+        os.symlink("sysroot/ostree", os.path.join(raiz, "ostree"))
+        n, out, st, evs = busca(E.Query(paths=[raiz], name_patterns=["antigo.conf"]))
+        ok(n == 1 and out[0].path == os.path.join(dep, "abc.1", "usr", "lib", "antigo.conf")
+           and out[0].snapshot == os.path.join(raiz, "sysroot", "ostree", "deploy"),
+           f"ostree: só na implantação antiga -> achado no fallback, origem = ostree/deploy (n={n})")
+        ok(motivos(st) == ["snapshots_searched"]
+           and st["incompleto"][0]["detalhe"] == E._TEXTO_PODA[("ostree", "searched")],
+           "ostree: MESMO motivo do Timeshift, texto do ostree")
+        ok(not any("/repo/" in m.path for m in out), "ostree/repo nunca é estendido")
+        ev = [i for e, i in evs if e == "snapshots_searched"]
+        ok(ev and ev[0]["ostree"] is True and ev[0]["trees"] == [os.path.join(raiz, "sysroot", "ostree", "deploy")],
+           "painel: evento comum com marca ostree, só o deploy nas árvores")
+        n, out, st, evs = busca(E.Query(paths=[raiz], name_patterns=["vivo.conf"]))
+        ok(n == 1 and motivos(st) == ["snapshots_skipped"]
+           and st["incompleto"][0]["detalhe"] == E._TEXTO_PODA[("ostree", "skipped")],
+           "ostree: vivo com achado -> implantações puladas, texto honesto")
+    finally:
+        shutil.rmtree(raiz, ignore_errors=True)
+else:
+    print('~skip  [só Linux] ostree (Silverblue/Bazzite) só existe no Linux')
 
 
 # ---------------------------------------------------------------- CLI --json

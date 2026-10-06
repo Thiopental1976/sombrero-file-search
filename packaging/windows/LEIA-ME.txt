@@ -1,0 +1,25 @@
+Sombrero File Search para Windows
+=================================
+
+Instalar (uma vez só):
+
+1. Clique com o botão direito no arquivo .zip que você baixou -> Propriedades.
+2. Lá embaixo, marque a caixinha "Desbloquear" e clique em OK.
+   (Isso evita a tela azul "O Windows protegeu o computador".)
+3. Botão direito no .zip -> "Extrair Tudo..." -> escolha uma pasta sua,
+   por exemplo Documentos.
+4. Entre na pasta SombreroFileSearch e abra o SombreroFileSearch.exe.
+   Na primeira vez ele demora quase um minuto (o antivírus do Windows confere
+   os arquivos); depois abre na hora.
+   Dica: botão direito no SombreroFileSearch.exe -> "Mostrar mais opções" ->
+   "Enviar para" -> "Área de trabalho (criar atalho)".
+
+Se a tela azul aparecer mesmo assim: clique em "Mais informações" e depois
+em "Executar assim mesmo". O programa não tem assinatura digital paga; é
+por isso que o Windows avisa.
+
+Não precisa de administrador nem de instalar nada além disso.
+Para atualizar: apague a pasta antiga e extraia a nova no mesmo lugar.
+Suas buscas salvas ficam guardadas à parte e não se perdem.
+
+Dúvidas: fale com o seu pai :)

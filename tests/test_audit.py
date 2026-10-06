@@ -16,6 +16,33 @@ import engine, boolean, i18n, humane, dupes, disks, fileops, copyjobs
 from engine import Query
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_parity_rg_python import test_parity_directed_and_property
+from fixtures_plat import (WIN, pode_symlink, arquivo_esparso, nome_de_bytes,
+                           pode_negar_leitura, deny_read, allow_read, ENV_CACHE, ENV_CONFIG)
+import plat
+
+
+def _cli(*args):
+    """argv para rodar a CLI (`python -m lfs.cli ...`). Windows: via runpy com o
+    repo no sys.path — o Python embutido (VM) tem ._pth e IGNORA cwd/PYTHONPATH
+    no -m; no CI (Python normal) dá o mesmo resultado."""
+    if WIN:
+        boot = ("import sys, runpy; sys.path.insert(0, %r); "
+                "runpy.run_module('lfs.cli', run_name='__main__', alter_sys=True)" % RAIZ)
+        return [sys.executable, "-c", boot, *args]
+    return [sys.executable, "-m", "lfs.cli", *args]
+
+
+def _io(p):
+    """Caminho para I/O do PRÓPRIO teste: no Windows, com o prefixo de caminho longo quando passa do
+    MAX_PATH (o nome de 255 da árvore hostil passa) — o teste não pode depender
+    de LongPathsEnabled para montar/conferir a fixture."""
+    return plat.longpath(p) if WIN else p
+
+
+def _rmtree(p):
+    """rmtree que também apaga o nome de 255 da árvore hostil no Windows (sem o
+    prefixo \\\\?\\ o rmtree não alcança o caminho > MAX_PATH e deixa sobra)."""
+    shutil.rmtree("\\\\?\\" + os.path.abspath(p) if WIN else p, ignore_errors=True)
 
 
 def _tree():
@@ -48,7 +75,9 @@ def test_parse_size():
 
 # ------------------------------------------------------------------ B1 _reap
 def test_reap_kills_process():
-    p = subprocess.Popen(["sleep", "30"])
+    # Windows não tem `sleep`: um Python que dorme é o mesmo processo-alvo
+    cmd = [sys.executable, "-c", "import time; time.sleep(30)"] if WIN else ["sleep", "30"]
+    p = subprocess.Popen(cmd)
     assert p.poll() is None
     engine._reap(p)
     assert p.poll() is not None            # morto
@@ -521,14 +550,14 @@ def _make_denied_tree():
     os.mkdir(sub)
     with open(os.path.join(sub, "dentro.txt"), "w") as f:
         f.write("laudo paciente\n")
-    os.chmod(sub, 0o000)                        # inacessível
+    deny_read(sub)                              # inacessível (chmod 000 / icacls deny)
     return d, sub
 
 
 def test_walk_onerror_counts_denied():
     """N2 (fallback Python): os.walk num diretório sem permissão conta 'denied'."""
-    if os.geteuid() == 0:
-        print("--  N2  (pulado: root ignora permissões)"); return
+    if not pode_negar_leitura():
+        print("--  N2  (pulado: root/administrador ignora permissões)"); return
     d, sub = _make_denied_tree()
     try:
         st = {"denied": 0}
@@ -536,13 +565,13 @@ def test_walk_onerror_counts_denied():
         assert st["denied"] >= 1, f"não contou o diretório inacessível: {st}"
         print("ok  N2  fallback os.walk conta diretório inacessível")
     finally:
-        os.chmod(sub, 0o755); shutil.rmtree(d, ignore_errors=True)
+        allow_read(sub); shutil.rmtree(d, ignore_errors=True)
 
 
 def test_boolean_stats_denied():
     """N2: o modo booleano agora preenche stats['denied'] (antes ficava 0)."""
-    if os.geteuid() == 0:
-        print("--  N2  (pulado: root ignora permissões)"); return
+    if not pode_negar_leitura():
+        print("--  N2  (pulado: root/administrador ignora permissões)"); return
     d, sub = _make_denied_tree()
     try:
         st = {"denied": 0}
@@ -554,7 +583,7 @@ def test_boolean_stats_denied():
         assert st["denied"] >= 1, f"booleano não contou inacessível (N2): {st}"
         print("ok  N2  modo booleano conta inacessíveis em stats['denied']")
     finally:
-        os.chmod(sub, 0o755); shutil.rmtree(d, ignore_errors=True)
+        allow_read(sub); shutil.rmtree(d, ignore_errors=True)
 
 
 # ------------------------------------------------------------------ opt#4 on_phase
@@ -631,7 +660,9 @@ def test_fd_merge_single_pass():
         real_popen = subprocess.Popen
         n_popen = {"fd": 0}
         def spy(cmd, *a, **k):
-            if cmd and os.path.basename(str(cmd[0])) in ("fd", "fdfind"):
+            # Windows: o binário é "fd.exe" — compara sem a extensão
+            nome = os.path.splitext(os.path.basename(str(cmd[0])))[0].lower() if cmd else ""
+            if nome in ("fd", "fdfind"):
                 n_popen["fd"] += 1
             return real_popen(cmd, *a, **k)
         subprocess.Popen = spy
@@ -884,6 +915,9 @@ def test_name_newline_in_filename():
 def test_name_broken_symlink():
     """E5: symlink quebrado casado por nome não pode ser descartado (os.stat falha
     no alvo -> antes sumia; agora cai no os.lstat e aparece)."""
+    if WIN and not pode_symlink():
+        print("~skip  E5: usuário comum do Windows não cria symlink (WinError 1314) — "
+              "não há link órfão para casar"); return
     d = tempfile.mkdtemp(prefix="lfs_ln_")
     try:
         os.symlink("/nao/existe/mesmo", os.path.join(d, "link_orfao"))
@@ -1016,6 +1050,7 @@ def _snapshot(root):
         for name in sorted(dirnames + filenames):
             p = os.path.join(dirpath, name)
             rel = os.path.relpath(p, root)
+            p = _io(p)                          # Windows: nome de 255 passa do MAX_PATH
             st = os.lstat(p)
             if os.path.islink(p):
                 snap[rel] = ("link", os.readlink(p))
@@ -1035,14 +1070,19 @@ def _hostile_tree():
         "simples.txt",
         "com espaco.txt",
         "com\nquebra.txt",                       # E1: \n no nome
-        os.fsdecode(b"nao\xff\xfeutf8.txt"),     # E2: nome não-UTF-8
+        nome_de_bytes(b"nao\xff\xfeutf8.txt"),   # E2: nome não-UTF-8 (Windows: UTF-16 inválido)
         "emoji_🎬.mp4",
         "a" * (255 - len(".txt")) + ".txt",      # 255 BYTES, o limite do ext4
-    ]
+    ]                                            # (Windows: 255 chars, o limite do NTFS —
+    if WIN:                                      #  e o caminho inteiro passa do MAX_PATH)
+        # \n (e todo caractere de controle) não existe em nome no Win32; no
+        # lugar, os hostis que o NTFS ACEITA: apóstrofo/#/%, acento, cara de 8.3
+        names.remove("com\nquebra.txt")
+        names += ["ação ' # %.txt", "NOME~1.txt"]
     for i, n in enumerate(names):
-        with open(os.path.join(d, n), "wb") as f:
+        with open(_io(os.path.join(d, n)), "wb") as f:
             f.write(b"conteudo %d\n" % i)
-        os.utime(os.path.join(d, n), (1000000 + i, 1000000 + i))
+        os.utime(_io(os.path.join(d, n)), (1000000 + i, 1000000 + i))
     os.makedirs(os.path.join(d, "sub", "fundo"))
     with open(os.path.join(d, "sub", "fundo", "profundo.txt"), "w") as f:
         f.write("recursivo")
@@ -1058,22 +1098,72 @@ def test_copy_hostile_names():
         base = os.path.join(dst, os.path.basename(src))
         assert not res.failed, res.failed
         for n in names:
-            p = os.path.join(base, n)
+            p = _io(os.path.join(base, n))
             assert os.path.exists(p), f"não copiou {n!r}"
-            assert os.stat(p).st_mtime == os.stat(os.path.join(src, n)).st_mtime, \
+            assert os.stat(p).st_mtime == os.stat(_io(os.path.join(src, n))).st_mtime, \
                 f"mtime perdido em {n!r}"
         assert os.path.exists(os.path.join(base, "sub", "fundo", "profundo.txt")), \
             "não copiou recursivamente"
         assert res.bytes_copied > 0
-        print(f"ok  F7   nomes hostis copiados ({len(names)} nomes: \\n, não-UTF-8, "
-              "emoji, 255 bytes)")
+        print(f"ok  F7   nomes hostis copiados ({len(names)} nomes: "
+              + ("UTF-16 inválido, emoji, ' # %, 8.3, 255 chars > MAX_PATH)" if WIN else
+                 "\\n, não-UTF-8, emoji, 255 bytes)"))
     finally:
-        shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
+        _rmtree(src); _rmtree(dst)
+
+
+def test_motor_acha_nome_longo_e_quebrado():
+    """Bugs 1 e 2 do Windows (03/10/2026): o fd/rg LISTAVAM e o engine jogava fora
+    como "file vanished" (stat_failed) — (1) arquivo cujo caminho passa de 260
+    com LongPathsEnabled=0 (padrão do Windows 11): stat sem prefixo de caminho
+    longo; (2) nome UTF-16 inválido, que o fd/rg imprimem com U+FFFD. Os três
+    motores (fd nome, rg conteúdo, walker Python) têm de achar, na forma do
+    usuário (sem \\\\?\\), sem anotar stat_failed. No Linux: nome de 255 bytes
+    e nome não-UTF-8 — os mesmos contratos."""
+    d = tempfile.mkdtemp(prefix="lfs_longo_")
+    try:
+        longo = os.path.join(d, "laudo_" + "a" * (255 - len("laudo_.txt")) + ".txt")
+        quebrado = os.path.join(d, nome_de_bytes(b"laudo_\xff\xfe.txt"))
+        for p in (longo, quebrado):
+            with open(_io(p), "w") as f:
+                f.write("paciente\n")
+        esperado = {longo, quebrado}
+
+        def roda(q, sem_fd=False, sem_rg=False):
+            old = engine.FD, engine.RG
+            if sem_fd: engine.FD = None
+            if sem_rg: engine.RG = None
+            got, st = [], {}
+            try:
+                engine.search(q, got.append, lambda: False, stats=st)
+            finally:
+                engine.FD, engine.RG = old
+            return {m.path for m in got}, st
+
+        casos = {"py/nome": (Query(paths=[d], name_patterns=["laudo*"]), True, True),
+                 "py/conteudo": (Query(paths=[d], content="paciente"), True, True)}
+        if engine.FD:
+            casos["fd/nome"] = (Query(paths=[d], name_patterns=["laudo*"]), False, False)
+        if engine.RG:
+            casos["rg/conteudo"] = (Query(paths=[d], content="paciente"), False, False)
+        for nome, (q, sem_fd, sem_rg) in casos.items():
+            got, st = roda(q, sem_fd, sem_rg)
+            assert got == esperado, f"{nome}: achou {sorted(map(ascii, got))}"
+            assert not any(p.startswith("\\\\?\\") for p in got), f"{nome}: vazou \\\\?\\"
+            perdas = [e for e in st.get("incompleto", []) if e["motivo"] == "stat_failed"]
+            assert not perdas, f"{nome}: stat_failed {perdas}"
+        print(f"ok  W    motor acha nome de 255 ({len(longo)} no caminho) e nome quebrado "
+              f"em {len(casos)} rotas, sem stat_failed")
+    finally:
+        _rmtree(d)
 
 
 def test_copy_symlinks_and_cycles():
     """§6.2: symlink vira symlink; link quebrado é copiado como link; ciclo de
     diretório não trava a varredura (guarda st_dev/st_ino)."""
+    if WIN and not pode_symlink():
+        print("~skip  F7 symlink/ciclo: usuário comum do Windows não cria symlink "
+              "(WinError 1314) — não há origem com link para copiar"); return
     src = tempfile.mkdtemp(prefix="lfs_cp_lnk_")
     dst = tempfile.mkdtemp(prefix="lfs_cp_dst_")
     try:
@@ -1082,9 +1172,29 @@ def test_copy_symlinks_and_cycles():
         os.symlink("alvo.txt", os.path.join(src, "bom.lnk"))
         os.symlink("nao_existe.txt", os.path.join(src, "quebrado.lnk"))
         os.makedirs(os.path.join(src, "sub"))
-        os.symlink(src, os.path.join(src, "sub", "ciclo"))     # aponta p/ a raiz
+        os.symlink(src, os.path.join(src, "sub", "ciclo"),      # aponta p/ a raiz
+                   target_is_directory=True)                    # (Windows: link de PASTA)
         res = fileops.copy_to([src], dst)             # não pode rodar para sempre
         base = os.path.join(dst, os.path.basename(src))
+        if WIN:
+            # Windows: dest_caps dá symlinks=False em todo volume (o usuário
+            # comum não cria link) — link de arquivo vira CÓPIA do alvo, link
+            # quebrado é pulado com motivo, e o ciclo não trava (chegar aqui já
+            # prova). O link de PASTA degradado cai em `failed` (open() de pasta
+            # = Permission denied): dito, nunca silencioso — ver o relatório.
+            bom = os.path.join(base, "bom.lnk")
+            assert not os.path.islink(bom) and open(bom).read() == "alvo", \
+                "link de arquivo devia virar cópia real do alvo"
+            motivos = {os.path.basename(p): r for p, r in res.skipped}
+            assert motivos.get("quebrado.lnk") == fileops.SKIP_SYMLINK, res.skipped
+            assert not os.path.lexists(os.path.join(base, "quebrado.lnk"))
+            assert not os.path.islink(os.path.join(base, "sub", "ciclo")), "criou symlink"
+            ciclo = os.path.join(src, "sub", "ciclo")
+            dito = {p for p, _ in res.failed} | {p for p, _ in res.skipped}
+            assert ciclo in dito, f"link de pasta sumiu sem aviso: {res.failed} {res.skipped}"
+            assert {p for p, _ in res.failed} <= {ciclo}, res.failed
+            print("ok  F7   (Windows) symlink vira cópia, quebrado pulado c/ motivo, ciclo não trava")
+            return
         assert os.path.islink(os.path.join(base, "bom.lnk")), "symlink virou arquivo"
         assert os.readlink(os.path.join(base, "bom.lnk")) == "alvo.txt"
         assert os.path.islink(os.path.join(base, "quebrado.lnk")), \
@@ -1176,7 +1286,8 @@ def test_copy_never_touches_source():
     ilegal), a árvore de origem é comparada byte a byte e mtime a mtime com um
     snapshot prévio. Um único byte diferente reprova."""
     src, _ = _hostile_tree()
-    os.symlink("simples.txt", os.path.join(src, "link.lnk"))
+    if not WIN or pode_symlink():             # usuário comum do Windows: WinError 1314
+        os.symlink("simples.txt", os.path.join(src, "link.lnk"))
     dst = tempfile.mkdtemp(prefix="lfs_cp_dst_")
     try:
         antes = _snapshot(src)
@@ -1201,18 +1312,20 @@ def test_copy_never_touches_source():
                       for k in set(antes) | set(depois) if antes.get(k) != depois.get(k)))
         print("ok  F7   PROVA DE NÃO-DESTRUIÇÃO: origem byte-idêntica após 8 operações")
     finally:
-        shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
+        _rmtree(src); _rmtree(dst)
 
 
 def test_preflight_space_and_mount():
     """§6.6/6.7: falta de espaço é detectada ANTES de escrever, e um destino sob
     /mnt que não está montado bloqueia a cópia (copiar para um mountpoint vazio
     despejaria o acervo no disco de sistema)."""
-    src, _ = _hostile_tree()
+    src, names = _hostile_tree()
     dst = tempfile.mkdtemp(prefix="lfs_cp_dst_")
     try:
         pf = fileops.preflight([src], dst)
-        assert pf.total_files >= 6 and pf.total_bytes > 0
+        # todo nome hostil + sub/fundo/profundo.txt — nenhum pode sumir da conta
+        assert pf.total_files >= len(names) + 1 and pf.total_bytes > 0, \
+            (pf.total_files, len(names) + 1, pf.errors)
         assert pf.fits, "deveria caber no /tmp"
         old_free = disks.free_bytes
         disks.free_bytes = lambda p: 10                   # 10 bytes livres
@@ -1221,17 +1334,24 @@ def test_preflight_space_and_mount():
             assert not pf2.fits, "não detectou falta de espaço"
         finally:
             disks.free_bytes = old_free
-        # montagem ausente: /mnt/inexistente_xyz não está em user_mounts()
-        assert not disks.mount_ok("/mnt/inexistente_xyz_lfs/sub"), \
+        # montagem ausente: /mnt/inexistente_xyz não está em user_mounts().
+        # Windows: o equivalente é a LETRA que sumiu (pendrive arrancado) —
+        # uma letra livre agora, de Z: para trás.
+        if WIN:
+            livre = next(L for L in "ZYXWVUTSRQPONMLKJIHG" if not os.path.exists(L + ":\\"))
+            ausente = livre + ":\\inexistente_xyz_lfs"
+        else:
+            ausente = "/mnt/inexistente_xyz_lfs"
+        assert not disks.mount_ok(os.path.join(ausente, "sub")), \
             "mount_ok aprovou destino não montado"
         assert disks.mount_ok(dst), "mount_ok reprovou /tmp (fora dos prefixos)"
-        pf3 = fileops.preflight([src], "/mnt/inexistente_xyz_lfs")
+        pf3 = fileops.preflight([src], ausente)
         assert pf3.blocked, "preflight não bloqueou destino desmontado"
-        res = fileops.copy_to([src], "/mnt/inexistente_xyz_lfs", plan=pf3)
+        res = fileops.copy_to([src], ausente, plan=pf3)
         assert not res.copied, "escreveu apesar do bloqueio"
         print("ok  F7   pré-checagem: falta de espaço e mountpoint ausente bloqueiam antes")
     finally:
-        shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
+        _rmtree(src); _rmtree(dst)
 
 
 def test_dest_caps_restrictive_filesystems():
@@ -1255,7 +1375,7 @@ def test_dest_caps_restrictive_filesystems():
     assert not posix.restrictive and fat.restrictive
     # sanitize: nome legal, extensão preservada, dentro do limite de BYTES
     for nome in ("filme: cena?.mp4", "CON.txt", "termina em ponto.", "a" * 400 + ".mkv",
-                 os.fsdecode(b"n\xff\xfeao_utf8.mp4")):
+                 nome_de_bytes(b"n\xff\xfeao_utf8.mp4")):
         s = fat.sanitize(nome)
         assert fat.name_problem(s) is None, f"sanitize deixou nome ilegal: {s!r}"
         assert len(os.fsencode(s)) <= 255
@@ -1437,11 +1557,22 @@ def test_mount_alive_watchdog():
         elapsed = time.time() - t0
         assert dead == "no_response", "montagem travada deveria dar no_response"
         assert elapsed < 2.0, f"mount_status NÃO respeitou o timeout (levou {elapsed:.1f}s)"
-        # o filho preso ficou registrado p/ reap oportunista, não perdido
-        assert disks._abandoned_pids, "sonda travada deveria ter sido abandonada (F1)"
+        if WIN:
+            # Windows não tem fork: a sonda é uma THREAD daemon (disks_win.
+            # mount_status). Abandonar = a thread presa segue viva, daemon (não
+            # impede a saída do processo), e o chamador já voltou. Não há pid
+            # para reap — _abandoned_pids é do caminho fork do Linux.
+            import threading as _th
+            presas = [t for t in _th.enumerate() if t.name == "sfs-sonda" and t.is_alive()]
+            assert presas and all(t.daemon for t in presas), \
+                "sonda travada deveria ter sido abandonada como thread daemon (F1/Windows)"
+        else:
+            # o filho preso ficou registrado p/ reap oportunista, não perdido
+            assert disks._abandoned_pids, "sonda travada deveria ter sido abandonada (F1)"
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    print("ok  F9a  mount_status: viva/quebrada/travada via processo, sem zumbi (F1/F2)")
+    print("ok  F9a  mount_status: viva/quebrada/travada via "
+          + ("thread daemon (Windows)" if WIN else "processo") + ", sem zumbi (F1/F2)")
 
 
 def test_planejar_expande_montagens():
@@ -1564,9 +1695,30 @@ def test_excluded_paths_todos_os_backends():
         assert g == [["/outra"], [d]], g
         assert engine._excludes_fd(engine.Query(**base)) == ["--exclude", "/x"]
         flags = engine.rg_flags_comuns(engine.Query(**base))
-        assert flags[-2:] == ["--glob", "!**" + morta], flags[-2:]
+        # Windows: o glob do rg sai sem a letra e com '/' (_glob_de_caminho — o
+        # globset casa contra o caminho já normalizado para '/'); Linux: o próprio
+        glob_morta = engine._glob_de_caminho(morta) if WIN else morta
+        assert flags[-2:] == ["--glob", "!**" + glob_morta], flags[-2:]
     finally:
         shutil.rmtree(d, ignore_errors=True)
+    if WIN:
+        # _reap no Windows: o "(os error N)" é winerror — 53 (BAD_NETPATH) é
+        # montagem morta; 1117 (IO_DEVICE) segue read_error. O perfil de FUSE
+        # sob /mnt (abaixo) não existe no Windows: disks_win cobre os volumes.
+        errf = tempfile.TemporaryFile(mode="w+")
+        errf.write("[fd error]: \\\\nas\\video: The network path was not found. (os error 53)\n"
+                   "[fd error]: E:\\d\\f: The request could not be performed because of "
+                   "an I/O device error. (os error 1117)\n")
+        class P:  # processo já morto, rc 0
+            returncode = 0
+            def poll(self): return 0
+        st = {}
+        engine._reap(P(), errf, st)
+        mot = {(e["motivo"], e["onde"]) for e in st["incompleto"]}
+        assert mot == {("dead_mount", "\\\\nas\\video"), ("read_error", "")}, mot
+        assert engine._jobs_para_classe(["unknown"]) is None
+        print("ok  F12b excluded_paths: nenhum motor toca montagem condenada; winerror morto = dead_mount")
+        return
     # _reap: errno de montagem morta -> dead_mount no caminho; EIO segue read_error
     errf = tempfile.TemporaryFile(mode="w+")
     errf.write("[fd error]: /mnt/nas: Socket not connected (os error 107)\n"
@@ -1686,7 +1838,7 @@ def test_dest_caps_rejects_non_utf8_names():
     isto, 'adaptar nomes' ficava LIGADO e mesmo assim o arquivo falhava — o
     usuário pediu adaptação e recebeu erro, que é o pior dos mundos."""
     fat = disks.DestCaps(fstype="vfat", namemax=255, **disks._FAT)
-    quebrado = os.fsdecode(b"camera_\xff\xfe.jpg")
+    quebrado = nome_de_bytes(b"camera_\xff\xfe.jpg")
     assert fat.name_problem(quebrado) == "encoding"
     s = fat.sanitize(quebrado)
     assert fat.name_problem(s) is None
@@ -1706,11 +1858,12 @@ def test_cli_emits_bytes_for_hostile_names():
     sair como bytes, senão `lfs ... -0 | xargs -0` não é confiável."""
     src = tempfile.mkdtemp(prefix="lfs_cli_")
     try:
-        quebrado = os.path.join(src, os.fsdecode(b"camera_\xff\xfe.jpg"))
+        # Windows: o mesmo str é um nome UTF-16 inválido (substituto solitário),
+        # que o NTFS guarda; a CLI tem de devolvê-lo como os.fsencode (WTF-8)
+        quebrado = os.path.join(src, nome_de_bytes(b"camera_\xff\xfe.jpg"))
         open(quebrado, "w").close()
         open(os.path.join(src, "depois.txt"), "w").close()
-        out = subprocess.run([sys.executable, "-m", "lfs.cli", "-n", "*", "-l", src],
-                             capture_output=True, cwd=RAIZ)
+        out = subprocess.run(_cli("-n", "*", "-l", src), capture_output=True, cwd=RAIZ)
         assert out.returncode == 0, out.stderr.decode("utf-8", "replace")
         assert os.fsencode(quebrado) in out.stdout, "o nome não-UTF-8 não saiu em bytes"
         assert b"depois.txt" in out.stdout, "a busca morreu no nome quebrado"
@@ -1726,12 +1879,14 @@ def test_cli_json_and_exit_codes():
     import json as _json
     src = tempfile.mkdtemp(prefix="lfs_json_")
     try:
-        # nome hostil: contém \n — se o framing quebrar, vira 2 linhas e uma não é json
-        hostil = os.path.join(src, "linha1\nlinha2.txt")
+        # nome hostil: contém \n — se o framing quebrar, vira 2 linhas e uma não é json.
+        # Windows: \n (e todo controle) não existe em nome; o hostil possível
+        # ao json é o não-ASCII fora do BMP (par substituto no UTF-16) + apóstrofo
+        nome_hostil = "aspas ' ação 🎬 #1.txt" if WIN else "linha1\nlinha2.txt"
+        hostil = os.path.join(src, nome_hostil)
         open(hostil, "w").close()
         open(os.path.join(src, "normal.txt"), "w").close()
-        run = lambda *a: subprocess.run([sys.executable, "-m", "lfs.cli", *a],
-                                        capture_output=True, cwd=RAIZ)
+        run = lambda *a: subprocess.run(_cli(*a), capture_output=True, cwd=RAIZ)
         r = run("-n", "*.txt", "-l", "--json", src)
         assert r.returncode == 0, f"achou → 0, veio {r.returncode}: {r.stderr.decode('utf-8','replace')}"
         linhas = [ln for ln in r.stdout.decode("utf-8", "surrogatepass").splitlines() if ln.strip()]
@@ -1739,7 +1894,7 @@ def test_cli_json_and_exit_codes():
         for ln in linhas:
             objs.append(_json.loads(ln))          # cada linha DEVE ser json válido (framing intacto)
         paths = {os.path.basename(o["path"]) for o in objs if "path" in o}
-        assert "linha1\nlinha2.txt" in paths, f"nome com \\n não veio íntegro: {paths}"
+        assert nome_hostil in paths, f"nome hostil não veio íntegro: {paths}"
         assert "normal.txt" in paths
         assert all({"path", "size", "mtime", "nmatch", "lines"} <= set(o) for o in objs if "path" in o)
         # nada encontrado → exit 1
@@ -1834,6 +1989,21 @@ def test_probe_child_closes_inherited_fds():
     determinística SEM NAS real: um pipe nosso, um stat lento que segura o filho vivo
     além do timeout, e a conferência de que o filho FECHOU a ponta de escrita herdada
     — o read vê EOF na hora, não espera o stat terminar."""
+    if WIN:
+        # Windows: a sonda é THREAD daemon (sem fork, sem filho herdando fd).
+        # A intenção de R1 é a mesma: um processo cuja sonda travou SAI e o
+        # leitor do seu stdout vê EOF na hora — a sonda presa não segura o pipe.
+        filho = ("import sys, time; sys.path.insert(0, %r); import disks; "
+                 "r = disks.mount_status(%r, timeout=0.2, _stat=lambda p: time.sleep(30)); "
+                 "print(r, flush=True)" % (os.path.join(RAIZ, "lfs"), tempfile.gettempdir()))
+        t0 = time.time()
+        out = subprocess.run([sys.executable, "-c", filho], stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, timeout=60)
+        dt = time.time() - t0
+        assert out.stdout.decode().strip() == "no_response", (out.stdout, out.stderr[-300:])
+        assert dt < 20, f"o processo esperou a sonda travada ({dt:.1f}s): pipe preso (R1)"
+        print(f"ok  R1   sonda (thread, Windows): processo sai e o pipe fecha ({dt:.1f}s)")
+        return
     import select as _select
     rp, wp = os.pipe()
     slow = lambda p: time.sleep(1.5)          # segura o filho vivo além do timeout
@@ -1913,30 +2083,45 @@ def test_preflight_flags_fat_problems():
     try:
         with open(os.path.join(src, "ok.mp4"), "w") as f:
             f.write("pequeno")
-        ilegal = os.path.join(src, "cena: 12?.mp4")
-        with open(ilegal, "w") as f:
-            f.write("nome ilegal em FAT")
-        os.symlink("ok.mp4", os.path.join(src, "atalho.lnk"))
+        # Windows: "cena: 12?.mp4" NÃO EXISTE na origem — o Win32 proíbe : e ?
+        # em qualquer FS (o open cria "cena" + fluxo alternativo " 12?.mp4" no
+        # NTFS). Nome ilegal-no-FAT-mas-legal-na-origem é coisa do Linux; lá o
+        # Windows dá o mesmo charset a todo destino (disks_win._caps_win).
+        com_ilegal = not WIN
+        com_link = not WIN or pode_symlink()      # usuário comum: WinError 1314
+        if com_ilegal:
+            ilegal = os.path.join(src, "cena: 12?.mp4")
+            with open(ilegal, "w") as f:
+                f.write("nome ilegal em FAT")
+        if com_link:
+            os.symlink("ok.mp4", os.path.join(src, "atalho.lnk"))
         grande = os.path.join(src, "gigante.mkv")
-        with open(grande, "wb") as f:                   # esparso: 5 GiB sem gastar disco
-            f.truncate(5 * (1 << 30))
+        arquivo_esparso(grande, 5 * (1 << 30))         # esparso: 5 GiB sem gastar disco
         pf = fileops.preflight([src], dst)
         assert [p for p, _ in pf.too_big] == [grande], pf.too_big
-        assert [os.path.basename(p) for p, _ in pf.bad_names] == ["cena: 12?.mp4"]
-        assert pf.links_degraded, "symlink em FAT devia virar cópia real"
+        assert [os.path.basename(p) for p, _ in pf.bad_names] == \
+            (["cena: 12?.mp4"] if com_ilegal else []), pf.bad_names
+        if com_link:
+            assert pf.links_degraded, "symlink em FAT devia virar cópia real"
         # sem adaptar: pula com motivo. Adaptando: copia com nome legal.
         res = fileops.copy_to([src], dst, plan=pf)
         motivos = dict((os.path.basename(p), r) for p, r in res.skipped)
         assert motivos.get("gigante.mkv") == fileops.SKIP_TOO_BIG, motivos
-        assert motivos.get("cena: 12?.mp4") == fileops.SKIP_BAD_NAME, motivos
+        if com_ilegal:
+            assert motivos.get("cena: 12?.mp4") == fileops.SKIP_BAD_NAME, motivos
         res2 = fileops.copy_to([src], dst, plan=pf, sanitize_names=True)
         base = os.path.join(dst, os.path.basename(src))
-        assert os.path.exists(os.path.join(base, "cena_ 12_.mp4")), os.listdir(base)
-        assert not os.path.islink(os.path.join(base, "atalho.lnk")), \
-            "criou symlink num FS que não tem symlink"
-        assert res2.copied
+        if com_ilegal:
+            assert os.path.exists(os.path.join(base, "cena_ 12_.mp4")), os.listdir(base)
+        if com_link:
+            assert not os.path.islink(os.path.join(base, "atalho.lnk")), \
+                "criou symlink num FS que não tem symlink"
+        if com_ilegal:
+            assert res2.copied, (res2.copied, res2.skipped, res2.failed)
+        else:   # sem o nome ilegal, o 2º lote só reencontra o que o 1º copiou
+            assert os.path.join(base, "ok.mp4") in res.copied, (res.copied, res.failed)
         print("ok  F7   destino FAT32: >4 GiB e nome ilegal pulados com motivo; "
-              "com 'adaptar', copia")
+              "com 'adaptar', copia" + (" (Windows: sem nome ilegal na origem)" if WIN else ""))
     finally:
         disks.dest_caps = old
         shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
@@ -1954,8 +2139,11 @@ def test_copy_paces_writes_on_removable():
     with open(os.path.join(src, "video.mkv"), "wb") as f:
         f.write(b"\0" * (32 << 20))              # 32 MiB
     sincs = []
-    real_sync, real_caps, real_pace = os.fdatasync, disks.dest_caps, fileops.PACE
-    os.fdatasync = lambda fd: (sincs.append(fd), real_sync(fd))[1]
+    # Windows não tem fdatasync: a drenagem usa os.fsync (FlushFileBuffers) — e
+    # aí o espião também vê o fsync da sonda de escrita e o final de cada cópia
+    nome_sync = "fdatasync" if hasattr(os, "fdatasync") else "fsync"
+    real_sync, real_caps, real_pace = getattr(os, nome_sync), disks.dest_caps, fileops.PACE
+    setattr(os, nome_sync, lambda fd: (sincs.append(fd), real_sync(fd))[1])
     # a drenagem só pode acontecer em fronteira de bloco (BLOCK = 4 MiB),
     # então PACE menor que isso não adianta: 32 MiB / 4 MiB = 8 drenagens.
     fileops.PACE = fileops.BLOCK
@@ -1970,10 +2158,13 @@ def test_copy_paces_writes_on_removable():
             if removivel:
                 assert n >= minimo, f"destino removível não drenou ({n} fdatasync)"
             else:
-                # 1 é o fsync final ("copiado" tem que significar "no disco")
-                assert n <= 1, f"destino interno drenou demais ({n} fdatasync)"
+                # 1 é o fsync final ("copiado" tem que significar "no disco");
+                # no Windows (espião em os.fsync) soma o da sonda de escrita
+                assert n <= (1 if nome_sync == "fdatasync" else 2), \
+                    f"destino interno drenou demais ({n} {nome_sync})"
     finally:
-        os.fdatasync, disks.dest_caps, fileops.PACE = real_sync, real_caps, real_pace
+        setattr(os, nome_sync, real_sync)
+        disks.dest_caps, fileops.PACE = real_caps, real_pace
         shutil.rmtree(src, ignore_errors=True); shutil.rmtree(dst, ignore_errors=True)
     print("ok  F7   escrita em ritmo no removível, sem penalizar disco interno")
 
@@ -2128,7 +2319,10 @@ def test_deb_package_builds_and_is_well_formed():
         campos = dict(l.split(":", 1) for l in ctrl.splitlines() if ":" in l and not l.startswith(" "))
         for c in ("Package", "Version", "Architecture", "Maintainer", "Description", "Depends"):
             assert c in campos, f"control sem {c}"
-        assert campos["Architecture"].strip() == "all", "Python puro não é arch-specific"
+        arch = os.environ.get("DEB_ARCH", "amd64")
+        assert campos["Architecture"].strip() == arch, \
+            (f"Architecture {campos['Architecture'].strip()!r} != {arch!r}: o rga embutido "
+             "(binário) torna o pacote dependente de arquitetura — 'all' seria mentira")
         # Depends MÍNIMO: rg/fd são Recommends porque há fallback em Python puro.
         assert "python3" in campos["Depends"]
         assert "ripgrep" not in campos["Depends"], "ripgrep não é obrigatório (há fallback)"
@@ -2596,8 +2790,7 @@ def test_a4_1_copy_bytes_excludes_too_big():
         with open(os.path.join(src, "ok.mp4"), "w") as f:
             f.write("x" * 100)
         grande = os.path.join(src, "gigante.mkv")
-        with open(grande, "wb") as f:
-            f.truncate(5 * (1 << 30))               # esparso, >4 GiB do FAT
+        arquivo_esparso(grande, 5 * (1 << 30))      # esparso, >4 GiB do FAT
         pf = fileops.preflight([src], dst)
         assert [p for p, _ in pf.too_big] == [grande]
         # total_bytes inclui o gigante; copy_bytes NÃO
@@ -2615,6 +2808,9 @@ def test_a4_1_copy_bytes_excludes_too_big():
 def test_a4_2_native_symlink_counts_in_total():
     """A4.2: symlink recriado como link nativo incrementa done_files no loop;
     o preflight tem que contá-lo em total_files, senão a barra passa de 100%."""
+    if WIN and not pode_symlink():
+        print("~skip  A4.2: usuário comum do Windows não cria symlink (WinError 1314) — "
+              "sem symlink na origem não há o que contar"); return
     src = tempfile.mkdtemp(prefix="lfs_a42_")
     dst = tempfile.mkdtemp(prefix="lfs_a42_dst_")
     try:
@@ -2630,6 +2826,16 @@ def test_a4_2_native_symlink_counts_in_total():
         total = seen[-1][1]
         assert done_max <= total, (done_max, total)
         base = os.path.join(dst, os.path.basename(src))
+        if WIN:
+            # Windows: dest_caps diz symlinks=False em todo volume (usuário comum
+            # não cria symlink) — o link vira CÓPIA do alvo, contada em total_files
+            # via links_degraded. A invariante A4.2 (done <= total) é a mesma.
+            at = os.path.join(base, "atalho")
+            assert not os.path.islink(at) and os.path.isfile(at), "symlink devia virar cópia real"
+            assert open(at).read() == "conteudo", "cópia degradada com conteúdo errado"
+            assert pf.links_degraded, "preflight devia anunciar o link degradado"
+            print("ok  A4.2 symlink degradado (Windows) entra em total_files (done nunca passa total)")
+            return
         assert os.path.islink(os.path.join(base, "atalho")), "symlink devia ser nativo"
         print("ok  A4.2 symlink nativo entra em total_files (done nunca passa total)")
     finally:
@@ -2765,11 +2971,16 @@ def test_a3_same_op_sanitize_collision():
     src = tempfile.mkdtemp(prefix="lfs_a3_")
     dst = tempfile.mkdtemp(prefix="lfs_a3_dst_")
     old = disks.dest_caps
-    disks.dest_caps = lambda p: disks.DestCaps(fstype="vfat", namemax=255, **disks._FAT)
+    # Windows: '?' e '*' não existem em nome NTFS (o Win32 proíbe o mesmo charset
+    # em todo FS). A colisão pós-sanitize é a mesma lógica com dois caracteres
+    # que a ORIGEM aceita e um destino mais restrito recusa ('#' e '%').
+    caps = dict(disks._FAT, charset=disks._FAT["charset"] + "#%") if WIN else disks._FAT
+    n1, n2 = ("a#b.mkv", "a%b.mkv") if WIN else ("a?b.mkv", "a*b.mkv")
+    disks.dest_caps = lambda p: disks.DestCaps(fstype="vfat", namemax=255, **caps)
     try:
-        with open(os.path.join(src, "a?b.mkv"), "w") as f:
+        with open(os.path.join(src, n1), "w") as f:
             f.write("primeiro")
-        with open(os.path.join(src, "a*b.mkv"), "w") as f:
+        with open(os.path.join(src, n2), "w") as f:
             f.write("segundo")
         asked = []
         pf = fileops.preflight([src], dst)
@@ -2916,7 +3127,7 @@ def test_sair_sem_fechar_janela_nao_aborta():
     o CopyWorker — vivo a sessão inteira, dormindo na fila — e o Qt abortava o
     processo (SIGABRT). aboutToQuit agora roda o mesmo encerramento. A trava prova
     as duas coisas: sem o gancho aborta; com ele, sai limpo.
-    (2) A caixa-preta (queda.log em $XDG_CACHE_HOME) é criada no arranque.
+    (2) A caixa-preta (queda.log na pasta de cache do SO) é criada no arranque.
     Em subprocesso: o aborto mataria a própria suíte."""
     try:
         import PySide6  # noqa: F401
@@ -2935,22 +3146,101 @@ def test_sair_sem_fechar_janela_nao_aborta():
             "if sys.argv[1] == 'com': qa.aboutToQuit.connect(w._encerra_threads)\n"
             "QTimer.singleShot(300, qa.quit); qa.exec()\n"
             "del w; print('SAIU', log)\n") % os.path.join(RAIZ, "lfs")
-        env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
-                   XDG_CACHE_HOME=os.path.join(tmp, "cache"),
-                   XDG_CONFIG_HOME=os.path.join(tmp, "config"))
+        # a variável que plat.cache_dir()/config_dir() leem: XDG_* no Linux,
+        # LOCALAPPDATA/APPDATA no Windows (o queda.log segue o SO desde 05/10)
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+        env[ENV_CACHE] = os.path.join(tmp, "cache")
+        env[ENV_CONFIG] = os.path.join(tmp, "config")
         r_sem = subprocess.run([sys.executable, "-c", prog, "sem"], env=env,
                                capture_output=True, text=True, timeout=60)
         r_com = subprocess.run([sys.executable, "-c", prog, "com"], env=env,
                                capture_output=True, text=True, timeout=60)
         assert r_sem.returncode != 0, "sem o gancho deveria abortar (a trava não prova nada)"
         assert r_com.returncode == 0 and "SAIU" in r_com.stdout, (r_com.returncode, r_com.stderr[-800:])
-        log = os.path.join(tmp, "cache", "sombrero-file-search", "queda.log")
+        log = os.path.join(tmp, "cache", plat.app_dir_name(), "queda.log")
         texto = open(log, encoding="utf-8").read()
         assert "início pid=" in texto, texto[:300]
         assert "QThread: Destroyed" in texto, "o aborto do Qt não ficou registrado na caixa-preta"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("ok  GUI  sair sem fechar a janela não aborta; queda.log registra o aborto do Qt")
+
+
+def test_montagem_de_appimage_nao_e_disco():
+    """06/10/2026 (ServidorCedro): 58 sobras do AppImage 1.1.0 do próprio SFS
+    (/tmp/.mount_SombreXXXX e /mnt/optane/tmp/.mount_…, FUSE morto) viravam 29
+    linhas vermelhas "broken mount" quando /mnt/optane era buscado. Montagem que
+    um AppImage faz de si mesmo não é disco: nem raiz expandida, nem evento no
+    painel, nem sonda — e entra em excluded_paths, para o motor da raiz-mãe não
+    descer nela. Vale com e sem --one-fs. Tabela de montagens injetada."""
+    fs_ai = "fuse.Sombrero_File_Search-1.1.0-x86_64.AppImage"
+    tabela = [("/dev/nvme1n1p1", "/mnt/optane", "ext4"),
+              ("Sombrero_File_Search-1.1.0-x86_64.AppImage", "/mnt/optane/tmp/.mount_SombrekFEMCP", fs_ai),
+              ("rodrigo.AppImage", "/mnt/optane/tmp/.mount_rodrigX", "fuse.rodrigo"),
+              ("/dev/sdb1", "/mnt/optane/discoB", "ext4")]
+    assert engine._eh_appimage("/tmp/.mount_SombreAB12cd", fs_ai)
+    assert engine._eh_appimage("/x/.mount_abc/", "fuse.qualquer")
+    assert not engine._eh_appimage("/mnt/.mount_abc", "ext4"), "só FUSE"
+    assert not engine._eh_appimage("/mnt/Expansion1", "fuseblk"), "NTFS por FUSE é disco"
+    for one_fs in (False, True):
+        eventos, mortas = [], []
+        roots, _exp, _f = engine.planejar_raizes(
+            ["/mnt/optane"], one_fs, stats={}, mounts=tabela, mortas=mortas,
+            on_event=lambda ev, info: eventos.append((ev, info.get("path"))))
+        assert not any(".mount_" in r for r in roots), (one_fs, roots)
+        assert not any(".mount_" in (p or "") for _e, p in eventos), (one_fs, eventos)
+        assert {"/mnt/optane/tmp/.mount_SombrekFEMCP", "/mnt/optane/tmp/.mount_rodrigX"} <= set(mortas), \
+            (one_fs, mortas)
+    print("ok  F12  montagem de AppImage (.mount_*) não é disco: fora do painel, excluída do motor")
+
+
+def test_narrativa_rola_e_mostra_problemas_primeiro():
+    """06/10/2026 (Rodrigo, servidor com dezenas de discos): a lista de discos da
+    narrativa tomava a janela e os RESULTADOS ficavam com 3 linhas. Travas: com 42
+    locais a lista ocupa no máximo NARR_LINHAS linhas e rola; os com erro vêm
+    primeiro; o cabeçalho conta os erros; com 2 locais a lista encolhe para 2.
+    Em subprocesso (janela real offscreen)."""
+    try:
+        import PySide6  # noqa: F401
+    except ImportError:
+        print("--  GUI  narrativa rolável: pulado (sem PySide6)")
+        return
+    tmp = tempfile.mkdtemp(prefix="sfs_narr_")
+    try:
+        prog = (
+            "import sys, time; sys.path.insert(0, %r)\n"
+            "import app as A\n"
+            "from PySide6.QtWidgets import QApplication\n"
+            "qa = QApplication([]); w = A.MainWindow(); w.show(); qa.processEvents()\n"
+            "tab = w.tab\n"
+            "def poe(ok, err):\n"
+            "    tab.root_order[:] = []; tab.roots.clear()\n"
+            "    for i in range(ok):\n"
+            "        p = '/d%%d' %% i; tab.root_order.append(p)\n"
+            "        tab.roots[p] = dict(state='done', klass='hdd', name='Disco%%d' %% i, found=i, reason='', snap=None)\n"
+            "    for i in range(err):\n"
+            "        p = '/m%%d' %% i; tab.root_order.append(p)\n"
+            "        tab.roots[p] = dict(state='skipped', klass=None, name='morto%%d' %% i, found=0, reason='broken mount', snap=None)\n"
+            "    tab.t0 = time.time(); w._render_narrative(tab); qa.processEvents()\n"
+            "    return w.narr_scroll.height(), w.narr_body.height(), w.narr_body.text(), w.narr_head.text()\n"
+            "h, corpo, txt, head = poe(13, 29)\n"
+            "linha = corpo / 42\n"
+            "assert h <= linha * (A.MainWindow.NARR_LINHAS + 0.5), (h, linha)\n"
+            "assert corpo > h, 'com 42 locais a lista tinha de ROLAR'\n"
+            "assert 'morto0' in txt.split('<br>')[0], 'erro não veio primeiro'\n"
+            "assert '29' in head, head\n"
+            "h2, corpo2, _, _ = poe(2, 0)\n"
+            "assert abs(h2 - corpo2) <= 4, ('2 locais: a lista devia encolher', h2, corpo2)\n"
+            "w._encerra_threads(); print('OK')\n") % os.path.join(RAIZ, "lfs")
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+        env[ENV_CACHE] = os.path.join(tmp, "cache")
+        env[ENV_CONFIG] = os.path.join(tmp, "config")
+        r = subprocess.run([sys.executable, "-c", prog], env=env, capture_output=True,
+                           text=True, timeout=90)
+        assert r.returncode == 0 and "OK" in r.stdout, r.stderr[-1500:]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("ok  GUI  lista de discos rola (máx. 7 linhas), erros primeiro, cabeçalho conta erros")
 
 
 def test_natural_sort_names():
@@ -3311,7 +3601,8 @@ def test_humane_maps_errno():
                 assert not any(ch.isdigit() for ch in msg), ("vazou dígito", msg)
                 assert os.strerror(code).lower() not in low or needle in msg, msg
         # errno desconhecido -> frase genérica, não crua
-        msg = humane.human_error(OSError(errno.ENOTBLK, "x"))
+        # (Windows não define ENOTBLK; o ponto é só "um errno que o mapa não conhece")
+        msg = humane.human_error(OSError(getattr(errno, "ENOTBLK", 9999), "x"))
         assert "could not be completed" in msg.lower(), msg
         # pt também traduz (não sobra fonte inglesa)
         i18n.set_lang("pt")
@@ -3481,12 +3772,12 @@ def test_dupes_cancel_leaves_no_state():
 def test_dupes_denied_counted():
     """F10c — arquivo ilegível (EACCES) é CONTADO em stats['denied'] e anunciado,
     não trava a caça (padrão F9b)."""
-    if os.geteuid() == 0:
-        print("--  F10c denied (pulado: root ignora permissões)"); return
+    if not pode_negar_leitura():
+        print("--  F10c denied (pulado: root/administrador ignora permissões)"); return
     payload = b"segredo duplicado" * 1000
     d = _dup_tree({"aberto1.bin": payload, "aberto2.bin": payload, "fechado.bin": payload})
     try:
-        os.chmod(os.path.join(d, "fechado.bin"), 0o000)
+        deny_read(os.path.join(d, "fechado.bin"))
         st = dupes.new_stats()
         groups = dupes.find_duplicates([d], stats=st)
         assert st["denied"] >= 1, f"não contou o ilegível: {st}"
@@ -3495,7 +3786,7 @@ def test_dupes_denied_counted():
             f"os legíveis deviam agrupar apesar do ilegível: {[g.paths for g in groups]}"
         print("ok  F10c EACCES contado em stats['denied'] e a caça continua")
     finally:
-        os.chmod(os.path.join(d, "fechado.bin"), 0o644)
+        allow_read(os.path.join(d, "fechado.bin"), 0o644)
         shutil.rmtree(d, ignore_errors=True)
 
 
@@ -3504,11 +3795,17 @@ def test_dupes_symlinks_and_zero_excluded():
     padrão (todos os vazios são 'iguais'); include_zero liga."""
     d = _dup_tree({"vazio1.bin": b"", "vazio2.bin": b"", "real.bin": b"conteudo" * 50})
     try:
-        os.symlink(os.path.join(d, "real.bin"), os.path.join(d, "atalho.bin"))
+        # usuário comum do Windows não cria symlink (WinError 1314): a metade
+        # "tamanho 0" do teste vale igual; a do symlink fica dita como pulada
+        tem_link = not WIN or pode_symlink()
+        if tem_link:
+            os.symlink(os.path.join(d, "real.bin"), os.path.join(d, "atalho.bin"))
+        else:
+            print("~skip  F10c: sem symlink (WinError 1314) — só a metade 'tamanho 0'")
         st = dupes.new_stats()
         groups = dupes.find_duplicates([d], stats=st)     # sem include_zero
         assert groups == [], f"vazios/symlink não deviam gerar grupo: {[g.paths for g in groups]}"
-        assert st["symlinks"] >= 1, f"symlink não contado: {st}"
+        assert st["symlinks"] >= (1 if tem_link else 0), f"symlink não contado: {st}"
         # com include_zero, os dois vazios agrupam (e o symlink continua fora)
         g2 = dupes.find_duplicates([d], include_zero=True)
         assert len(g2) == 1 and len(g2[0].members) == 2, \
@@ -3594,7 +3891,10 @@ def test_dupes_export_csv_json_hostile_names():
     d = tempfile.mkdtemp(prefix="lfs_dupexp_")
     try:
         # nome com byte não-UTF-8 (0xff) — o acervo do Rodrigo tem desses
-        hostile = os.path.join(d.encode(), b"h\xffstile.bin")
+        # Windows: caminho em bytes tem de ser UTF-8 válido lá; o hostil é o
+        # mesmo nome como str = UTF-16 inválido (substituto solitário) no NTFS
+        hostile = (os.path.join(d, nome_de_bytes(b"h\xffstile.bin")) if WIN
+                   else os.path.join(d.encode(), b"h\xffstile.bin"))
         os.mkdir(os.path.join(d, "sub"))
         with open(hostile, "wb") as f:
             f.write(payload)
@@ -3764,12 +4064,12 @@ def test_dupes_in_files_cancel_leaves_no_state():
 def test_dupes_in_files_missing_and_denied_counted():
     """F10c/resultados — caminho inexistente E ilegível na lista são CONTADOS em
     denied, não travam; os legíveis ainda são comparados (padrão F9b)."""
-    if os.geteuid() == 0:
-        print("--  F10c/resultados denied (pulado: root)"); return
+    if not pode_negar_leitura():
+        print("--  F10c/resultados denied (pulado: root/administrador)"); return
     payload = b"dado duplicado" * 2000
     d = _dup_tree({"ok1.bin": payload, "ok2.bin": payload, "fechado.bin": payload})
     try:
-        os.chmod(os.path.join(d, "fechado.bin"), 0o000)
+        deny_read(os.path.join(d, "fechado.bin"))
         files = [os.path.join(d, "ok1.bin"), os.path.join(d, "ok2.bin"),
                  os.path.join(d, "fechado.bin"), os.path.join(d, "sumiu.bin")]
         st = dupes.new_stats()
@@ -3779,7 +4079,7 @@ def test_dupes_in_files_missing_and_denied_counted():
             f"os legíveis deviam agrupar: {[g.paths for g in groups]}"
         print("ok  F10c/resultados: inexistente+ilegível contados, caça continua")
     finally:
-        os.chmod(os.path.join(d, "fechado.bin"), 0o644)
+        allow_read(os.path.join(d, "fechado.bin"), 0o644)
         shutil.rmtree(d, ignore_errors=True)
 
 
@@ -3788,12 +4088,16 @@ def test_dupes_in_files_symlink_and_zero_excluded():
     d = _dup_tree({"vazio1.bin": b"", "vazio2.bin": b"", "real.bin": b"conteudo" * 50})
     try:
         link = os.path.join(d, "atalho.bin")
-        os.symlink(os.path.join(d, "real.bin"), link)
+        tem_link = not WIN or pode_symlink()      # usuário comum: WinError 1314
+        if tem_link:
+            os.symlink(os.path.join(d, "real.bin"), link)
+        else:
+            print("~skip  F10c/resultados: sem symlink (WinError 1314) — só a metade 'tamanho 0'")
         files = [os.path.join(d, "vazio1.bin"), os.path.join(d, "vazio2.bin"),
-                 os.path.join(d, "real.bin"), link]
+                 os.path.join(d, "real.bin")] + ([link] if tem_link else [])
         st = dupes.new_stats()
         assert dupes.find_duplicates_in_files(files, stats=st) == []
-        assert st["symlinks"] >= 1, f"symlink não contado: {st}"
+        assert st["symlinks"] >= (1 if tem_link else 0), f"symlink não contado: {st}"
         g2 = dupes.find_duplicates_in_files(files, include_zero=True)
         assert len(g2) == 1 and len(g2[0].members) == 2, \
             f"vazios agrupam com include_zero: {[g.paths for g in g2]}"
@@ -3825,12 +4129,17 @@ def test_dupes_in_files_hostile_names_export():
     try:
         payload = b"X" * 100000
         bad = b"v\xffdeo.mp4"                       # byte 0xFF ilegal em UTF-8
-        n1 = os.path.join(os.fsencode(d), b"A_" + bad)
-        n2 = os.path.join(os.fsencode(d), b"B_" + bad)
+        if WIN:   # str = UTF-16 inválido no NTFS (bytes não-UTF-8 não são caminho lá)
+            files = [os.path.join(d, nome_de_bytes(b"A_" + bad)),
+                     os.path.join(d, nome_de_bytes(b"B_" + bad))]
+            n1, n2 = files
+        else:
+            n1 = os.path.join(os.fsencode(d), b"A_" + bad)
+            n2 = os.path.join(os.fsencode(d), b"B_" + bad)
+            files = [os.fsdecode(n1), os.fsdecode(n2)]
         for n in (n1, n2):
             with open(n, "wb") as f:
                 f.write(payload)
-        files = [os.fsdecode(n1), os.fsdecode(n2)]
         groups = dupes.find_duplicates_in_files(files)
         assert len(groups) == 1, f"nomes hostis deviam agrupar: {len(groups)}"
         out = os.path.join(d, "dup.csv")
@@ -4170,7 +4479,8 @@ def main():
            test_boolean_single_flight,
            test_boolean_documents_matches_simple_search,
            # F7 — gerenciador de arquivos (cópia não-destrutiva)
-           test_copy_hostile_names, test_copy_symlinks_and_cycles,
+           test_copy_hostile_names, test_motor_acha_nome_longo_e_quebrado,
+           test_copy_symlinks_and_cycles,
            test_copy_conflicts, test_copy_cancel_removes_partial,
            test_copy_never_touches_source, test_preflight_space_and_mount,
            test_dest_caps_restrictive_filesystems,
@@ -4217,6 +4527,8 @@ def main():
            test_menu_labels_disambiguates_collisions,
            test_fit_geometry_multimonitor,
            test_window_minimum_allows_edge_tiling,
+           test_montagem_de_appimage_nao_e_disco,
+           test_narrativa_rola_e_mostra_problemas_primeiro,
            test_natural_sort_names,
            test_main_table_columns_are_resizable,
            test_column_widths_persist,
@@ -4251,6 +4563,44 @@ def main():
            test_dupes_parity_with_oracle,
            # Campanha 2 / Bloco 1 — paridade rg ↔ fallback Python
            test_parity_directed_and_property]
+    # Só-Linux LEGÍTIMOS: exercitam /proc/mounts, sysfs, /mnt|/media, gvfs/MTP,
+    # plocate ou o Bazzite — topologia que não existe no Windows (lá quem
+    # responde é disks_win, coberto por tests/test_disks_win.py). Ficam na lista
+    # no Linux; no Windows saem DITOS, um a um, com o motivo.
+    so_linux = {
+        test_eject_command_prefers_gio_then_udisks:
+            "passos gio/udisksctl e LUKS do sysfs; no Windows a ejeção é v2 "
+            "(disks_win.eject_command devolve None: sem passos, sem botão)",
+        test_name_newline_in_filename:
+            "nome com \\n não existe no Windows (o Win32 proíbe caractere de controle "
+            "em nome, em qualquer FS) — não há framing a quebrar",
+        test_var_mnt_bazzite_disk_detection:
+            "/proc/mounts do Bazzite/ostree (/var/mnt); Windows usa letras de unidade",
+        test_mnt_serializes:
+            "trava SMR por prefixo /mnt|/media; no Windows é 'volume que não é o do "
+            "sistema' (test_disks_win: search_profile)",
+        test_mount_entry_sees_mtp_gvfs:
+            "MTP via gvfsd-fuse no /proc/mounts; alvo Windows sem MTP",
+        test_search_profile_classification:
+            "nfs/cifs/sshfs/gvfs/autofs do /proc/mounts; rede no Windows = letra "
+            "mapeada/UNC (test_disks_win)",
+        test_planejar_expande_montagens:
+            "montagens SOB '/' (mounts_under); Windows v1 não tem pasta montada "
+            "(disks_win.mounts_under = [])",
+        test_list_search_targets_boundary_visibility:
+            "montagens-filhas de /mnt no /proc/mounts; idem (sem pasta montada no Windows)",
+        test_a4_4_sys_disk_whole_disk:
+            "/sys/block (mmcblk0/nvme0n1); Windows usa PhysicalDriveN via IOCTL",
+        test_indexed_symlink_root_translates:
+            "índice plocate (Linux); não há indexed no Windows",
+        test_volume_label_prefers_label:
+            "label por /dev/disk/by-label + basename de /run/media; Windows usa "
+            "GetVolumeInformation (test_disks_win: volume_label)",
+    }
+    if WIN:
+        for fn, motivo in so_linux.items():
+            print(f"~skip  [só Linux] {fn.__name__}: {motivo}")
+        fns = [fn for fn in fns if fn not in so_linux]
     fail = 0
     for fn in fns:
         try:

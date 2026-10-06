@@ -1,0 +1,141 @@
+# SFS para Windows — F0 (desenho do Fable, 02/10/2026).
+# Runner windows-latest com os motores oficiais de Windows em bin/ (a mesma pasta
+# que o .deb e o AppImage usam ao lado de lfs/). Mede, não esconde: o que ainda
+# é só-Linux aparece como falha listada no passo "auditoria (informativo)".
+name: windows
+
+on:
+  push:
+    branches: [windows]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  RGV: "15.2.0"      # manter em sincronia com install.sh / build_appimage.sh
+  FDV: "v10.4.2"
+  # rga: o 0.10.10 (Linux) não publicou build de Windows; 0.10.9 é o último
+  # que publicou. Medido 02/10/2026: o leitor docx/odt/epub do SFS (custom
+  # adapter) passa test_docs_embutidos no 0.10.9 também.
+  RGAV: "v0.10.9"
+  POPPLERV: "26.09.0-0"
+  PYTHONUTF8: "1"
+
+jobs:
+  testes:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: motores (rg, fd, rga, pdftotext) em bin\
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force bin, _dl | Out-Null
+          function Baixa($url, $zip) {
+            Invoke-WebRequest -Uri $url -OutFile "_dl\$zip"
+            Expand-Archive "_dl\$zip" -DestinationPath "_dl\$($zip -replace '\.zip$','')" -Force
+          }
+          Baixa "https://github.com/BurntSushi/ripgrep/releases/download/$env:RGV/ripgrep-$env:RGV-x86_64-pc-windows-msvc.zip" rg.zip
+          Baixa "https://github.com/sharkdp/fd/releases/download/$env:FDV/fd-$env:FDV-x86_64-pc-windows-msvc.zip" fd.zip
+          Baixa "https://github.com/phiresky/ripgrep-all/releases/download/$env:RGAV/ripgrep_all-$env:RGAV-x86_64-pc-windows-msvc.zip" rga.zip
+          Baixa "https://github.com/oschwartz10612/poppler-windows/releases/download/v$env:POPPLERV/Release-$env:POPPLERV.zip" poppler.zip
+          Get-ChildItem _dl -Recurse -Include rg.exe, fd.exe, rga.exe, rga-preproc.exe | Copy-Item -Destination bin
+          # pdftotext + as DLLs do poppler juntos: o rga acha o pdftotext pelo
+          # PATH, e rga_env() põe a pasta do rg (bin\) no PATH dele
+          $pop = Get-ChildItem _dl\poppler -Recurse -Filter pdftotext.exe | Select-Object -First 1
+          Copy-Item "$($pop.DirectoryName)\*" -Destination bin -Recurse
+          foreach ($e in "rg", "fd", "rga") { & "bin\$e.exe" --version | Select-Object -First 1 }
+          if (-not (Test-Path bin\pdftotext.exe)) { throw "pdftotext.exe faltando" }
+          exit 0          # o último nativo deixaria $LASTEXITCODE do poppler
+
+      - name: dependências Python
+        run: python -m pip install --disable-pip-version-check PySide6
+
+      - name: costura de plataforma (test_plataforma_f0)
+        run: python tests\test_plataforma_f0.py
+
+      - name: aceite F0 — busca por nome com fd.exe real
+        run: |
+          $ErrorActionPreference = "Stop"
+          $d = Join-Path $env:RUNNER_TEMP "sfs_f0"
+          New-Item -ItemType Directory -Force "$d\sub" | Out-Null
+          "laudo" | Set-Content "$d\a.txt"; "laudo" | Set-Content "$d\sub\b.txt"; "x" | Set-Content "$d\c.md"
+          $out = python lfs\cli.py $d -n "*.txt" -l
+          $out
+          if ($LASTEXITCODE -ne 0) { throw "cli saiu $LASTEXITCODE" }
+          if (@($out | Where-Object { $_ -like "*.txt" }).Count -ne 2) { throw "esperava 2 .txt" }
+          $out = python lfs\cli.py $d -c laudo -l
+          $out
+          if (@($out | Where-Object { $_ -like "*.txt" }).Count -ne 2) { throw "conteúdo: esperava 2" }
+
+      - name: paridade rg ↔ Python (test_parity_rg_python)
+        run: python tests\test_parity_rg_python.py
+
+      # F3: o pacote que vai no pendrive do Luca. Monta com PyInstaller (onedir,
+      # SombreroFileSearch.exe + sfs.exe) e prova o EXECUTÁVEL, não o código-fonte: nome, conteúdo
+      # e documento (.docx pelo rga -> sfs.exe --docs-adapter).
+      - name: pacote Windows (F3)
+        run: |
+          python -m pip install --disable-pip-version-check pyinstaller pillow
+          .\packaging\windows\build_windows.ps1
+
+      - name: aceite F3 — o executável empacotado busca de verdade
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sfs = "dist\SombreroFileSearch\sfs.exe"
+          $d = Join-Path $env:RUNNER_TEMP "sfs_f3"
+          New-Item -ItemType Directory -Force "$d\sub" | Out-Null
+          "laudo" | Set-Content "$d\a.txt"; "laudo" | Set-Content "$d\sub\b.txt"
+          python packaging\windows\faz_docx.py "$d\relatorio.docx" "parecer pulmonar"
+          & $sfs --version
+          $out = & $sfs $d -n "*.txt" -l; $out
+          if (@($out | Where-Object { $_ -like "*.txt" }).Count -ne 2) { throw "nome: esperava 2 .txt" }
+          $out = & $sfs $d -c laudo -l; $out
+          if (@($out | Where-Object { $_ -like "*.txt" }).Count -ne 2) { throw "conteúdo: esperava 2" }
+          $out = & $sfs $d -c pulmonar -D -l; $out
+          if (-not ($out | Where-Object { $_ -like "*relatorio.docx" })) { throw "docx: o leitor embutido não respondeu" }
+          # a janela monta de verdade (o console diz o erro que o SombreroFileSearch.exe não teria onde dizer)
+          & $sfs --gui-selftest
+          if ($LASTEXITCODE -ne 0) { throw "gui-selftest falhou ($LASTEXITCODE)" }
+          # e o SombreroFileSearch.exe de janela sobe e fica de pé — com TODO aviso do Qt
+          # ligado: exe de janela não tem stderr, e um aviso já derrubou a GUI (05/10/2026)
+          $env:QT_LOGGING_RULES = "*.debug=true"
+          $p = Start-Process "dist\SombreroFileSearch\SombreroFileSearch.exe" -PassThru
+          Remove-Item Env:QT_LOGGING_RULES
+          Start-Sleep 8
+          if ($p.HasExited) {
+            Get-Content "$env:LOCALAPPDATA\Sombrero File Search\crash.log" -ErrorAction SilentlyContinue
+            Get-Content "$env:LOCALAPPDATA\Sombrero File Search\queda.log" -Tail 40 -ErrorAction SilentlyContinue
+            throw "SombreroFileSearch.exe saiu sozinho (código $($p.ExitCode))"
+          }
+          Stop-Process $p
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: SombreroFileSearch-windows-x64
+          path: dist/SombreroFileSearch-*-windows-x64.zip
+          retention-days: 30
+
+      # Informativo na F0: lista o que ainda é só-Linux. Vira obrigatório na F1,
+      # com cada falha Windows-only pinada em LACUNAS_CONHECIDAS.
+      - name: auditoria e demais suítes (informativo)
+        continue-on-error: true
+        run: |
+          $falhas = @()
+          Get-ChildItem tests -Filter test_*.py | Sort-Object Name | ForEach-Object {
+            python $_.FullName *> "_dl\$($_.BaseName).log"
+            $rc = $LASTEXITCODE
+            "{0,3}  {1}" -f $rc, $_.Name
+            if ($rc -ne 0) { $falhas += $_.Name; Get-Content "_dl\$($_.BaseName).log" | Select-String -Pattern '^(FALHA|FALHOU|ERRO|Traceback)' | Select-Object -First 40 }
+          }
+          "--- suítes com falha no Windows: $($falhas.Count)"
+          $falhas
+          if ($falhas.Count) { exit 1 }

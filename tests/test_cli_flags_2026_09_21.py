@@ -14,6 +14,8 @@ Tudo em tempdir, rodando o cli.py de verdade. Rode:
 """
 from __future__ import annotations
 import os, shutil, subprocess, sys, tempfile
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixtures_plat as FP
 
 RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 CLI = os.path.join(RAIZ, "lfs", "cli.py")
@@ -29,8 +31,8 @@ def sfs(*args):
     """Roda a CLI; devolve (rc, caminhos relativos ao tmp encontrados, stderr)."""
     p = subprocess.run([sys.executable, CLI, *args], capture_output=True, text=True,
                        env=dict(os.environ, LANG="C.UTF-8"), timeout=120)
-    achados = sorted(os.path.relpath(L, T) for L in p.stdout.splitlines()
-                     if L.startswith(T))
+    achados = sorted(os.path.relpath(L, T).replace(os.sep, "/")   # Windows: '\\' -> '/'
+                     for L in p.stdout.splitlines() if L.startswith(T))
     return p.returncode, achados, p.stderr
 
 
@@ -47,7 +49,11 @@ try:
     escreve("sub/b.txt", "laudo\n")                      # profundidade 2
     escreve("sub/fundo/c.txt", "laudo\n")                # profundidade 3
     escreve("e.txt", "laudo\n", base=FORA)               # só se alcança pelo link
-    os.symlink(FORA, os.path.join(T, "atalho"))
+    TEM_LINK = FP.pode_symlink()        # Windows sem modo desenvolvedor: WinError 1314
+    if TEM_LINK:
+        os.symlink(FORA, os.path.join(T, "atalho"), target_is_directory=True)
+    else:
+        print("~skip  [SO] sem permissão de criar symlink: casos de --follow pulados")
 
     todos = ["a.txt", "grande.txt", "sub/b.txt", "sub/fundo/c.txt"]
 
@@ -76,10 +82,11 @@ try:
     ok(ach == ["a.txt", "grande.txt"], f"--depth vale no BOOLEANO ({ach})")
 
     # ------------------------------------------------------------ --follow
-    rc, ach, _ = sfs(T, "-n", "*.txt", "-l", "--follow")
-    ok("atalho/e.txt" in ach and len(ach) == 5, f"--follow atravessa o link ({ach})")
-    rc, ach, _ = sfs(T, "-c", "laudo", "-l", "--follow")
-    ok("atalho/e.txt" in ach, f"--follow vale na busca de CONTEÚDO ({ach})")
+    if TEM_LINK:
+        rc, ach, _ = sfs(T, "-n", "*.txt", "-l", "--follow")
+        ok("atalho/e.txt" in ach and len(ach) == 5, f"--follow atravessa o link ({ach})")
+        rc, ach, _ = sfs(T, "-c", "laudo", "-l", "--follow")
+        ok("atalho/e.txt" in ach, f"--follow vale na busca de CONTEÚDO ({ach})")
 
     # ------------------------------------------------------------ --follow + LAÇO
     # Medido antes do conserto: link apontando para uma pasta ANCESTRAL fazia o
@@ -92,8 +99,9 @@ try:
         os.makedirs(os.path.join(L, "p", "q"))
         with open(os.path.join(L, "p", "q", "x.txt"), "w") as f:
             f.write("laudo\n")
-        os.symlink(os.path.join(L, "p"), os.path.join(L, "p", "q", "volta"))
-        for modo in (["-n", "*.txt"], ["-c", "laudo"], ["-b", "laudo"]):
+        if TEM_LINK:
+            os.symlink(os.path.join(L, "p"), os.path.join(L, "p", "q", "volta"), target_is_directory=True)
+        for modo in (() if not TEM_LINK else (["-n", "*.txt"], ["-c", "laudo"], ["-b", "laudo"])):
             p = subprocess.run([sys.executable, CLI, L, *modo, "-l", "--follow"],
                                capture_output=True, text=True, timeout=120)
             achou = [x for x in p.stdout.splitlines() if x.endswith("x.txt")]

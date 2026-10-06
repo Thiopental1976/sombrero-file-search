@@ -198,6 +198,14 @@ _PT = {
         "o repositório de objetos do ostree (ostree/repo) não foi varrido e nunca é: os arquivos dele têm nome de hash, e os mesmos bytes estão nas implantações",
     "a pruned tree here is never searched: its files are content-addressed (named by hash)":
         "uma árvore podada aqui nunca é varrida: os arquivos dela são endereçados por conteúdo (nome de hash)",
+    "Recycle Bin not searched: this location had live results (--snapshots / 'include snapshots' to always search it)":
+        "Lixeira não varrida: este local teve resultado vivo (--snapshots / 'incluir snapshots' para varrer sempre)",
+    "nothing in the live tree, so the Recycle Bin was searched too; results from it are marked":
+        "nada na árvore viva, então a Lixeira também foi varrida; os resultados dela vêm marcados",
+    "Recycle Bin searched as requested; results from it are marked":
+        "Lixeira varrida como pedido; os resultados dela vêm marcados",
+    "Recycle Bin not searched: the search stopped (cap or cancel) before reaching it":
+        "Lixeira não varrida: a busca parou (teto ou cancelamento) antes de chegar nela",
     "snapshot tree not searched: the search stopped (cap or cancel) before reaching it":
         "árvore de snapshot não varrida: a busca parou (teto ou cancelamento) antes de chegar nela",
     "ostree deployments not searched: the search stopped (cap or cancel) before reaching them":
@@ -240,6 +248,9 @@ _PT = {
     "Copy path(s)": "Copiar caminho(s)",
     "Open with": "Abrir com",
     "Other command…": "Outro comando…",
+    "Choose another app…": "Escolher outro aplicativo…",
+    "{n} folder link(s) cannot be recreated on {fs} and will be skipped.":
+        "{n} atalho(s) de pasta não podem ser recriados em {fs} e serão pulados.",
     "Command (the file paths are appended):":
         "Comando (os caminhos dos arquivos são anexados):",
     "Open containing folder": "Abrir pasta do item",
@@ -411,6 +422,7 @@ _PT = {
     "{n} found": "{n} achados",
     "{verb} {done}/{total} locations · {found} found · {sec}":
         "{verb} {done}/{total} locais · {found} achados · {sec}",
+    "{n} with errors": "{n} com erro",
 
     # --- F10b #4: pós-cópia "seguro remover" + ejetar ---
     "⏏ Eject": "⏏ Ejetar",

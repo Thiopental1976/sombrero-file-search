@@ -182,7 +182,7 @@ to search explicitly.
 - 🧩 **Boolean search** — `(note OR report) AND patient NOT draft`; also `| & !` and `"quoted phrases"`.
   Precedence `NOT > AND > OR`, parentheses. `AND` narrows the second term to the files the first
   one found; independent `OR` terms run in parallel (`LFS_WORKERS`, default 3).
-- 📄 **Inside documents** — PDF, docx, epub, odt, zip via [ripgrep-all](https://github.com/phiresky/ripgrep-all) (optional).
+- 📄 **Inside documents** — PDF, docx, epub, odt, zip via [ripgrep-all](https://github.com/phiresky/ripgrep-all) (bundled; docx/odt/epub need no pandoc).
 - 🎬 **Media preview** — thumbnails and an audio/video player with transport controls.
 - 🗂️ **Search tabs, saved searches, history, export** to CSV/JSON, light/dark theme.
 - 📁 **Copy files** — never moves or deletes the source; destination pre-flight (free space,

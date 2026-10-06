@@ -24,6 +24,12 @@ def ok(cond, msg):
     if not cond:
         falhas.append(msg)
 
+if os.name == "nt":
+    # o teste inteiro é sobre nome com BYTE não-UTF-8, que o NTFS (UTF-16) não
+    # tem como guardar. Lacuna conhecida e dita, não escondida.
+    print("~skip  [só Linux] nomes com byte não-UTF-8 não existem no Windows")
+    sys.exit(0)
+
 T = tempfile.mkdtemp(prefix="sfs_nome8_")
 try:
     tb = os.fsencode(T)

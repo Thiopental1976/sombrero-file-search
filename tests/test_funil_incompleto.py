@@ -53,25 +53,28 @@ ok("{rc}" not in linhas[0] and "code 2: bad flag" in linhas[0],
 
 # ---- 1d) H13: ponto de montagem vazio — fatos do disks.py
 from lfs import disks as D
-fstab = ["# comentário", "UUID=1 /mnt/Disco ext4 defaults 0 2",
-         "/dev/sdz1 /mnt/Com\\040Espaco auto 0 0", "/dev/mapper/swap none swap sw 0 0",
-         "tmpfs /tmp tmpfs 0 0", "linha quebrada"]
-alvos = D.fstab_targets(fstab)
-ok(alvos == {"/mnt/Disco", "/mnt/Com Espaco", "/tmp"},
-   f"fstab_targets lê a 2a coluna, desescapa \\040 e ignora swap/none: {alvos}")
-mounts = [("/dev/sda1", "/mnt/Disco", "ext4"), ("/dev/sdb1", "/media/rodrigo/Pen", "vfat")]
-ok(D.is_mountpoint("/mnt/Disco/", mounts) and not D.is_mountpoint("/mnt/Disco/sub", mounts)
-   and not D.is_mountpoint("/mnt/Outro", mounts), "is_mountpoint é EXATO, não 'sob um mount'")
-# Revisão Fable 21/09/2026: este teste consultava o `pwd` DE VERDADE — só passava
-# numa máquina com um usuário chamado "rodrigo" (o ServidorCedro) e falhava em
-# qualquer outra (CI, contribuidor, contêiner). A regra testada é "/media/<user>
-# é a PASTA das vagas, não uma vaga"; quem é usuário entra por injeção.
-_eh_usuario_real = D._eh_usuario
-D._eh_usuario = lambda nome: nome == "rodrigo"
-ok(all(D.is_mount_slot(p) for p in ("/mnt/X", "/var/mnt/X", "/media/X", "/media/rodrigo/X", "/run/media/rodrigo/X/"))
-   and not any(D.is_mount_slot(p) for p in ("/mnt", "/media/rodrigo", "/home/rodrigo/X", "/mnt/X/sub", "/run/media")),
-   "is_mount_slot: /mnt/X, /media/[user/]X, /run/media/user/X — e só isso")
-D._eh_usuario = _eh_usuario_real
+if os.name != "nt":
+    fstab = ["# comentário", "UUID=1 /mnt/Disco ext4 defaults 0 2",
+             "/dev/sdz1 /mnt/Com\\040Espaco auto 0 0", "/dev/mapper/swap none swap sw 0 0",
+             "tmpfs /tmp tmpfs 0 0", "linha quebrada"]
+    alvos = D.fstab_targets(fstab)
+    ok(alvos == {"/mnt/Disco", "/mnt/Com Espaco", "/tmp"},
+       f"fstab_targets lê a 2a coluna, desescapa \\040 e ignora swap/none: {alvos}")
+    mounts = [("/dev/sda1", "/mnt/Disco", "ext4"), ("/dev/sdb1", "/media/rodrigo/Pen", "vfat")]
+    ok(D.is_mountpoint("/mnt/Disco/", mounts) and not D.is_mountpoint("/mnt/Disco/sub", mounts)
+       and not D.is_mountpoint("/mnt/Outro", mounts), "is_mountpoint é EXATO, não 'sob um mount'")
+    # Revisão Fable 21/09/2026: este teste consultava o `pwd` DE VERDADE — só passava
+    # numa máquina com um usuário chamado "rodrigo" (o ServidorCedro) e falhava em
+    # qualquer outra (CI, contribuidor, contêiner). A regra testada é "/media/<user>
+    # é a PASTA das vagas, não uma vaga"; quem é usuário entra por injeção.
+    _eh_usuario_real = D._eh_usuario
+    D._eh_usuario = lambda nome: nome == "rodrigo"
+    ok(all(D.is_mount_slot(p) for p in ("/mnt/X", "/var/mnt/X", "/media/X", "/media/rodrigo/X", "/run/media/rodrigo/X/"))
+       and not any(D.is_mount_slot(p) for p in ("/mnt", "/media/rodrigo", "/home/rodrigo/X", "/mnt/X/sub", "/run/media")),
+       "is_mount_slot: /mnt/X, /media/[user/]X, /run/media/user/X — e só isso")
+    D._eh_usuario = _eh_usuario_real
+else:
+    print('~skip  [só Linux] fstab e vagas /mnt|/media são do Linux; no Windows: letras mapeadas e sem vagas (test_disks_win)')
 
 # gate: fstab diz que há disco e não há -> grave, raiz pulada; vaga vazia -> indício, busca segue
 _orig = (E._fstab_alvos, E._eh_mountpoint, E._eh_vaga_de_montagem)
@@ -107,6 +110,8 @@ finally:
 # hospeda o snapshot e dá ZERO no vivo é ESTENDIDA (snapshots_searched), com
 # achado vivo fica podada (snapshots_skipped) — as duas são "a poda anotada".
 from lfs import boolean as B
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixtures_plat as FP
 _d = tempfile.mkdtemp(prefix="lfs_snap_")
 _snap = os.path.join(_d, "timeshift", "snapshots", "2026-09-09", "localhost", "home")
 os.makedirs(_snap); open(os.path.join(_snap, "a.txt"), "w").write("laudo\n")
@@ -166,12 +171,12 @@ try:
     proibida = os.path.join(raiz, "segredo")
     os.makedirs(proibida, exist_ok=True)
     open(os.path.join(proibida, "b.txt"), "w").write("laudo\n")
-    os.chmod(proibida, 0o000)
+    FP.deny_read(proibida)                 # chmod 000 / icacls /deny
     try:
         st, out = {}, []
         E.search(E.Query(paths=[raiz], content="laudo"), out.append, stats=st)
         grave, _ = E.resumo_incompleto(st)
-        if os.geteuid() == 0:
+        if not FP.pode_negar_leitura():
             # root ignora chmod 000: a pasta NÃO nega nada e o teste acusaria o
             # programa de um defeito do ambiente (CI em contêiner roda como root)
             print("--    (pulado) pasta proibida -> funil: rodando como ROOT, chmod 000 não nega; "
@@ -182,7 +187,7 @@ try:
            "o rg saindo 2 SO por permissao nao e falha de motor")
         ok(not grave, "busca com pasta proibida nao e grave (exit code preservado)")
     finally:
-        os.chmod(proibida, 0o755)
+        FP.allow_read(proibida, 0o755)
 
     # ---- 3) o exit code da CLI deriva do funil
     base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

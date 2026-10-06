@@ -37,6 +37,8 @@ A catraca corre nos dois sentidos:
 import builtins, errno, os, shutil, stat, subprocess, sys, tempfile, threading, time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lfs import engine as E, boolean as B
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixtures_plat as FP
 
 # ---------------------------------------------------------------- as lacunas
 # (backend, perda): por que ainda não passa. Despinar ao consertar.
@@ -47,14 +49,16 @@ LACUNAS_CONHECIDAS = {
 
 REAL_POPEN = subprocess.Popen
 
-if os.geteuid() == 0:
-    # As colunas "pasta negada"/"arquivo negado" dependem de chmod 000 NEGAR, e
-    # para o root ele não nega nada: a tabela sairia com 9 células vermelhas que
-    # são do ambiente, não do programa (medido num contêiner de CI). Melhor dizer
-    # alto que não dá para julgar do que acusar regressão falsa — ou passar calado.
-    print("PULADO: test_honestidade precisa de usuário comum (root ignora chmod 000).\n"
-          "        Rode:  su <usuario> -c 'python3 tests/test_honestidade.py'")
-    sys.exit(0)
+# As colunas "pasta negada"/"arquivo negado" dependem de NEGAR leitura, e para
+# o root (Linux) ou o administrador com privilégio de backup (Windows: sessão
+# SSH elevada, runner do CI) negar não nega nada: seriam células vermelhas do
+# AMBIENTE, não do programa. Só ELAS saem, dito em voz alta; o resto da tabela
+# roda. (Antes saía a tabela inteira — no CI do Windows, que roda como admin,
+# a honestidade toda ficaria sem medir.)
+NEGAR_FUNCIONA = FP.pode_negar_leitura()
+if not NEGAR_FUNCIONA:
+    print("~skip  colunas 'pasta negada'/'arquivo negado': este usuário lê o que é negado\n"
+          "       (root / administrador). Rode como usuário comum para medi-las.")
 
 
 # ---------------------------------------------------------------- fixture
@@ -70,10 +74,11 @@ class Arvore:
         self.arq_negado = os.path.join(self.raiz, "arquivo_negado.txt")
         open(self.arq_negado, "w").write("laudo\n")
 
-    def fecha_dir(self):  os.chmod(self.dir_negado, 0o000)
-    def abre_dir(self):   os.chmod(self.dir_negado, 0o755)
-    def fecha_arq(self):  os.chmod(self.arq_negado, 0o000)
-    def abre_arq(self):   os.chmod(self.arq_negado, 0o644)
+    # chmod 000 no Linux, icacls /deny no Windows (fixtures_plat)
+    def fecha_dir(self):  FP.deny_read(self.dir_negado)
+    def abre_dir(self):   FP.allow_read(self.dir_negado, 0o755)
+    def fecha_arq(self):  FP.deny_read(self.arq_negado)
+    def abre_arq(self):   FP.allow_read(self.arq_negado, 0o644)
     def limpa(self):
         for abre in (self.abre_dir, self.abre_arq):
             try:
@@ -241,6 +246,8 @@ PERDAS = [
     ("erro de leitura",  "read_error",   False, p_erro_leitura,
      {"py/conteudo", "booleano/py"}),                      # rg: sem como induzir
 ]
+if not NEGAR_FUNCIONA:
+    PERDAS = [p for p in PERDAS if p[1] != "permission_denied"]
 
 
 # ---------------------------------------------------------------- execução

@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QSplitter, QHeaderView, QSpinBox, QMenu, QTextEdit,
     QAbstractItemView, QToolButton, QFrame, QStackedWidget, QSlider, QSizePolicy,
     QLayout, QDialog, QDialogButtonBox, QProgressBar, QFormLayout, QMessageBox,
-    QInputDialog, QTabWidget, QTreeWidget, QTreeWidgetItem)
+    QInputDialog, QTabWidget, QTreeWidget, QTreeWidgetItem, QScrollArea)
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -42,6 +42,7 @@ except ImportError:                     # QtMultimedia opcional (portabilidade)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine, boolean, disks, fileops, xdg, version, searches, humane, resultfilter, dupes, copyjobs
 from engine import Query, Match
+xdg = engine.plat.shell()       # xdg.py no Linux, shell_win.py no Windows (mesmo contrato)
 from i18n import t
 
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets")
@@ -155,6 +156,13 @@ def path_to_uri(path: str) -> str:
     apontaria para um arquivo que não existe, e o gerenciador diria só "não
     encontrado". fsencode + quote preserva byte a byte, que é como o
     text/uri-list é definido."""
+    if engine.plat.IS_WIN:
+        # Windows: separador '\', letra de unidade (file:///C:/...) e UNC
+        # (\\srv\share -> file://srv/share). Nome lá é sempre Unicode.
+        p = os.path.abspath(path).replace("\\", "/")
+        if p.startswith("//"):
+            return "file:" + quote(os.fsencode(p), safe="/")
+        return "file:///" + quote(os.fsencode(p), safe="/:")
     return "file://" + quote(os.fsencode(os.path.abspath(path)), safe="/")
 
 
@@ -261,6 +269,8 @@ def build_paths_mime(paths) -> QMimeData:
     md.setUrls([url_local(p) for p in paths])          # text/uri-list
     # soltar em terminal/editor: nome não-UTF-8 vai na forma que o shell entende
     md.setText("\n".join(engine.caminho_para_shell(p) for p in paths))
+    if engine.plat.IS_WIN:
+        return md                 # o Qt já converte as URLs em CF_HDROP (Explorer)
     enc = "\n".join(path_to_uri(p) for p in paths)
     md.setData("x-special/gnome-copied-files",
                QByteArray(("copy\n" + enc).encode("ascii")))
@@ -565,8 +575,8 @@ class ResultFilterProxy(QSortFilterProxyModel):
 
 
 # ----------------------------------------------------------------- temas
-_CONFIG_BASE = os.path.expanduser(os.environ.get("XDG_CONFIG_HOME", "~/.config"))
-CONFIG_DIR = os.path.join(_CONFIG_BASE, "sombrero-file-search")
+_CONFIG_BASE = engine.plat.config_base()      # %APPDATA% no Windows, XDG no Linux
+CONFIG_DIR = engine.plat.config_dir()
 CONFIG = os.path.join(CONFIG_DIR, "config.json")
 
 
@@ -577,6 +587,8 @@ def _migrate_old_config():
     conservadora: só move se o diretório NOVO ainda não existe e o ANTIGO existe.
     Falha em silêncio — perder a config antiga é um aborrecimento, travar o
     arranque do app por causa dela seria pior."""
+    if engine.plat.IS_WIN:                     # nunca houve "Linux File Search" no Windows
+        return
     old = os.path.join(_CONFIG_BASE, "linux-file-search")
     if os.path.isdir(old) and not os.path.exists(CONFIG_DIR):
         try:
@@ -700,6 +712,7 @@ QSlider::handle:horizontal {{ background: {txt}; width: 13px; height: 13px;
     margin: -5px 0; border-radius: 7px; }}
 QSlider::handle:horizontal:hover {{ background: {accent_hi}; }}
 QFrame#narrative {{ background: {bg1}; border: 1px solid {border}; border-radius: 10px; }}
+QScrollArea#narrscroll, QScrollArea#narrscroll > QWidget > QWidget {{ background: transparent; }}
 QLabel#narrhead {{ color: {txt}; font-size: 14px; font-weight: 700; }}
 QLabel#narrbody {{ color: {muted}; font-size: 13px; }}
 """
@@ -990,6 +1003,9 @@ class PreflightDialog(QDialog):
         if pf.links_broken:
             warn.append(t("{n} broken symlink(s) cannot be copied to {fs} and "
                           "will be skipped.", n=len(pf.links_broken), fs=pf.caps.label))
+        if pf.links_dir:
+            warn.append(t("{n} folder link(s) cannot be recreated on {fs} and "
+                          "will be skipped.", n=len(pf.links_dir), fs=pf.caps.label))
         for src, err in pf.errors[:10]:
             warn.append("%s: %s" % (src, err))
         self.details.setPlainText("\n".join(warn) if warn else
@@ -1929,7 +1945,16 @@ class MainWindow(QMainWindow):
         self.narr_body = QLabel(""); self.narr_body.setObjectName("narrbody")
         self.narr_body.setTextFormat(Qt.RichText); self.narr_body.setWordWrap(True)
         self.narr_body.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        nv.addWidget(self.narr_head); nv.addWidget(self.narr_body)
+        self.narr_body.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        # 06/10/2026 (Rodrigo): num sistema com dezenas de discos a lista tomava a
+        # janela e os RESULTADOS — o que importa — ficavam com 3 linhas. A lista
+        # agora rola dentro de no máximo NARR_LINHAS linhas; problemas vêm primeiro.
+        self.narr_scroll = QScrollArea(); self.narr_scroll.setObjectName("narrscroll")
+        self.narr_scroll.setWidget(self.narr_body); self.narr_scroll.setWidgetResizable(True)
+        self.narr_scroll.setFrameShape(QFrame.NoFrame)
+        self.narr_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.narr_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        nv.addWidget(self.narr_head); nv.addWidget(self.narr_scroll)
         self.narr.setVisible(False)
         sp.addWidget(self.narr)
 
@@ -2518,6 +2543,8 @@ class MainWindow(QMainWindow):
         if tab is self.tab:
             self._render_narrative(tab)
 
+    NARR_LINHAS = 7         # teto da lista de discos; o resto da janela é dos resultados
+
     def _render_narrative(self, tab):
         """Desenha o painel a partir do estado da aba. Sem I/O — só formata."""
         if not tab.root_order:
@@ -2533,8 +2560,19 @@ class MainWindow(QMainWindow):
         verb = t("Scanning") if alive else t("Scanned")
         head = t("{verb} {done}/{total} locations · {found} found · {sec}",
                  verb=verb, done=done, total=total, found=_grp(found), sec=sec)
+        ruins = sum(1 for r in recs if r["state"] == "skipped")
+        if ruins:
+            head = (f'{_esc(head)} · <span style="color:{pal["red"]}">'
+                    f'{_esc(t("{n} with errors", n=_grp(ruins)))}</span>')
+            self.narr_head.setTextFormat(Qt.RichText)
+        else:
+            self.narr_head.setTextFormat(Qt.PlainText)
         self.narr_head.setText(head)
 
+        # problemas primeiro (vistos sem rolar), depois os em varredura, depois os
+        # concluídos — cada grupo na ordem original
+        peso = {"skipped": 0, "scanning": 1}
+        recs = sorted(recs, key=lambda r: peso.get(r["state"], 2))
         lines = []
         for r in recs:
             tag = self._KLASS_TAG.get(r["klass"])
@@ -2566,6 +2604,15 @@ class MainWindow(QMainWindow):
                          f'({_esc(rotulo)})</span>')
             lines.append(line)
         self.narr_body.setText("<br>".join(lines))
+        # altura: cabe tudo até NARR_LINHAS linhas; acima disso, rola
+        # altura de UMA linha medida no texto renderizado (o rich-text é mais alto
+        # que fontMetrics().lineSpacing() — medido: 16 px contra 14)
+        self.narr_body.ensurePolished()           # a fonte do QSS (13px) já valendo
+        larg = max(self.narr_scroll.viewport().width(), 200)
+        total = self.narr_body.heightForWidth(larg)
+        linha = (total / len(lines)) if total > 0 else self.narr_body.fontMetrics().lineSpacing() + 2
+        alto = int(round(linha * min(len(lines), self.NARR_LINHAS))) + 2
+        self.narr_scroll.setFixedHeight(alto)
         self.narr.setVisible(True)
 
     def _launch(self, tab, q, boolexpr):
@@ -3136,6 +3183,12 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         dirs = list(dict.fromkeys(os.path.dirname(p) for p in paths))
+        if engine.plat.IS_WIN:
+            # Explorer na pasta COM os itens selecionados; senão, só a pasta
+            if not xdg.reveal(list(paths)):
+                for d in dirs:
+                    QDesktopServices.openUrl(url_local(d))
+            return
         # A janela tem que abrir no gerenciador PADRÃO DO USUÁRIO. O ShowItems é
         # ativado por nome no barramento, e quem registra o FileManager1 pode não
         # ser o padrão dele (no Mint o Nemo registra mesmo se o padrão for outro).
@@ -3231,7 +3284,12 @@ class MainWindow(QMainWindow):
         for app in xdg.apps_for(paths[0]):
             mnu.addAction(app.name, lambda _=False, a=app: xdg.launch(a, paths))
         mnu.addSeparator()
-        mnu.addAction(t("Other command…"), self.open_with_other)
+        if engine.plat.IS_WIN:
+            # a caixa nativa do Windows: lista completa, Loja, "Sempre usar"
+            mnu.addAction(t("Choose another app…"),
+                          lambda: xdg.choose_app(paths[0], int(self.winId())))
+        else:
+            mnu.addAction(t("Other command…"), self.open_with_other)
 
     def open_with_other(self):
         ms = self._sel_matches()
@@ -3535,8 +3593,7 @@ def _liga_registro_de_queda():
     Arquivo passa de 1 MB → recomeça. Nada sai da máquina. Devolve o caminho."""
     import faulthandler, traceback
     from PySide6.QtCore import QtMsgType, qInstallMessageHandler
-    base = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
-                        "sombrero-file-search")
+    base = engine.plat.cache_dir()      # XDG no Linux; %LOCALAPPDATA% no Windows
     try:
         os.makedirs(base, exist_ok=True)
         caminho = os.path.join(base, "queda.log")
@@ -3559,7 +3616,10 @@ def _liga_registro_de_queda():
     def _qt(tipo, ctx, msg):
         if tipo in (QtMsgType.QtFatalMsg, QtMsgType.QtCriticalMsg):
             fh.write(f"--- {time.strftime('%H:%M:%S')} Qt {tipo.name}: {msg}\n")
-        sys.stderr.write(msg + "\n")
+        # exe de janela no Windows: sys.stderr é None. Escrever nele derrubava a GUI
+        # no primeiro aviso do Qt (05/10/2026, VM: aviso de DPI ao abrir pela tarefa)
+        if sys.stderr is not None:
+            sys.stderr.write(msg + "\n")
     qInstallMessageHandler(_qt)
     return caminho
 

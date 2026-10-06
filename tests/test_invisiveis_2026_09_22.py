@@ -53,8 +53,11 @@ try:
     for rot, n in NOMES.items():
         open(os.path.join(T, n), "w").close()
         por_nome[n] = rot
-    r = subprocess.run(["bash", "-c", "test -e " + engine.caminho_para_shell(os.path.join(T, NOMES["rlo"]))])
-    ok(r.returncode == 0, "a forma do terminal acha o arquivo com RLO no bash")
+    if os.name != "nt":
+        r = subprocess.run(["bash", "-c", "test -e " + engine.caminho_para_shell(os.path.join(T, NOMES["rlo"]))])
+        ok(r.returncode == 0, "a forma do terminal acha o arquivo com RLO no bash")
+    else:                                 # forma do terminal do Windows: F2 (shell_win)
+        print("~skip  [só Linux] forma $'...' do bash para copiar caminho")
 
     def busca(globs, python=False):
         salvos = (engine.RG, engine.RGA, engine.FD)

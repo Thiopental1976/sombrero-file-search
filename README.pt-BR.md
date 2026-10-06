@@ -185,7 +185,7 @@ buscar explicitamente.
   `"frases entre aspas"`. Precedência `NOT > AND > OR`, parênteses. O `AND` restringe o segundo
   termo aos arquivos que o primeiro achou; termos `OR` independentes rodam em paralelo
   (`LFS_WORKERS`, padrão 3).
-- 📄 **Dentro de documentos** — PDF, docx, epub, odt, zip via [ripgrep-all](https://github.com/phiresky/ripgrep-all) (opcional).
+- 📄 **Dentro de documentos** — PDF, docx, epub, odt, zip via [ripgrep-all](https://github.com/phiresky/ripgrep-all) (embutido; docx/odt/epub sem pandoc).
 - 🎬 **Preview de mídia** — miniaturas e um player de áudio/vídeo com controles de transporte.
 - 🗂️ **Abas de busca, buscas salvas, histórico, exportação** para CSV/JSON, tema claro/escuro.
 - 📁 **Copiar arquivos** — nunca move nem apaga a origem; pré-checagem do destino (espaço livre,

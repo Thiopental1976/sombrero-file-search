@@ -214,6 +214,13 @@ install_static_engines() {
   if [ "$IMMUTABLE" = 1 ]; then wn "alternativa via sistema (exige reboot): $(immutable_pkg_cmd 'ripgrep fd')"; fi
 }
 
+sha256_ok() { # sha256_ok <arquivo> <sha256 esperado>
+  local h
+  if has sha256sum; then h="$(sha256sum "$1" | cut -d' ' -f1)"
+  else h="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1")"; fi
+  [ "$h" = "$2" ] || { er "sha256 não confere: $(basename "$1")"; return 1; }
+}
+
 install_rga() {
   mkdir -p "$PREFIX/bin"
   if engine_present rga; then ok "rga já presente"; return; fi
@@ -221,14 +228,18 @@ install_rga() {
     wn "rga: binário pronto só p/ x86_64 (seu: $ARCH). Instale 'ripgrep-all' pelo gerenciador."
     sys_install ripgrep-all rga; return
   fi
-  local v="v0.10.10"
+  local v="v0.10.10"   # manter em sincronia com packaging/build_deb.sh e build_appimage.sh
   local url="https://github.com/phiresky/ripgrep-all/releases/download/$v/ripgrep_all-$v-x86_64-unknown-linux-musl.tar.gz"
+  # sha256 fixado (28/09/2026): o mesmo que os pacotes conferem — um tarball
+  # trocado na origem não vira binário no PATH de ninguém
+  local sha="a969c25b182ac84aa672518313b5f741091decf7d93d03a020bcfe517b9ff4e8"
   c "Baixando ripgrep-all $v (estático)…"
   local tmp d; tmp="$(mktemp -d)"
   # cadeia inteira na condição do if (como dl_tar): sob `set -e`, um tar/find/install
   # solto no corpo do then aborta o instalador inteiro num download truncado — aqui
   # uma falha em qualquer etapa só cai no wn de aviso, sem derrubar o script.
   if dl "$url" "$tmp/rga.tgz" \
+    && sha256_ok "$tmp/rga.tgz" "$sha" \
     && tar xzf "$tmp/rga.tgz" -C "$tmp" --no-same-owner \
     && d="$(find "$tmp" -maxdepth 1 -type d -name 'ripgrep_all-*')" \
     && [ -n "$d" ] \

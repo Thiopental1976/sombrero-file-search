@@ -378,7 +378,8 @@ def test_cancel_mata_processo():
         if qq.paths == ["/rapido"]:
             yield _m("/rapido/0")
             return
-        pr = subprocess.Popen(["sleep", "30"], stdout=subprocess.PIPE)
+        pr = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                              stdout=subprocess.PIPE)   # sem `sleep` no Windows
         if procs is not None:
             procs.append(pr)
         vistos.append(pr)
@@ -398,12 +399,19 @@ def test_cancel_mata_processo():
        "o processo do disco lento foi morto, nao ficou martelando o disco")
 
 
+# composefs/ostree/bind mount e LVM do sysfs são do LINUX: no Windows as
+# primitivas vêm do disks_win (test_disks_win), e o ostree nem existe lá.
+_SO_LINUX = {test_lvm_nao_vira_desconhecido, test_composefs_herda_disco_do_datadir,
+             test_bind_do_mesmo_diretorio_entra_uma_vez, test_nota_ostree_mesma_mecanica}
 for fn in (test_grupos, test_grupos_discos_reais, test_grupo_inacessivel,
            test_eh_snapshot, test_jobs_por_classe, test_lvm_nao_vira_desconhecido,
            test_composefs_herda_disco_do_datadir, test_bind_do_mesmo_diretorio_entra_uma_vez,
            test_nota_ostree_mesma_mecanica, test_jobs_de_rede,
            test_streaming,
            test_saida_antecipada, test_erro_de_um_disco, test_cancel_mata_processo):
+    if os.name == "nt" and fn in _SO_LINUX:
+        print(f"~skip  [só Linux] {fn.__name__}")
+        continue
     fn()
 print(f"\n{'FALHOU: ' + ', '.join(falhas) if falhas else 'todos os testes passaram'}")
 sys.exit(1 if falhas else 0)

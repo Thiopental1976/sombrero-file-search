@@ -44,47 +44,50 @@ def _cronometra(fn):
     fn(lambda: flag["v"], st)
     return time.time() - t0, st
 
-_rg, _fd = engine.RG, engine.FD
-try:
-    engine.FD = _surdo
-    dt, st = _cronometra(lambda c, s: engine.search(
-        Query(paths=[_disco], name_patterns=["*raro*"]), lambda m: None, c, stats=s))
-    ok(dt < 5, f"cancelar solta a busca por NOME com o fd calado, caminho serial ({dt:.1f}s; era 20s+)")
-    grave, _ = engine.resumo_incompleto(st)
-    ok(not grave, "cancelar NÃO vira 'search engine failed' (o motor morreu porque NÓS o matamos)")
+if os.name != "nt":
+    _rg, _fd = engine.RG, engine.FD
+    try:
+        engine.FD = _surdo
+        dt, st = _cronometra(lambda c, s: engine.search(
+            Query(paths=[_disco], name_patterns=["*raro*"]), lambda m: None, c, stats=s))
+        ok(dt < 5, f"cancelar solta a busca por NOME com o fd calado, caminho serial ({dt:.1f}s; era 20s+)")
+        grave, _ = engine.resumo_incompleto(st)
+        ok(not grave, "cancelar NÃO vira 'search engine failed' (o motor morreu porque NÓS o matamos)")
 
-    engine.FD, engine.RG = _fd, _surdo
-    dt, st = _cronometra(lambda c, s: engine.search(
-        Query(paths=[_disco], content="raro"), lambda m: None, c, stats=s))
-    ok(dt < 5, f"cancelar solta a busca por CONTEÚDO com o rg calado ({dt:.1f}s)")
-    ok(not engine.resumo_incompleto(st)[0], "…e sem falso 'engine failed'")
+        engine.FD, engine.RG = _fd, _surdo
+        dt, st = _cronometra(lambda c, s: engine.search(
+            Query(paths=[_disco], content="raro"), lambda m: None, c, stats=s))
+        ok(dt < 5, f"cancelar solta a busca por CONTEÚDO com o rg calado ({dt:.1f}s)")
+        ok(not engine.resumo_incompleto(st)[0], "…e sem falso 'engine failed'")
 
-    dt, st = _cronometra(lambda c, s: boolean.search_boolean(
-        Query(paths=[_disco]), "raro AND outro", lambda m: None, c, stats=s))
-    ok(dt < 5, f"cancelar solta o BOOLEANO com o rg calado ({dt:.1f}s)")
-    dt, st = _cronometra(lambda c, s: boolean.search_boolean(
-        Query(paths=[_disco]), "NOT raro", lambda m: None, c, stats=s))
-    ok(dt < 5, f"cancelar solta o universo do NOT ({dt:.1f}s)")
-finally:
-    engine.RG, engine.FD = _rg, _fd
+        dt, st = _cronometra(lambda c, s: boolean.search_boolean(
+            Query(paths=[_disco]), "raro AND outro", lambda m: None, c, stats=s))
+        ok(dt < 5, f"cancelar solta o BOOLEANO com o rg calado ({dt:.1f}s)")
+        dt, st = _cronometra(lambda c, s: boolean.search_boolean(
+            Query(paths=[_disco]), "NOT raro", lambda m: None, c, stats=s))
+        ok(dt < 5, f"cancelar solta o universo do NOT ({dt:.1f}s)")
+    finally:
+        engine.RG, engine.FD = _rg, _fd
 
-# _reap: kill (-9) depois de terminate ignorado, por iniciativa NOSSA, não é falha
-_teimoso = os.path.join(_tmp, "teimoso.py")
-with open(_teimoso, "w") as f:
-    f.write("import signal,time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nprint('pronto', flush=True)\ntime.sleep(30)\n")
-p = subprocess.Popen([sys.executable, _teimoso], stdout=subprocess.PIPE)
-p.stdout.readline()                        # SIGTERM já está ignorado
-errf = tempfile.TemporaryFile(mode="w+")
-st = {}
-engine._reap(p, errf, st)
-ok(p.returncode == -9 and not st.get("incompleto"),
-   f"processo que ignora SIGTERM leva kill e NÃO entra no funil como falha (rc={p.returncode})")
-# …mas um motor que morreu SOZINHO com código estranho continua sendo falha
-p = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(7)"]); p.wait()
-errf = tempfile.TemporaryFile(mode="w+"); st = {}
-engine._reap(p, errf, st)
-ok(any(e["motivo"] == "engine_failed" for e in st.get("incompleto", [])),
-   "motor que saiu sozinho com rc=7 continua 'engine_failed' (a guarda não afrouxou)")
+    # _reap: kill (-9) depois de terminate ignorado, por iniciativa NOSSA, não é falha
+    _teimoso = os.path.join(_tmp, "teimoso.py")
+    with open(_teimoso, "w") as f:
+        f.write("import signal,time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nprint('pronto', flush=True)\ntime.sleep(30)\n")
+    p = subprocess.Popen([sys.executable, _teimoso], stdout=subprocess.PIPE)
+    p.stdout.readline()                        # SIGTERM já está ignorado
+    errf = tempfile.TemporaryFile(mode="w+")
+    st = {}
+    engine._reap(p, errf, st)
+    ok(p.returncode == -9 and not st.get("incompleto"),
+       f"processo que ignora SIGTERM leva kill e NÃO entra no funil como falha (rc={p.returncode})")
+    # …mas um motor que morreu SOZINHO com código estranho continua sendo falha
+    p = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(7)"]); p.wait()
+    errf = tempfile.TemporaryFile(mode="w+"); st = {}
+    engine._reap(p, errf, st)
+    ok(any(e["motivo"] == "engine_failed" for e in st.get("incompleto", [])),
+       "motor que saiu sozinho com rc=7 continua 'engine_failed' (a guarda não afrouxou)")
+else:
+    print("~skip  [só Linux] motor falso em /bin/sh e SIGTERM ignorável não existem no Windows (lá terminate = TerminateProcess, rc 1, já aceito como 'nós matamos')")
 
 
 # =====================================================================
@@ -93,7 +96,10 @@ ok(any(e["motivo"] == "engine_failed" for e in st.get("incompleto", [])),
 #    `engine_failed` grave (rg rc=2, "No such file") — exit 2 por um nome.
 # =====================================================================
 _enc = os.path.join(_tmp, "enc"); os.makedirs(_enc)
-_nome_cru = os.path.join(os.fsencode(_enc), b"laudo_m\xe9dico.txt")
+# no Windows não existe nome com byte cru (NTFS = UTF-16): o nome acentuado
+# válido mantém o resto do bloco (linha cp1252, booleano) exercitado lá
+_nome_cru = os.path.join(os.fsencode(_enc), b"laudo_m\xe9dico.txt" if os.name != "nt"
+                         else "laudo_médico.txt".encode())
 open(_nome_cru, "wb").write(b"paciente com laudo\n")
 open(os.path.join(_enc, "antigo.txt"), "wb").write(
     "laudo do paciente João — avaliação\n".encode("cp1252"))
@@ -145,8 +151,11 @@ ok(engine._rg_caminho({"text": "/a"}) == "/a" and engine._rg_caminho(None) is No
 
 # nome com '\n' no booleano (antes rachava em 2 'linhas' de caminho)
 _nl = os.path.join(_tmp, "nl"); os.makedirs(_nl)
-open(os.path.join(_nl, "duas\nlinhas.txt"), "w").write("alfa beta\n")
-if engine.RG:
+if os.name != "nt":                      # '\n' no nome é ilegal no Windows
+    open(os.path.join(_nl, "duas\nlinhas.txt"), "w").write("alfa beta\n")
+else:
+    print("~skip  [só Linux] nome com '\\n' (ilegal no Windows)")
+if engine.RG and os.name != "nt":
     res = []
     boolean.search_boolean(Query(paths=[_nl]), "alfa AND beta", res.append)
     ok([m.path for m in res] == [os.path.join(_nl, "duas\nlinhas.txt")],
@@ -157,25 +166,28 @@ if engine.RG:
 # 3) mount_ok reprovava NFS/CIFS/sshfs/ZFS sob /mnt: terminava em
 #    `mp in engine.user_mounts()`, e user_mounts só lista fontes /dev/*.
 # =====================================================================
-_linhas = ["/dev/sda2 / ext4 rw 0 0",
-           "nas:/export /mnt/nas nfs4 rw 0 0",
-           "//win11/share /mnt/win cifs rw 0 0",
-           "user@h:/ /media/rodrigo/ssh fuse.sshfs rw 0 0",
-           "tank/midia /mnt/tank zfs rw 0 0",
-           "/dev/sdb1 /mnt/DiscoQ ext4 rw 0 0"]
-_tab = disks._read_mounts(_linhas)
-_rm = disks._read_mounts
-try:
-    disks._read_mounts = lambda src=None: _tab
-    ok(all(disks.mount_ok(p) for p in ("/mnt/nas/filmes", "/mnt/win/x", "/media/rodrigo/ssh/a",
-                                       "/mnt/tank/b", "/mnt/DiscoQ/c")),
-       "mount_ok aceita destino em NFS, CIFS, sshfs, ZFS e disco de bloco sob /mnt|/media")
-    ok(not disks.mount_ok("/mnt/vazio/d") and not disks.mount_ok("/media/rodrigo/nada"),
-       "mount_ok continua reprovando ponto de montagem SEM montagem (a guarda do NVMe cheio)")
-    ok(disks.mount_ok("/home/rodrigo/x") and disks.mount_ok("/tmp/y"),
-       "mount_ok não opina fora dos prefixos de montagem")
-finally:
-    disks._read_mounts = _rm
+if os.name != "nt":
+    _linhas = ["/dev/sda2 / ext4 rw 0 0",
+               "nas:/export /mnt/nas nfs4 rw 0 0",
+               "//win11/share /mnt/win cifs rw 0 0",
+               "user@h:/ /media/rodrigo/ssh fuse.sshfs rw 0 0",
+               "tank/midia /mnt/tank zfs rw 0 0",
+               "/dev/sdb1 /mnt/DiscoQ ext4 rw 0 0"]
+    _tab = disks._read_mounts(_linhas)
+    _rm = disks._read_mounts
+    try:
+        disks._read_mounts = lambda src=None: _tab
+        ok(all(disks.mount_ok(p) for p in ("/mnt/nas/filmes", "/mnt/win/x", "/media/rodrigo/ssh/a",
+                                           "/mnt/tank/b", "/mnt/DiscoQ/c")),
+           "mount_ok aceita destino em NFS, CIFS, sshfs, ZFS e disco de bloco sob /mnt|/media")
+        ok(not disks.mount_ok("/mnt/vazio/d") and not disks.mount_ok("/media/rodrigo/nada"),
+           "mount_ok continua reprovando ponto de montagem SEM montagem (a guarda do NVMe cheio)")
+        ok(disks.mount_ok("/home/rodrigo/x") and disks.mount_ok("/tmp/y"),
+           "mount_ok não opina fora dos prefixos de montagem")
+    finally:
+        disks._read_mounts = _rm
+else:
+    print('~skip  [só Linux] mount_ok sob /mnt|/media lê /proc/mounts; no Windows o destino é a letra (test_disks_win)')
 
 
 # =====================================================================
@@ -183,9 +195,10 @@ finally:
 #    arquivo parcial de 65 bytes, e a GUI só capturava OSError.
 # =====================================================================
 _exp = tempfile.mkdtemp(prefix="sfs_exp_")
-_m = engine.Match(os.fsdecode(b"/acervo/laudo_m\xe9dico.txt"), 10, 1e9,
+_m = engine.Match(os.fsdecode(b"/acervo/laudo_m\xe9dico.txt") if os.name != "nt"
+                  else "/acervo/laudo_médico.txt", 10, 1e9,
                   lines=[(1, "texto")], nmatch=1)
-for ext in (".csv", ".json"):
+for ext in ((".csv", ".json") if os.name != "nt" else ()):   # byte cru: só Linux
     alvo = os.path.join(_exp, "saida" + ext)
     try:
         n = searches.export([_m, _m], alvo)
@@ -271,13 +284,16 @@ ok(not _sujas, f"nenhuma linha em português na saída da CLI: {_sujas[:3]}")
 
 # 4000 nomes longos: a saída passa MUITO do buffer do pipe (64 KiB) — com 40
 # arquivos tudo cabia antes de o `head` fechar e o teste passava no código velho
-_gordo = os.path.join(_d, "gordo"); os.makedirs(_gordo)
-for i in range(4000):
-    open(os.path.join(_gordo, f"arquivo_de_nome_bem_comprido_para_encher_o_pipe_{i:05d}.txt"), "w").close()
-r = subprocess.run(f'"{sys.executable}" "{_CLI}" "{_d}" -n "*.txt" | head -1',
-                   shell=True, capture_output=True, timeout=60)
-ok(b"Traceback" not in r.stderr and b"BrokenPipe" not in r.stderr and r.stdout.count(b"\n") == 1,
-   "`sfs … | head -1`: sem traceback de BrokenPipeError")
+if os.name != "nt":
+    _gordo = os.path.join(_d, "gordo"); os.makedirs(_gordo)
+    for i in range(4000):
+        open(os.path.join(_gordo, f"arquivo_de_nome_bem_comprido_para_encher_o_pipe_{i:05d}.txt"), "w").close()
+    r = subprocess.run(f'"{sys.executable}" "{_CLI}" "{_d}" -n "*.txt" | head -1',
+                       shell=True, capture_output=True, timeout=60)
+    ok(b"Traceback" not in r.stderr and b"BrokenPipe" not in r.stderr and r.stdout.count(b"\n") == 1,
+       "`sfs … | head -1`: sem traceback de BrokenPipeError")
+else:
+    print('~skip  [só Linux] pipe para o head do shell POSIX (o cmd não tem head)')
 shutil.rmtree(_d, ignore_errors=True)
 
 
@@ -287,32 +303,35 @@ shutil.rmtree(_d, ignore_errors=True)
 #    E arquivo visível dentro de pasta OCULTA saía do índice; a busca viva não
 #    desce em pasta oculta.
 # =====================================================================
-ok(indexed._padrao_plocate("/mnt/DiscoQ/filmes") == "/mnt/DiscoQ/filmes",
-   "raiz comum segue como substring (caminho de sempre, intocado)")
-ok(indexed._padrao_plocate("/a/[2019] Laudos") == r"/a/\[2019\] Laudos/*"
-   and indexed._padrao_plocate("/a/que?*") == r"/a/que\?\*/*",
-   "raiz com metacaractere de glob é escapada e vira '<raiz>/*'")
+if os.name != "nt":
+    ok(indexed._padrao_plocate("/mnt/DiscoQ/filmes") == "/mnt/DiscoQ/filmes",
+       "raiz comum segue como substring (caminho de sempre, intocado)")
+    ok(indexed._padrao_plocate("/a/[2019] Laudos") == r"/a/\[2019\] Laudos/*"
+       and indexed._padrao_plocate("/a/que?*") == r"/a/que\?\*/*",
+       "raiz com metacaractere de glob é escapada e vira '<raiz>/*'")
 
-_pedidos = []
-def _plocate_falso(args):
-    _pedidos.append(args)
-    base = "/acervo/[2019] Laudos"
-    return b"\0".join(os.fsencode(p) for p in (
-        base + "/laudo_a.txt", base + "/.oculta/laudo_b.txt", base + "/vis/.laudo_c.txt",
-        base + "/vis/laudo_d.txt")) + b"\0"
-class _St:
-    st_size = 1; st_mtime = 0.0; st_mode = stat.S_IFREG | 0o644
-_qi = Query(paths=["/acervo/[2019] Laudos"], name_patterns=["*laudo*"])
-_mt = [("/dev/x", "/", "ext4")]
-_r = sorted(os.path.basename(m.path) for m in indexed.search_indexed(
-    _qi, conf={}, mounts=_mt, _run=_plocate_falso, _lstat=lambda p: _St()))
-ok(_pedidos[-1][-1] == r"/acervo/\[2019\] Laudos/*", f"o plocate recebe o padrão escapado: {_pedidos[-1]}")
-ok(_r == ["laudo_a.txt", "laudo_d.txt"],
-   f"sem --hidden: nada de DENTRO de pasta oculta nem arquivo oculto (paridade com o fd): {_r}")
-_r = sorted(os.path.basename(m.path) for m in indexed.search_indexed(
-    Query(paths=["/acervo/[2019] Laudos"], name_patterns=["*laudo*"], include_hidden=True),
-    conf={}, mounts=_mt, _run=_plocate_falso, _lstat=lambda p: _St()))
-ok(len(_r) == 4, f"com --hidden os quatro aparecem: {_r}")
+    _pedidos = []
+    def _plocate_falso(args):
+        _pedidos.append(args)
+        base = "/acervo/[2019] Laudos"
+        return b"\0".join(os.fsencode(p) for p in (
+            base + "/laudo_a.txt", base + "/.oculta/laudo_b.txt", base + "/vis/.laudo_c.txt",
+            base + "/vis/laudo_d.txt")) + b"\0"
+    class _St:
+        st_size = 1; st_mtime = 0.0; st_mode = stat.S_IFREG | 0o644
+    _qi = Query(paths=["/acervo/[2019] Laudos"], name_patterns=["*laudo*"])
+    _mt = [("/dev/x", "/", "ext4")]
+    _r = sorted(os.path.basename(m.path) for m in indexed.search_indexed(
+        _qi, conf={}, mounts=_mt, _run=_plocate_falso, _lstat=lambda p: _St()))
+    ok(_pedidos[-1][-1] == r"/acervo/\[2019\] Laudos/*", f"o plocate recebe o padrão escapado: {_pedidos[-1]}")
+    ok(_r == ["laudo_a.txt", "laudo_d.txt"],
+       f"sem --hidden: nada de DENTRO de pasta oculta nem arquivo oculto (paridade com o fd): {_r}")
+    _r = sorted(os.path.basename(m.path) for m in indexed.search_indexed(
+        Query(paths=["/acervo/[2019] Laudos"], name_patterns=["*laudo*"], include_hidden=True),
+        conf={}, mounts=_mt, _run=_plocate_falso, _lstat=lambda p: _St()))
+    ok(len(_r) == 4, f"com --hidden os quatro aparecem: {_r}")
+else:
+    print('~skip  [só Linux] --index usa plocate, que só existe no Linux')
 
 if shutil.which("plocate") and shutil.which("updatedb"):
     _ix = tempfile.mkdtemp(prefix="sfs_ix_")
