@@ -422,6 +422,7 @@ _PT = {
     "{n} found": "{n} achados",
     "{verb} {done}/{total} locations · {found} found · {sec}":
         "{verb} {done}/{total} locais · {found} achados · {sec}",
+    "{n} with errors": "{n} com erro",
 
     # --- F10b #4: pós-cópia "seguro remover" + ejetar ---
     "⏏ Eject": "⏏ Ejetar",

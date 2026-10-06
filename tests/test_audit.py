@@ -3166,6 +3166,55 @@ def test_sair_sem_fechar_janela_nao_aborta():
     print("ok  GUI  sair sem fechar a janela não aborta; queda.log registra o aborto do Qt")
 
 
+def test_narrativa_rola_e_mostra_problemas_primeiro():
+    """06/10/2026 (Rodrigo, servidor com dezenas de discos): a lista de discos da
+    narrativa tomava a janela e os RESULTADOS ficavam com 3 linhas. Travas: com 42
+    locais a lista ocupa no máximo NARR_LINHAS linhas e rola; os com erro vêm
+    primeiro; o cabeçalho conta os erros; com 2 locais a lista encolhe para 2.
+    Em subprocesso (janela real offscreen)."""
+    try:
+        import PySide6  # noqa: F401
+    except ImportError:
+        print("--  GUI  narrativa rolável: pulado (sem PySide6)")
+        return
+    tmp = tempfile.mkdtemp(prefix="sfs_narr_")
+    try:
+        prog = (
+            "import sys, time; sys.path.insert(0, %r)\n"
+            "import app as A\n"
+            "from PySide6.QtWidgets import QApplication\n"
+            "qa = QApplication([]); w = A.MainWindow(); w.show(); qa.processEvents()\n"
+            "tab = w.tab\n"
+            "def poe(ok, err):\n"
+            "    tab.root_order[:] = []; tab.roots.clear()\n"
+            "    for i in range(ok):\n"
+            "        p = '/d%%d' %% i; tab.root_order.append(p)\n"
+            "        tab.roots[p] = dict(state='done', klass='hdd', name='Disco%%d' %% i, found=i, reason='', snap=None)\n"
+            "    for i in range(err):\n"
+            "        p = '/m%%d' %% i; tab.root_order.append(p)\n"
+            "        tab.roots[p] = dict(state='skipped', klass=None, name='morto%%d' %% i, found=0, reason='broken mount', snap=None)\n"
+            "    tab.t0 = time.time(); w._render_narrative(tab); qa.processEvents()\n"
+            "    return w.narr_scroll.height(), w.narr_body.height(), w.narr_body.text(), w.narr_head.text()\n"
+            "h, corpo, txt, head = poe(13, 29)\n"
+            "linha = corpo / 42\n"
+            "assert h <= linha * (A.MainWindow.NARR_LINHAS + 0.5), (h, linha)\n"
+            "assert corpo > h, 'com 42 locais a lista tinha de ROLAR'\n"
+            "assert 'morto0' in txt.split('<br>')[0], 'erro não veio primeiro'\n"
+            "assert '29' in head, head\n"
+            "h2, corpo2, _, _ = poe(2, 0)\n"
+            "assert abs(h2 - corpo2) <= 4, ('2 locais: a lista devia encolher', h2, corpo2)\n"
+            "w._encerra_threads(); print('OK')\n") % os.path.join(RAIZ, "lfs")
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+        env[ENV_CACHE] = os.path.join(tmp, "cache")
+        env[ENV_CONFIG] = os.path.join(tmp, "config")
+        r = subprocess.run([sys.executable, "-c", prog], env=env, capture_output=True,
+                           text=True, timeout=90)
+        assert r.returncode == 0 and "OK" in r.stdout, r.stderr[-1500:]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("ok  GUI  lista de discos rola (máx. 7 linhas), erros primeiro, cabeçalho conta erros")
+
+
 def test_natural_sort_names():
     """Ordenação NATURAL das colunas de texto (como os exploradores de arquivo):
     'foto2' vem ANTES de 'foto10' — não o alfabético-burro que põe '10' antes de '2'.
@@ -4450,6 +4499,7 @@ def main():
            test_menu_labels_disambiguates_collisions,
            test_fit_geometry_multimonitor,
            test_window_minimum_allows_edge_tiling,
+           test_narrativa_rola_e_mostra_problemas_primeiro,
            test_natural_sort_names,
            test_main_table_columns_are_resizable,
            test_column_widths_persist,

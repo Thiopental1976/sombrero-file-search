@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QSplitter, QHeaderView, QSpinBox, QMenu, QTextEdit,
     QAbstractItemView, QToolButton, QFrame, QStackedWidget, QSlider, QSizePolicy,
     QLayout, QDialog, QDialogButtonBox, QProgressBar, QFormLayout, QMessageBox,
-    QInputDialog, QTabWidget, QTreeWidget, QTreeWidgetItem)
+    QInputDialog, QTabWidget, QTreeWidget, QTreeWidgetItem, QScrollArea)
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -712,6 +712,7 @@ QSlider::handle:horizontal {{ background: {txt}; width: 13px; height: 13px;
     margin: -5px 0; border-radius: 7px; }}
 QSlider::handle:horizontal:hover {{ background: {accent_hi}; }}
 QFrame#narrative {{ background: {bg1}; border: 1px solid {border}; border-radius: 10px; }}
+QScrollArea#narrscroll, QScrollArea#narrscroll > QWidget > QWidget {{ background: transparent; }}
 QLabel#narrhead {{ color: {txt}; font-size: 14px; font-weight: 700; }}
 QLabel#narrbody {{ color: {muted}; font-size: 13px; }}
 """
@@ -1944,7 +1945,16 @@ class MainWindow(QMainWindow):
         self.narr_body = QLabel(""); self.narr_body.setObjectName("narrbody")
         self.narr_body.setTextFormat(Qt.RichText); self.narr_body.setWordWrap(True)
         self.narr_body.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        nv.addWidget(self.narr_head); nv.addWidget(self.narr_body)
+        self.narr_body.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        # 06/10/2026 (Rodrigo): num sistema com dezenas de discos a lista tomava a
+        # janela e os RESULTADOS — o que importa — ficavam com 3 linhas. A lista
+        # agora rola dentro de no máximo NARR_LINHAS linhas; problemas vêm primeiro.
+        self.narr_scroll = QScrollArea(); self.narr_scroll.setObjectName("narrscroll")
+        self.narr_scroll.setWidget(self.narr_body); self.narr_scroll.setWidgetResizable(True)
+        self.narr_scroll.setFrameShape(QFrame.NoFrame)
+        self.narr_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.narr_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        nv.addWidget(self.narr_head); nv.addWidget(self.narr_scroll)
         self.narr.setVisible(False)
         sp.addWidget(self.narr)
 
@@ -2533,6 +2543,8 @@ class MainWindow(QMainWindow):
         if tab is self.tab:
             self._render_narrative(tab)
 
+    NARR_LINHAS = 7         # teto da lista de discos; o resto da janela é dos resultados
+
     def _render_narrative(self, tab):
         """Desenha o painel a partir do estado da aba. Sem I/O — só formata."""
         if not tab.root_order:
@@ -2548,8 +2560,19 @@ class MainWindow(QMainWindow):
         verb = t("Scanning") if alive else t("Scanned")
         head = t("{verb} {done}/{total} locations · {found} found · {sec}",
                  verb=verb, done=done, total=total, found=_grp(found), sec=sec)
+        ruins = sum(1 for r in recs if r["state"] == "skipped")
+        if ruins:
+            head = (f'{_esc(head)} · <span style="color:{pal["red"]}">'
+                    f'{_esc(t("{n} with errors", n=_grp(ruins)))}</span>')
+            self.narr_head.setTextFormat(Qt.RichText)
+        else:
+            self.narr_head.setTextFormat(Qt.PlainText)
         self.narr_head.setText(head)
 
+        # problemas primeiro (vistos sem rolar), depois os em varredura, depois os
+        # concluídos — cada grupo na ordem original
+        peso = {"skipped": 0, "scanning": 1}
+        recs = sorted(recs, key=lambda r: peso.get(r["state"], 2))
         lines = []
         for r in recs:
             tag = self._KLASS_TAG.get(r["klass"])
@@ -2581,6 +2604,15 @@ class MainWindow(QMainWindow):
                          f'({_esc(rotulo)})</span>')
             lines.append(line)
         self.narr_body.setText("<br>".join(lines))
+        # altura: cabe tudo até NARR_LINHAS linhas; acima disso, rola
+        # altura de UMA linha medida no texto renderizado (o rich-text é mais alto
+        # que fontMetrics().lineSpacing() — medido: 16 px contra 14)
+        self.narr_body.ensurePolished()           # a fonte do QSS (13px) já valendo
+        larg = max(self.narr_scroll.viewport().width(), 200)
+        total = self.narr_body.heightForWidth(larg)
+        linha = (total / len(lines)) if total > 0 else self.narr_body.fontMetrics().lineSpacing() + 2
+        alto = int(round(linha * min(len(lines), self.NARR_LINHAS))) + 2
+        self.narr_scroll.setFixedHeight(alto)
         self.narr.setVisible(True)
 
     def _launch(self, tab, q, boolexpr):
