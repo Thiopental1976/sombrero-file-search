@@ -2678,6 +2678,10 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
                     fstype = ""
                 if fstype.lower() in _PSEUDO_FS:
                     continue
+                if _eh_appimage(mp, fstype):          # fora, calado: nenhum motor entra
+                    if mortas is not None:
+                        mortas.append(mp)
+                    continue
                 status = disks.mount_status(mp, timeout=probe_timeout)
                 if status != "alive":
                     _condena_montagem(mp, fstype, None, status, stats, on_event, mortas)
@@ -2723,6 +2727,13 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
             if fstype in _PSEUDO_FS:
                 podadas.append(mp); seen.add(mp)
                 continue
+            if _eh_appimage(mp, fstype):
+                # não é disco: nem raiz, nem linha no painel, nem erro — e excluída,
+                # para o motor da raiz-mãe não descer nela
+                seen.add(mp)
+                if mortas is not None:
+                    mortas.append(mp)
+                continue
             if prof is not None and not prof.enumerate_default:
                 seen.add(mp)
                 anota_incompleto(stats, "mount_not_entered", onde=mp,
@@ -2761,6 +2772,16 @@ def planejar_raizes(paths, one_fs: bool, stats=None,
     if podadas and stats is not None:
         stats.setdefault("pruned_mounts", []).extend(podadas)
     return roots, expandidas, bool(expandidas)
+
+
+def _eh_appimage(mp: str, fstype: str) -> bool:
+    """Montagem que um AppImage faz de SI MESMO (/tmp/.mount_XXXXXX, FUSE com o
+    nome do arquivo como tipo). Não é disco do usuário: viva, é o miolo de um
+    programa; morta (o AppImage fechou sem desmontar), só dá erro. 06/10/2026, no
+    ServidorCedro: 58 sobras do AppImage 1.1.0 do próprio SFS sob /tmp e
+    /mnt/optane/tmp viravam 29 linhas vermelhas de "broken mount" no painel."""
+    return (fstype or "").lower().startswith("fuse") and \
+        os.path.basename(mp.rstrip("/")).startswith(".mount_")
 
 
 def _condena_montagem(mp, fstype, klass, status, stats, on_event, mortas, path=None,

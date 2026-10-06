@@ -3166,6 +3166,34 @@ def test_sair_sem_fechar_janela_nao_aborta():
     print("ok  GUI  sair sem fechar a janela não aborta; queda.log registra o aborto do Qt")
 
 
+def test_montagem_de_appimage_nao_e_disco():
+    """06/10/2026 (ServidorCedro): 58 sobras do AppImage 1.1.0 do próprio SFS
+    (/tmp/.mount_SombreXXXX e /mnt/optane/tmp/.mount_…, FUSE morto) viravam 29
+    linhas vermelhas "broken mount" quando /mnt/optane era buscado. Montagem que
+    um AppImage faz de si mesmo não é disco: nem raiz expandida, nem evento no
+    painel, nem sonda — e entra em excluded_paths, para o motor da raiz-mãe não
+    descer nela. Vale com e sem --one-fs. Tabela de montagens injetada."""
+    fs_ai = "fuse.Sombrero_File_Search-1.1.0-x86_64.AppImage"
+    tabela = [("/dev/nvme1n1p1", "/mnt/optane", "ext4"),
+              ("Sombrero_File_Search-1.1.0-x86_64.AppImage", "/mnt/optane/tmp/.mount_SombrekFEMCP", fs_ai),
+              ("rodrigo.AppImage", "/mnt/optane/tmp/.mount_rodrigX", "fuse.rodrigo"),
+              ("/dev/sdb1", "/mnt/optane/discoB", "ext4")]
+    assert engine._eh_appimage("/tmp/.mount_SombreAB12cd", fs_ai)
+    assert engine._eh_appimage("/x/.mount_abc/", "fuse.qualquer")
+    assert not engine._eh_appimage("/mnt/.mount_abc", "ext4"), "só FUSE"
+    assert not engine._eh_appimage("/mnt/Expansion1", "fuseblk"), "NTFS por FUSE é disco"
+    for one_fs in (False, True):
+        eventos, mortas = [], []
+        roots, _exp, _f = engine.planejar_raizes(
+            ["/mnt/optane"], one_fs, stats={}, mounts=tabela, mortas=mortas,
+            on_event=lambda ev, info: eventos.append((ev, info.get("path"))))
+        assert not any(".mount_" in r for r in roots), (one_fs, roots)
+        assert not any(".mount_" in (p or "") for _e, p in eventos), (one_fs, eventos)
+        assert {"/mnt/optane/tmp/.mount_SombrekFEMCP", "/mnt/optane/tmp/.mount_rodrigX"} <= set(mortas), \
+            (one_fs, mortas)
+    print("ok  F12  montagem de AppImage (.mount_*) não é disco: fora do painel, excluída do motor")
+
+
 def test_narrativa_rola_e_mostra_problemas_primeiro():
     """06/10/2026 (Rodrigo, servidor com dezenas de discos): a lista de discos da
     narrativa tomava a janela e os RESULTADOS ficavam com 3 linhas. Travas: com 42
@@ -4499,6 +4527,7 @@ def main():
            test_menu_labels_disambiguates_collisions,
            test_fit_geometry_multimonitor,
            test_window_minimum_allows_edge_tiling,
+           test_montagem_de_appimage_nao_e_disco,
            test_narrativa_rola_e_mostra_problemas_primeiro,
            test_natural_sort_names,
            test_main_table_columns_are_resizable,
