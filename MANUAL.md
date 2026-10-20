@@ -7,6 +7,15 @@ An **index-free** file searcher with **live** results, in the spirit of Windows'
 (`rg`) for content and **fd** for names, with a pure-Python fallback when the
 binaries are missing. Runs on any distro.
 
+> **The fallback is much slower on content searches.** It finds the same files, but reads
+> each one in Python: a content search over `/usr/share` (104 k files, 3.0 GB, warm cache,
+> i7-7700HQ + NVMe) took **≈1.6 s with `rg` and ≈22 s with the fallback** (≈14×). On a cold
+> mechanical disk the gap is smaller, because the disk becomes the bottleneck. The fallback
+> also misses UTF-16/UTF-32 files with a BOM, which `rg` finds. The CLI states which engine
+> ran in its first line (`# engine: rg=… fd=…`); if you see the fallback there, install
+> `ripgrep` and `fd` (or run `./install.sh`). The `.deb` recommends both and the AppImage
+> bundles them.
+
 Two faces, one engine:
 
 - **GUI** — `sombrero-file-search` (or *Sombrero File Search* in your menu).

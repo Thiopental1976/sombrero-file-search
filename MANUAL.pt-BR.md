@@ -7,6 +7,14 @@ Buscador de arquivos **sem índice** e com resultados **ao vivo**, no espírito 
 **ripgrep** (`rg`) para conteúdo e o **fd** para nome, com fallback em Python puro
 quando não há binários. Roda em qualquer distro.
 
+> **O fallback é bem mais lento na busca por conteúdo.** Ele acha os mesmos arquivos, mas lê
+> cada um em Python: uma busca por conteúdo em `/usr/share` (104 mil arquivos, 3,0 GB, cache
+> quente, i7-7700HQ + NVMe) levou **≈1,6 s com o `rg` e ≈22 s com o fallback** (≈14×). Em disco
+> mecânico frio a diferença cai, porque o gargalo passa a ser o disco. O fallback também não
+> acha arquivos UTF-16/UTF-32 com BOM, que o `rg` acha. A CLI diz na primeira linha qual motor
+> rodou (`# engine: rg=… fd=…`); se aparecer o fallback ali, instale `ripgrep` e `fd` (ou rode
+> `./install.sh`). O `.deb` recomenda os dois e o AppImage já os traz embutidos.
+
 Duas caras, o mesmo motor:
 
 - **GUI** — `sombrero-file-search` (ou pelo menu, *Sombrero File Search*).
