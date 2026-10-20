@@ -245,10 +245,12 @@ def _fd_mostra_erros(fd=None) -> bool:
     return _FD_SHOW_ERRORS.get(fd, False)
 
 def engine_info():
+    # Vai cru para o cabeçalho `# engine:` da CLI, que é sempre em inglês (20/10/2026).
+    # O "(" inicial é contrato: a GUI pinta o selo de cinza por ele (_refresh_badges).
     return {
-        "ripgrep": RG or "(ausente — fallback Python)",
-        "fd": FD or "(ausente — fallback Python)",
-        "rga": RGA or "(ausente — sem modo documentos)",
+        "ripgrep": RG or "(missing — Python fallback)",
+        "fd": FD or "(missing — Python fallback)",
+        "rga": RGA or "(missing — no document mode)",
     }
 
 
