@@ -50,6 +50,12 @@ Detailed rationale and measurements live in the commit messages and in
   `C:\Windows\servicing\LCU\Package_for_RollupFix~…` broke right after `C:`,
   so the *Folder* column read just "C:...". Cells are now a single line,
   cut at the end.
+- **The search summary follows a theme switch.** Switching to the light theme
+  after a search left the disk names in the dark theme's light text, almost
+  invisible on white; the summary is now redrawn in the new colors.
+- **A finished search keeps its time.** The summary's elapsed time kept
+  counting whenever it was redrawn (switching tabs, for instance): a 7-second
+  search could later read "1m40s". It now stops when the search ends.
 - **Failed update checks can be diagnosed.** The dialog still shows a plain
   sentence, but the technical error now goes to `queda.log` in the cache
   folder.

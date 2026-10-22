@@ -16,7 +16,11 @@ O que este teste garante:
      a aba certa;
   4. a tabela não quebra linha: com a quebra (padrão do Qt) a pasta
      C:\\Windows\\servicing\\LCU\\Package_for_RollupFix~… saía só "C:..." (o "~"
-     abre ponto de quebra depois do "C:").
+     abre ponto de quebra depois do "C:");
+  5. trocar o tema redesenha a narrativa (as cores vão no HTML: no claro, o
+     nome do disco ficava com o texto claro do escuro, quase invisível);
+  6. terminada a busca, o tempo do painel para: redesenhar (trocar de aba ou
+     de tema) não o faz continuar correndo.
 
 Rode (precisa do PySide6 — use o Python do venv do app):
     ~/.local/share/sombrero-file-search/venv/bin/python tests/test_altura_baixa_2026_10_22.py
@@ -99,6 +103,18 @@ ok(w.tabs.count() == 2 and w.tabs.indexOf(alvo) == -1, "o × fecha a aba dele, n
 # ---------------------------------------------------------------- 4. linha única
 ok(all(not w.tabs.widget(i).table.wordWrap() for i in range(w.tabs.count())),
    "tabela de resultados sem quebra de linha (caminho com ~ não vira \"C:...\")")
+
+# ---------------------------------------------------------------- 5. tema
+_a = w.tab
+_a.roots = dict(_t.roots); _a.root_order = list(_t.root_order)
+_a.t0, _a.t1 = time.time() - 100, time.time() - 93      # busca de 7 s, há 93 s
+for tema in ("light", "dark"):
+    w.apply_theme(tema)
+    cor = A.THEMES[tema]["txt"]
+    ok(f"color:{cor}" in w.narr_body.text(), f"tema {tema}: a narrativa usa o texto do tema ({cor})")
+
+# ---------------------------------------------------------------- 6. tempo congelado
+ok(w.narr_head.text().endswith("· 7s"), f"busca terminada: o painel mostra 7s, não 100s ({w.narr_head.text()!r})")
 
 QTimer.singleShot(0, w.close); assenta()          # fechar para as threads da janela
 if w._upd_worker:

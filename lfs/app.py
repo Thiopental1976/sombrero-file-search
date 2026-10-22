@@ -1208,6 +1208,7 @@ class SearchTab(QWidget):
         self.pending: tuple | None = None      # (Query, boolexpr) esperando a vez (SMR)
         self.serial = False                    # varre disco rotacional? (gate do SMR)
         self.t0 = 0.0
+        self.t1 = 0.0                          # fim da busca: o tempo do painel para aí
         self.mode_tag = ""
         self.phase_txt = ""
         self.hl_terms: list[str] = []
@@ -2411,6 +2412,9 @@ class MainWindow(QMainWindow):
         self.status.setStyleSheet(f"color:{pal['muted']}; padding:2px 4px;")
         self.btn_theme.setText(t("☀  Light") if self.theme == "dark" else t("☾  Dark"))
         self._refresh_badges(pal)
+        # o painel da narrativa leva as cores no próprio HTML: redesenha no tema novo
+        if getattr(self, "tabs", None) is not None and self.tab is not None:
+            self._render_narrative(self.tab)
 
     def toggle_theme(self):
         self.apply_theme("light" if self.theme == "dark" else "dark")
@@ -2874,7 +2878,9 @@ class MainWindow(QMainWindow):
         done = sum(1 for r in recs if r["state"] in ("done", "skipped"))
         found = sum(r["found"] for r in recs)
         alive = tab.searching
-        sec = _fmt_elapsed(time.time() - tab.t0) if tab.t0 else ""
+        # terminada, o tempo é o da busca — redesenhar (trocar de aba, de tema)
+        # não pode fazê-lo continuar correndo
+        sec = _fmt_elapsed((tab.t1 or time.time()) - tab.t0) if tab.t0 else ""
         verb = t("Scanning") if alive else t("Scanned")
         head = t("{verb} {done}/{total} locations · {found} found · {sec}",
                  verb=verb, done=done, total=total, found=_grp(found), sec=sec)
@@ -2936,7 +2942,7 @@ class MainWindow(QMainWindow):
     def _launch(self, tab, q, boolexpr):
         tab.pending = None
         tab.serial = self._serial_paths(q)
-        tab.t0 = time.time()
+        tab.t0, tab.t1 = time.time(), 0.0
         self._reset_narrative(tab)                # F10a #2: nova história começa limpa
         self._set_status(tab, t("Searching…") + tab.mode_tag)
         w = SearchWorker(q, boolexpr)
@@ -3218,6 +3224,7 @@ class MainWindow(QMainWindow):
                     return
 
     def on_done(self, tab, tot, dt):
+        tab.t1 = time.time()
         tab.phase_txt = ""                        # opt#4: fim das fases
         if tab is self.tab:
             self.btn_search.setEnabled(True); self.btn_cancel.setEnabled(False)
