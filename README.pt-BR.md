@@ -13,7 +13,7 @@
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 ![Interface](https://img.shields.io/badge/interface-English%20(default)%20%2B%20Portugu%C3%AAs-informational)
 
-[English](README.md) · **Português (BR)**
+[English](README.md) · **Português (BR)** · 🌐 [sombrerofilesearch.com](https://sombrerofilesearch.com/pt-br/)
 
 <img src="assets/demo.gif" width="960" alt="Busca por nome, depois por conteúdo dentro de PDF e ODT, depois com expressão booleana">
 
