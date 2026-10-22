@@ -191,7 +191,6 @@ sfs [options] FOLDER [FOLDER ...]
 ```
 
 One or more folders as positional arguments; the options say **what** to look for.
-(`lfs` still works as an alias of `sfs` — it was the development name.)
 With no criteria, it lists everything under the folder(s) (like `ls -R` with filters).
 
 ### Options

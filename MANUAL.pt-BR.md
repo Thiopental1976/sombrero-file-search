@@ -190,7 +190,6 @@ sfs [opções] PASTA [PASTA ...]
 ```
 
 Uma ou mais pastas como argumento posicional; as opções dizem **o que** procurar.
-(`lfs` continua funcionando como apelido de `sfs` — era o nome de desenvolvimento.)
 Sem nenhum critério, lista tudo sob a(s) pasta(s) (como um `ls -R` com filtros).
 
 ### Opções

@@ -56,6 +56,9 @@ Detailed rationale and measurements live in the commit messages and in
 - **The .deb is now per architecture** (`amd64`, `arm64`) instead of `all`,
   because the bundled `rga` is native code. It now recommends `poppler-utils`
   (PDF) and `pandoc` (rare formats); `ripgrep-all` left *Suggests*.
+- **The command line is documented as `sfs`.** The manuals and the .deb
+  messages now use `sfs`; `lfs` (the development name) still works as an alias,
+  so existing scripts keep running.
 
 ### Fixed
 
