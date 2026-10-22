@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://sombrerofilesearch.com/</loc>
+    <lastmod>2026-10-22</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://sombrerofilesearch.com/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://sombrerofilesearch.com/pt-br/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://sombrerofilesearch.com/"/>
+  </url>
+  <url>
+    <loc>https://sombrerofilesearch.com/pt-br/</loc>
+    <lastmod>2026-10-22</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://sombrerofilesearch.com/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://sombrerofilesearch.com/pt-br/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://sombrerofilesearch.com/"/>
+  </url>
+</urlset>
