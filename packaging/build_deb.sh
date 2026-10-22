@@ -139,7 +139,7 @@ fi
 setup_gui() {
   echo "Preparando a interface gráfica em $VENV"
   echo "(PySide6 não está empacotado no apt desta distro; vai para o SEU home,"
-  echo " sem root e sem tocar no sistema. A CLI 'lfs' já funciona sem isso.)"
+  echo " sem root e sem tocar no sistema. A CLI 'sfs' já funciona sem isso.)"
   python3 -m venv "$VENV" || { echo "falta o venv do python: sudo apt install python3-venv" >&2; exit 1; }
   "$VENV/bin/pip" install --upgrade pip >/dev/null
   "$VENV/bin/pip" install PySide6 || exit 1
@@ -165,7 +165,7 @@ if [ "${1:-}" = "--setup-gui" ]; then setup_gui; exit 0; fi
 if [ -z "$pybin" ]; then
   msg="A interface gráfica precisa do PySide6, que não está instalado.
 Rode uma vez:    sombrero-file-search --setup-gui
-(A busca em linha de comando — 'lfs' — funciona sem isso.)"
+(A busca em linha de comando — 'sfs' — funciona sem isso.)"
   echo "$msg" >&2
   # Clicou no menu: sem terminal para ler a mensagem. Avisa na tela se der.
   if [ ! -t 2 ]; then
