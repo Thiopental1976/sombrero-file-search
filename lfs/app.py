@@ -40,7 +40,7 @@ except ImportError:                     # QtMultimedia opcional (portabilidade)
     HAS_MEDIA = False
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import engine, boolean, disks, fileops, xdg, version, searches, humane, resultfilter, dupes, copyjobs
+import engine, boolean, disks, fileops, xdg, version, searches, humane, resultfilter, dupes, copyjobs, updates
 from engine import Query, Match
 xdg = engine.plat.shell()       # xdg.py no Linux, shell_win.py no Windows (mesmo contrato)
 from i18n import t
@@ -211,7 +211,7 @@ def preenche_menu_discos(menu, atuais, alterna, alterna_todos):
         tipos = engine.classifica_montagens()
         for mp in rede:
             _cl, fstype, src = tipos.get(mp, ("rede", "", ""))
-            a = menu.addAction("🌐  " + labels[mp])
+            a = menu.addAction("⇄  " + labels[mp])
             a.setToolTip(f"{mp}\n{src}  ({fstype})")
             a.setCheckable(True); a.setChecked(mp in cur)
             a.toggled.connect(lambda on, mp=mp: alterna(mp, on))
@@ -672,12 +672,35 @@ QTableView {{ background: {bg1}; color: {txt}; border: 1px solid {border};
     selection-color: {txt}; outline: 0; }}
 QTableView::item {{ padding: 5px 8px; border: 0; }}
 QTableView::item:selected {{ background: {accent_dim}; }}
+/* A árvore das duplicatas (QTreeWidget) NÃO é QTableView: sem regra própria ela
+   herdava a paleta do sistema e ficava branca no tema escuro (22/10/2026). */
+QTreeView, QListView {{ background: {bg1}; color: {txt}; border: 1px solid {border};
+    border-radius: 12px; alternate-background-color: {alt};
+    selection-background-color: {accent_dim}; selection-color: {txt}; outline: 0; }}
+QTreeView::item, QListView::item {{ padding: 4px 6px; border: 0; }}
+QTreeView::item:selected, QListView::item:selected {{ background: {accent_dim}; color: {txt}; }}
 QHeaderView::section {{ background: {bg2}; color: {muted}; border: 0;
     border-right: 1px solid {border}; border-bottom: 1px solid {border};
     padding: 7px 8px; font-weight: 600; }}
 QTableCornerButton::section {{ background: {bg2}; border: 0; }}
 
 QSplitter::handle {{ background: transparent; height: 8px; }}
+
+/* abas (Buscar | Duplicatas e as abas de busca): sem regra, brancas no escuro */
+QTabWidget::pane {{ border: 0; border-top: 1px solid {border}; }}
+QTabBar {{ qproperty-drawBase: 0; }}   /* a linha de base do documentMode saía branca */
+QTabBar::tab {{ background: {bg1}; color: {muted}; border: 1px solid {border};
+    border-bottom: 0; border-top-left-radius: 8px; border-top-right-radius: 8px;
+    padding: 6px 14px; margin-right: 3px; }}
+QTabBar::tab:selected {{ background: {bg2}; color: {txt}; border-color: {border2}; font-weight: 600; }}
+QTabBar::tab:hover:!selected {{ color: {txt}; }}
+
+/* Diálogos e caixas de mensagem: o QLabel global pinta o texto com {txt}; sem
+   fundo próprio ficava texto claro no branco do sistema (janela de erro ilegível). */
+QDialog {{ background: {bg0}; }}
+QProgressBar {{ background: {bg1}; color: {txt}; border: 1px solid {border};
+    border-radius: 6px; text-align: center; min-height: 14px; }}
+QProgressBar::chunk {{ background: {accent}; border-radius: 5px; }}
 
 QMenu {{ background: {bg2}; color: {txt}; border: 1px solid {border2}; border-radius: 8px; padding: 4px; }}
 QMenu::item {{ padding: 6px 20px; border-radius: 6px; }}
@@ -715,7 +738,21 @@ QFrame#narrative {{ background: {bg1}; border: 1px solid {border}; border-radius
 QScrollArea#narrscroll, QScrollArea#narrscroll > QWidget > QWidget {{ background: transparent; }}
 QLabel#narrhead {{ color: {txt}; font-size: 14px; font-weight: 700; }}
 QLabel#narrbody {{ color: {muted}; font-size: 13px; }}
+QToolButton#update {{ background: {accent}; color: {on_accent}; border: 0; font-weight: 600; }}
+QToolButton#update:hover {{ background: {accent_hi}; }}
+QToolButton#version {{ background: transparent; color: {muted}; border: 0; }}
+QToolButton#version:hover {{ color: {txt}; }}
 """
+
+def _dot_icon(color: str, d: int = 12) -> QIcon:
+    """Bolinha colorida como ícone — substitui emoji colorido, que o Qt não desenha
+    com a fonte COLRv1 (Noto Color Emoji) do Fedora/Bazzite."""
+    from PySide6.QtGui import QPainter
+    pm = QPixmap(d, d); pm.fill(Qt.transparent)
+    p = QPainter(pm); p.setRenderHint(QPainter.Antialiasing)
+    p.setBrush(QColor(color)); p.setPen(Qt.NoPen); p.drawEllipse(1, 1, d - 2, d - 2); p.end()
+    return QIcon(pm)
+
 
 def build_style(pal: dict) -> str:
     return _STYLE_TMPL.format(**pal)
@@ -1383,7 +1420,7 @@ class DuplicatesPanel(QWidget):
         lbl = QLabel(t("In")); lbl.setObjectName("section")
         self.ed_paths = QLineEdit()
         self.ed_paths.setPlaceholderText(t("Folder(s)/mounts — separate with ';'"))
-        self.btn_browse = QPushButton("📂"); self.btn_browse.setFixedWidth(40)
+        self.btn_browse = QPushButton(t("Browse…"))   # era "📂": emoji colorido sai em branco
         self.btn_browse.clicked.connect(self._browse)
         # mesmo menu de discos da busca: "todos os discos" + discos por LABEL
         self.btn_disks = QToolButton(); self.btn_disks.setText(t("Disks ▾"))
@@ -1583,21 +1620,25 @@ class DuplicatesPanel(QWidget):
             top.setFirstColumnSpanned(True)
             self.tree.addTopLevelItem(top)
             return
+        # Bolinha do veredito desenhada (era emoji 🟢🟠🟡, que sai em branco no
+        # Fedora) e na cor do tema — verde/âmbar/azul, como os selos do cabeçalho.
+        pal = THEMES[self.main.theme]
         badge = {
-            dupes.IDENTICAL: ("🟢", t("identical copies")),
-            dupes.DIVERGENT: ("🟠", t("different versions — same name")),
-            dupes.MIXED:     ("🟡", t("mixed — some copies, some versions")),
+            dupes.IDENTICAL: (_dot_icon(pal["green"]), t("identical copies")),
+            dupes.DIVERGENT: (_dot_icon(pal["amber"]), t("different versions — same name")),
+            dupes.MIXED:     (_dot_icon(pal["accent"]), t("mixed — some copies, some versions")),
         }
         for ng in names:
             icon, label = badge[ng.verdict]
             if ng.wasted:
-                head = t("{icon} {name} · {k} files · {label} · {waste} recoverable",
-                         icon=icon, name=engine.nome_exibivel(ng.name), k=len(ng.members),
+                head = t("{name} · {k} files · {label} · {waste} recoverable",
+                         name=engine.nome_exibivel(ng.name), k=len(ng.members),
                          label=label, waste=human_size(ng.wasted))
             else:
-                head = t("{icon} {name} · {k} files · {label}",
-                         icon=icon, name=engine.nome_exibivel(ng.name), k=len(ng.members), label=label)
+                head = t("{name} · {k} files · {label}",
+                         name=engine.nome_exibivel(ng.name), k=len(ng.members), label=label)
             top = QTreeWidgetItem([head, "", ""])
+            top.setIcon(0, icon)
             top.setFirstColumnSpanned(True)
             for p in ng.members:
                 try:
@@ -1681,6 +1722,190 @@ class DuplicatesPanel(QWidget):
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
             self.worker.wait(3000)
+
+
+# ----------------------------------------------------------------- atualizações
+class UpdateCheckWorker(QThread):
+    """Consulta a última release fora da thread da GUI: rede lenta (ou ausente)
+    nunca pode congelar a janela. Mexe só numa CÓPIA do estado; a GUI grava."""
+    found = Signal(object, object)       # (release mais nova | None, estado "updates")
+    failed = Signal(str)
+
+    def __init__(self, state: dict, force: bool):
+        super().__init__()
+        self._cfg = {"updates": dict(state)}
+        self._force = force
+
+    def run(self):
+        try:
+            rel = updates.check(self._cfg, force=self._force)
+            self.found.emit(rel, self._cfg["updates"])
+        except Exception as e:           # só chega aqui na consulta pedida na mão
+            self.failed.emit(humane.human_error(e))
+
+
+class UpdateApplyWorker(QThread):
+    progress = Signal(int, int)          # bytes baixados, total (0 = desconhecido)
+    done = Signal(object)                # dict de updates.apply()
+    failed = Signal(str)
+
+    def __init__(self, kind: str, rel: dict):
+        super().__init__()
+        self.kind, self.rel = kind, rel
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        try:
+            res = updates.apply(self.kind, self.rel,
+                                progress=lambda a, b: self.progress.emit(a, b),
+                                cancelled=lambda: self._cancel)
+            self.done.emit(res)
+        except InterruptedError:
+            self.failed.emit(t("Update cancelled."))
+        except Exception as e:
+            self.failed.emit(humane.human_error(e))
+
+
+def _kind_label(kind: str) -> str:
+    # t() com literal em cada ramo: o test_audit só enxerga chave usada assim
+    if kind == "source":
+        return t("installed with install.sh")
+    if kind == "deb":
+        return t(".deb package")
+    if kind == "dev":
+        return t("running from a git checkout")
+    return {"appimage": "AppImage", "windows": "Windows"}.get(kind, kind)
+
+
+class UpdatesDialog(QDialog):
+    """Versões: a instalada, a última publicada, as notas dela e — se houver
+    pacote para ESTA instalação — o botão de atualizar."""
+
+    def __init__(self, win: "MainWindow", rel: dict | None):
+        super().__init__(win)
+        self.win = win
+        self.kind = updates.install_kind()
+        self.rel = rel
+        self.worker = None
+        self.setWindowTitle(t("Versions and updates"))
+        self.setMinimumWidth(600)
+        v = QVBoxLayout(self); v.setSpacing(10)
+        form = QFormLayout()
+        build = version.build_info()
+        self.lb_cur = QLabel(f"{version.RELEASE}" + (f"  ·  {build}" if build else "")
+                             + f"  ({_kind_label(self.kind)})")
+        self.lb_new = QLabel("—")
+        form.addRow(t("Installed:"), self.lb_cur)
+        form.addRow(t("Latest release:"), self.lb_new)
+        v.addLayout(form)
+        self.notes = QPlainTextEdit(); self.notes.setReadOnly(True)
+        self.notes.setMinimumHeight(160)
+        v.addWidget(self.notes, 1)
+        self.lb_msg = QLabel(""); self.lb_msg.setWordWrap(True)
+        self.lb_msg.setObjectName("subtitle")
+        v.addWidget(self.lb_msg)
+        self.bar = QProgressBar(); self.bar.hide()
+        v.addWidget(self.bar)
+        self.ck_auto = QCheckBox(t("Check for updates once a day"))
+        self.ck_auto.setChecked(bool(win.cfg.get("updates", {}).get("auto", True)))
+        self.ck_auto.toggled.connect(self._on_auto)
+        v.addWidget(self.ck_auto, 0, Qt.AlignLeft)   # o "chip" esticado parecia uma barra
+        row = QHBoxLayout()
+        self.b_check = QPushButton(t("Check now"))
+        self.b_page = QPushButton(t("Release page"))
+        self.b_up = QPushButton(t("Update")); self.b_up.setObjectName("primary")
+        self.b_close = QPushButton(t("Close"))
+        row.addWidget(self.b_check); row.addWidget(self.b_page); row.addStretch(1)
+        row.addWidget(self.b_up); row.addWidget(self.b_close)
+        v.addLayout(row)
+        self.b_check.clicked.connect(lambda: win.check_updates(force=True, dialog=self))
+        self.b_page.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(
+            (self.rel or {}).get("page") or updates.RELEASES_PAGE)))
+        self.b_up.clicked.connect(self._apply)
+        self.b_close.clicked.connect(self.reject)
+        self.show_release(rel or win.cfg.get("updates", {}).get("latest"))
+
+    def show_release(self, rel: dict | None, msg: str = ""):
+        self.rel = rel
+        newer = bool(rel and updates.is_newer(rel.get("tag", "")))
+        if rel:
+            self.lb_new.setText(f"{rel.get('tag', '?')}" +
+                                (f"  ·  {rel['published']}" if rel.get("published") else ""))
+            self.notes.setPlainText(rel.get("notes") or "")
+        if msg:
+            pass                         # quem chamou já sabe o que dizer (ex.: erro de rede)
+        elif not rel:
+            msg = t("Not checked yet.")
+        elif not newer:
+            msg = t("You have the latest version.")
+        elif self.kind == "dev":
+            msg = t("Running from a git checkout: update with git pull.")
+        elif not updates.can_apply(self.kind, rel):
+            msg = t("This release has no package for this installation — see the release page.")
+        elif self.kind in ("deb", "windows"):
+            msg = t("The package will be saved to Downloads and opened for you to finish.")
+        else:
+            msg = t("Version {v} is available.", v=rel["tag"])
+        self.lb_msg.setText(msg)
+        can = newer and updates.can_apply(self.kind, rel)
+        self.b_up.setVisible(can)
+        if can:
+            self.b_up.setText(t("Update to {v}", v=rel["tag"]))
+        self.adjustSize()                # o rótulo do botão mudou: em pt-BR ele cortava
+
+    def _on_auto(self, on: bool):
+        self.win.cfg.setdefault("updates", {})["auto"] = bool(on)
+        save_cfg(self.win.cfg)
+
+    def _apply(self):
+        self.b_up.setEnabled(False); self.b_check.setEnabled(False)
+        self.bar.setRange(0, 0); self.bar.show()
+        self.lb_msg.setText(t("Downloading {v}…", v=self.rel["tag"]))
+        self.worker = UpdateApplyWorker(self.kind, self.rel)
+        self.worker.progress.connect(self._on_progress)
+        self.worker.done.connect(self._on_done)
+        self.worker.failed.connect(self._on_failed)
+        self.worker.start()
+
+    def _on_progress(self, got: int, total: int):
+        if total:
+            self.bar.setRange(0, 1000); self.bar.setValue(int(got * 1000 / total))
+        if self.kind == "source" and total and got >= total:
+            self.lb_msg.setText(t("Installing…"))
+
+    def _on_failed(self, err: str):
+        self.bar.hide()
+        self.b_up.setEnabled(True); self.b_check.setEnabled(True)
+        self.lb_msg.setText(t("Update failed: {e}", e=err))
+
+    def _on_done(self, res: dict):
+        self.bar.hide()
+        if res.get("opened"):
+            p = res["opened"]
+            # .deb: o instalador de pacotes do sistema abre o arquivo. Windows: o
+            # exe em uso não se sobrescreve — abrimos a pasta, o usuário fecha o
+            # app e extrai por cima.
+            target = os.path.dirname(p) if self.kind == "windows" else p
+            QDesktopServices.openUrl(QUrl.fromLocalFile(target))
+            self.lb_msg.setText(t("Saved to {p}. Finish the installation there.", p=p))
+            return
+        self.lb_msg.setText(t("Updated to {v}.", v=self.rel["tag"]))
+        if self.win._jobs:
+            self.lb_msg.setText(t("Updated to {v}. Restart the app after the copies finish.",
+                                  v=self.rel["tag"]))
+            return
+        r = QMessageBox.question(self, t("Versions and updates"),
+                                 t("Updated to {v}. Restart now?", v=self.rel["tag"]))
+        if r == QMessageBox.Yes:
+            self.win.restart_into(res["restart"])
+
+    def reject(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel(); self.worker.wait(5000)
+        super().reject()
 
 
 class MainWindow(QMainWindow):
@@ -1768,6 +1993,48 @@ class MainWindow(QMainWindow):
         # (janela já montada; singleShot deixa o show() acontecer antes do modal).
         if copyjobs.pending(self.cfg):
             QTimer.singleShot(0, self._maybe_resume_copies)
+        # Atualizações: 1×/dia, depois que a janela já apareceu (a consulta é em
+        # thread, mas não há por que disputar o arranque com ela).
+        self._upd_worker = None
+        self._upd_rel = None
+        QTimer.singleShot(3000, lambda: self.check_updates(force=False))
+
+    # ---- atualizações
+    def check_updates(self, force: bool, dialog: "UpdatesDialog | None" = None):
+        if self._upd_worker and self._upd_worker.isRunning():
+            return
+        if dialog:
+            dialog.lb_msg.setText(t("Checking…"))
+        w = UpdateCheckWorker(self.cfg.get("updates", {}), force)
+        w.found.connect(lambda rel, st: self._on_update_checked(rel, st, dialog))
+        if dialog:
+            w.failed.connect(lambda e: dialog.show_release(
+                dialog.rel, t("Could not reach GitHub: {e}", e=e)))
+        self._upd_worker = w
+        w.start()
+
+    def _on_update_checked(self, rel, state: dict, dialog=None):
+        self.cfg["updates"] = {**self.cfg.get("updates", {}), **state}
+        save_cfg(self.cfg)
+        self._upd_rel = rel
+        if rel:
+            self.btn_update.setText(t("⬆  Update to {v}", v=rel["tag"]))
+            self.btn_update.setToolTip(t("Version {v} is available.", v=rel["tag"]))
+        self.btn_update.setVisible(bool(rel))
+        if dialog:
+            dialog.show_release(rel or state.get("latest"))
+
+    def open_updates(self):
+        UpdatesDialog(self, self._upd_rel or self.cfg.get("updates", {}).get("latest")).exec()
+
+    def restart_into(self, argv: list):
+        """Relança a build nova e fecha esta. O argv vem de updates.apply()."""
+        from PySide6.QtCore import QProcess
+        if QProcess.startDetached(argv[0], argv[1:]):
+            self.close()
+        else:
+            QMessageBox.warning(self, t("Versions and updates"),
+                                t("Could not restart. Close and open the app again."))
 
     # ---- UI
     def _build(self):
@@ -1790,6 +2057,19 @@ class MainWindow(QMainWindow):
         self.badges = QHBoxLayout(); self.badges.setSpacing(10)
         hl.addLayout(self.badges)
         hl.addSpacing(10)
+        # Atualizações: a versão instalada fica sempre à vista (clique = diálogo de
+        # versões); o botão de atualizar só existe quando há release mais nova.
+        self.btn_update = QToolButton(); self.btn_update.setObjectName("update")
+        self.btn_update.setCursor(Qt.PointingHandCursor)
+        self.btn_update.clicked.connect(lambda: self.open_updates())
+        self.btn_update.hide()
+        hl.addWidget(self.btn_update)
+        self.btn_version = QToolButton(); self.btn_version.setObjectName("version")
+        self.btn_version.setCursor(Qt.PointingHandCursor)
+        self.btn_version.setText("v" + version.RELEASE)
+        self.btn_version.setToolTip(t("Versions and updates"))
+        self.btn_version.clicked.connect(lambda: self.open_updates())
+        hl.addWidget(self.btn_version)
         self.btn_theme = QToolButton(); self.btn_theme.setCursor(Qt.PointingHandCursor)
         self.btn_theme.setToolTip(t("Toggle light/dark theme (Ctrl+T)"))
         self.btn_theme.clicked.connect(self.toggle_theme)
@@ -2002,7 +2282,7 @@ class MainWindow(QMainWindow):
         sp.addWidget(self.copy_bar)
 
         # ---------- monta as duas páginas do workspace ----------
-        self.workspace.addTab(search_page, t("🔍  Search"))
+        self.workspace.addTab(search_page, t("⌕  Search"))
         self.dup_panel = DuplicatesPanel(self)             # F10c: aba de duplicatas
         self.workspace.addTab(self.dup_panel, t("⧉  Duplicates"))
         root.addWidget(self.workspace, 1)
@@ -2067,7 +2347,7 @@ class MainWindow(QMainWindow):
         self.btn_next.setText("⏭"); self.btn_next.setToolTip(t("Next media"))
         self.btn_next.clicked.connect(lambda: self._nav_media(1))
         self.btn_vol = QToolButton(); self.btn_vol.setObjectName("transport")  # B13
-        self.btn_vol.setText("🔇" if self.muted else "🔊")
+        self.btn_vol.setText("♪✕" if self.muted else "♪")
         self.btn_vol.setToolTip(t("Muted (default for privacy) — click to enable sound"))
         self.btn_vol.clicked.connect(self._toggle_mute)
         self.lbl_media = QLabel(""); self.lbl_media.setObjectName("medianame")
@@ -2764,6 +3044,8 @@ class MainWindow(QMainWindow):
             return
         self._threads_encerradas = True
         self._tick.stop()
+        if getattr(self, "_upd_worker", None) and self._upd_worker.isRunning():
+            self._upd_worker.wait(9000)          # urlopen tem timeout de 8 s
         for tab in self._all_tabs():              # F5: uma busca viva por aba
             tab.stop()
         if getattr(self, "dup_panel", None):      # F10c: aborta o hash em voo
@@ -3008,7 +3290,7 @@ class MainWindow(QMainWindow):
         self.muted = not self.muted
         if self.audio_out is not None:
             self.audio_out.setMuted(self.muted)
-        self.btn_vol.setText("🔇" if self.muted else "🔊")
+        self.btn_vol.setText("♪✕" if self.muted else "♪")
         self.cfg["muted"] = self.muted
         save_cfg(self.cfg)
 

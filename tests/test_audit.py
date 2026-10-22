@@ -816,7 +816,7 @@ def test_i18n_no_stale_keys():
     import re
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lfs")
     src = ""
-    for fn in ("app.py", "boolean.py", "engine.py"):
+    for fn in ("app.py", "boolean.py", "engine.py", "updates.py"):   # updates: 22/10/2026
         with open(os.path.join(base, fn), encoding="utf-8") as f:
             src += f.read()
     lits = set()

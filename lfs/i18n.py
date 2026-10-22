@@ -442,7 +442,7 @@ _PT = {
     "Discard": "Descartar",
 
     # --- F10c: caçador de duplicatas ---
-    "🔍  Search": "🔍  Buscar",
+    "⌕  Search": "⌕  Buscar",
     "⧉  Duplicates": "⧉  Duplicatas",
     "Duplicates…": "Duplicatas…",
     "Check the search results for duplicates: which same-named files\n"
@@ -451,6 +451,49 @@ _PT = {
         "Confere duplicatas nos resultados da busca: quais arquivos de mesmo nome\n"
         "são cópias idênticas e quais são versões diferentes.\n"
         "Mostra e exporta — nunca apaga.",
+    # versões e atualizações (updates.py)
+    "Versions and updates": "Versões e atualizações",
+    "installed with install.sh": "instalado com o install.sh",
+    ".deb package": "pacote .deb",
+    "running from a git checkout": "rodando de um clone do git",
+    "Installed:": "Instalada:",
+    "Latest release:": "Última versão:",
+    "Check for updates once a day": "Procurar atualizações uma vez por dia",
+    "Check now": "Verificar agora",
+    "Release page": "Página da versão",
+    "Update": "Atualizar",
+    "Close": "Fechar",
+    "Checking…": "Verificando…",
+    "Not checked yet.": "Ainda não verificado.",
+    "You have the latest version.": "Você está na versão mais recente.",
+    "Running from a git checkout: update with git pull.":
+        "Rodando de um clone do git: atualize com git pull.",
+    "This release has no package for this installation — see the release page.":
+        "Esta versão não tem pacote para esta instalação — veja a página da versão.",
+    "The package will be saved to Downloads and opened for you to finish.":
+        "O pacote será salvo em Downloads e aberto para você concluir.",
+    "Version {v} is available.": "A versão {v} está disponível.",
+    "Update to {v}": "Atualizar para {v}",
+    "⬆  Update to {v}": "⬆  Atualizar para {v}",
+    "Downloading {v}…": "Baixando {v}…",
+    "Installing…": "Instalando…",
+    "Update cancelled.": "Atualização cancelada.",
+    "Update failed: {e}": "A atualização falhou: {e}",
+    "Could not reach GitHub: {e}": "Não foi possível falar com o GitHub: {e}",
+    "Saved to {p}. Finish the installation there.": "Salvo em {p}. Conclua a instalação por lá.",
+    "Updated to {v}.": "Atualizado para {v}.",
+    "Updated to {v}. Restart the app after the copies finish.":
+        "Atualizado para {v}. Reinicie o app quando as cópias terminarem.",
+    "Updated to {v}. Restart now?": "Atualizado para {v}. Reiniciar agora?",
+    "The download was cut short ({got} of {size} bytes). Nothing was changed.":
+        "O download foi interrompido ({got} de {size} bytes). Nada foi alterado.",
+    "The download does not match the release (sha256). Nothing was changed.":
+        "O download não confere com a versão publicada (sha256). Nada foi alterado.",
+    "Unsafe path in the release archive: {name}": "Caminho inseguro no pacote da versão: {name}",
+    "Unexpected layout in the release archive.": "O pacote da versão veio com estrutura inesperada.",
+    "install.sh failed (exit {code}):": "O install.sh falhou (saída {code}):",
+    "Could not restart. Close and open the app again.":
+        "Não foi possível reiniciar. Feche e abra o app de novo.",
     "Duplicate hunter": "Caçador de duplicatas",
     "⇊ Analyze search results": "⇊ Analisar resultados da busca",
     "Take the files your last search found and tell, per name,\n"
@@ -473,10 +516,10 @@ _PT = {
     "identical copies": "cópias idênticas",
     "different versions — same name": "versões diferentes — mesmo nome",
     "mixed — some copies, some versions": "misto — algumas cópias, algumas versões",
-    "{icon} {name} · {k} files · {label} · {waste} recoverable":
-        "{icon} {name} · {k} arquivos · {label} · {waste} recuperáveis",
-    "{icon} {name} · {k} files · {label}":
-        "{icon} {name} · {k} arquivos · {label}",
+    "{name} · {k} files · {label} · {waste} recoverable":
+        "{name} · {k} arquivos · {label} · {waste} recuperáveis",
+    "{name} · {k} files · {label}":
+        "{name} · {k} arquivos · {label}",
     "include empty files": "incluir arquivos vazios",
     "Ignore files smaller than this (e.g. 1M, 500K).":
         "Ignora arquivos menores que isto (ex.: 1M, 500K).",

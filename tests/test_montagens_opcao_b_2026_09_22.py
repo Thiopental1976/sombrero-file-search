@@ -153,11 +153,11 @@ else:
         ok(textos[0] == "All disks" and any("Toledo" in x for x in textos),
            f"menu: Todos + locais ({textos})")
         i_rede = next(i for i, x in enumerate(textos) if x.startswith("Network"))
-        ok(any("🌐" in x and "nas" in x for x in textos[i_rede:]),
-           "menu: seção Rede com 🌐 depois dos locais")
+        ok(any("⇄" in x and "nas" in x for x in textos[i_rede:]),
+           "menu: seção Rede com ⇄ depois dos locais")
         cab = [a for a in menu.actions() if a.text().startswith("Network")][0]
         ok(not cab.isEnabled(), "cabeçalho da Rede não é clicável")
-        nas = [a for a in menu.actions() if "🌐" in a.text()][0]
+        nas = [a for a in menu.actions() if "⇄" in a.text()][0]
         ok("//nas/laudos" in nas.toolTip() and "cifs" in nas.toolTip(), "tooltip mostra origem e tipo")
         nas.setChecked(True)
         ok(marcados == [("/mnt/nas", True)], "marcar o NAS o põe no 'Em' (um a um)")

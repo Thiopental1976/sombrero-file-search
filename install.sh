@@ -32,8 +32,11 @@ fi
 SRC="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 ARCH="$(uname -m)"
 ASSUME_YES=0
-for a in "$@"; do case "$a" in -y|--yes) ASSUME_YES=1;; -h|--help)
-  echo "uso: ./install.sh [-y|--yes]   (-y = não perguntar, instala tudo)"; exit 0;; esac; done
+APP_ONLY=0   # --app-only: só o app, sem tocar em dependências — é o que o botão de
+             # atualizar da GUI usa (lfs/updates.py): elas já estão aí, e sem
+             # terminal um pedido de sudo travaria o upgrade no meio.
+for a in "$@"; do case "$a" in -y|--yes) ASSUME_YES=1;; --app-only) APP_ONLY=1;; -h|--help)
+  echo "uso: ./install.sh [-y|--yes] [--app-only]   (-y = não perguntar, instala tudo; --app-only = só o app)"; exit 0;; esac; done
 
 STAGE="início"                       # última seção anunciada por c() — usado por on_err
 c()  { STAGE="$*"; printf "\033[1;36m%s\033[0m\n" "$*"; }
@@ -391,6 +394,8 @@ install_app() {
     ver="$(git -C "$SRC" rev-parse --short HEAD)"
     [ -n "$(git -C "$SRC" status --porcelain 2>/dev/null)" ] && ver="$ver+"
     ver="$ver ($(git -C "$SRC" log -1 --format=%cs 2>/dev/null))"
+  elif [ -f "$SRC/VERSION" ] && ! grep -q '^\$Format' "$SRC/VERSION"; then
+    ver="$(head -n1 "$SRC/VERSION")"   # tarball da release: o git archive já carimbou o commit
   else
     ver="$(date +%Y-%m-%d)"            # tarball sem git: ao menos a data
   fi
@@ -478,7 +483,9 @@ echo "  arch:    $ARCH"
 detect_pm; [ -n "$PM" ] && echo "  pacotes: $PM" || wn "gerenciador de pacotes não detectado"
 echo
 
-DEPS_OK=1; plan_and_confirm || DEPS_OK=0
+DEPS_OK=1
+if [ "$APP_ONLY" = 1 ]; then DEPS_OK=0; ok "--app-only: dependências não são tocadas"
+else plan_and_confirm || DEPS_OK=0; fi
 echo
 
 if [ "$DEPS_OK" = 1 ]; then

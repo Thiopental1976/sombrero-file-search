@@ -8,6 +8,37 @@ Detailed rationale and measurements live in the commit messages and in
 
 ## [Unreleased]
 
+### Added
+
+- **Update checker.** The installed version is always shown in the header;
+  clicking it opens *Versions and updates* (installed build, latest release,
+  its notes). Once a day, at startup and in the background, Sombrero asks
+  GitHub for the latest **release** — commits on `main` and pre-releases never
+  count. An *Update to vX.Y.Z* button appears only when a newer release exists.
+  It updates in place where it can: installs made with `install.sh` run the
+  release's own installer (`--app-only`, dependencies untouched), an AppImage
+  replaces its own file (same name, so shortcuts keep working). The .deb and
+  the Windows build are downloaded to *Downloads* and handed to the system.
+  Downloads are checked against the size and sha256 GitHub publishes; a cut or
+  corrupted download never replaces a working install. A git checkout is never
+  updated by the app. The daily check can be turned off in the same dialog.
+- `install.sh --app-only`: install or refresh the app without touching
+  dependencies.
+
+### Fixed
+
+- **Dark theme, everywhere.** The results area of the *Duplicates* tab was
+  white in the dark theme (the tree had no style rule), the tabs were white,
+  and error/message boxes were unreadable (light text on the system's white
+  background). Trees, lists, tabs, dialogs, message boxes and progress bars
+  now follow the theme.
+- **No more blank icons on Fedora-based distros.** Color emoji (📂 🔍 🌐 🔊 and
+  the 🟢🟠🟡 verdict dots of the duplicate finder) depend on the distro's emoji
+  font, and Qt does not draw the COLRv1 Noto Color Emoji shipped by
+  Fedora/Bazzite — they rendered as nothing. They were replaced by plain
+  symbols and text, and the verdict dots are now drawn by the app in the theme
+  colors. A test keeps color emoji out of the interface.
+
 ### Changed
 
 - **Document search works out of the box in every channel.** `ripgrep-all`
