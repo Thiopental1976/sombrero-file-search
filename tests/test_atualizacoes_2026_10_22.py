@@ -98,6 +98,15 @@ ok(updates.pick_asset("appimage", R)["url"] == "a", "AppImage pega o .AppImage")
 ok(updates.pick_asset("deb", R)["url"] == "d", ".deb pega o _all.deb")
 ok(updates.pick_asset("windows", R)["url"] == "w", "Windows pega o zip do Windows")
 ok(updates.pick_asset("source", R)["url"] == "t", "código-fonte pega o tarball da release")
+# O .deb é por arquitetura desde o rga embutido (amd64/arm64): procurar só o
+# `_all.deb` deixava quem usa .deb sem botão a partir da v1.3.0.
+R2 = rel("v1.3.0", [{"name": "sombrero-file-search_1.3.0_arm64.deb", "url": "arm", "size": 1, "digest": ""},
+                    {"name": "sombrero-file-search_1.3.0_amd64.deb", "url": "amd", "size": 1, "digest": ""}])
+ok((updates.pick_asset("deb", R2, arch="amd64") or {}).get("url") == "amd", ".deb amd64 pega o _amd64.deb")
+ok((updates.pick_asset("deb", R2, arch="arm64") or {}).get("url") == "arm", ".deb arm64 pega o _arm64.deb")
+ok(updates.pick_asset("deb", R2, arch="riscv64") is None, "arquitetura sem pacote: sem botão")
+ok(updates.deb_arch("x86_64") == "amd64" and updates.deb_arch("aarch64") == "arm64",
+   "nome da máquina -> arquitetura do Debian")
 ok(not updates.can_apply("dev", R), "dev nunca tem botão")
 ok(not updates.can_apply("appimage", rel("v1.3.0")), "release sem AppImage: sem botão no AppImage")
 

@@ -124,13 +124,24 @@ def check(cfg: dict, force: bool = False, now: float | None = None,
 
 
 # ----------------------------------------------------------------- o pacote certo
-def pick_asset(kind: str, rel: dict) -> dict | None:
-    """O arquivo da release que serve para ESTA instalação (None = não há)."""
+def deb_arch(machine: str | None = None) -> str:
+    """Nome da máquina -> arquitetura do Debian ('x86_64' -> 'amd64')."""
+    import platform
+    m = (machine or platform.machine()).lower()
+    return {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(m, m)
+
+
+def pick_asset(kind: str, rel: dict, arch: str | None = None) -> dict | None:
+    """O arquivo da release que serve para ESTA instalação (None = não há).
+
+    O .deb é por arquitetura desde que o rga vai embutido (binário da máquina):
+    vale o `_<arch>.deb` desta máquina; `_all.deb` (até a 1.2.0) serve a qualquer uma."""
+    debs = (f"_{arch or deb_arch()}.deb", "_all.deb")
     for a in rel.get("assets", []):
         n = a["name"].lower()
         if kind == "appimage" and n.endswith("-x86_64.appimage"):
             return a
-        if kind == "deb" and n.endswith("_all.deb"):
+        if kind == "deb" and n.endswith(debs):
             return a
         if kind == "windows" and n.endswith(".zip") and "windows" in n:
             return a
