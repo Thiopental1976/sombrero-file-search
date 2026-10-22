@@ -20,7 +20,7 @@ from urllib.parse import quote
 
 from PySide6.QtCore import (Qt, QThread, Signal, QAbstractTableModel, QModelIndex,
                             QUrl, QTimer, QSortFilterProxyModel, QRect, QSize,
-                            QByteArray, QMimeData, QEvent)
+                            QByteArray, QMimeData, QEvent, QObject)
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontDatabase, QGuiApplication,
                            QIcon, QImageReader, QPixmap, QKeySequence, QShortcut,
                            QTextCharFormat, QTextCursor, QTextDocument)
@@ -1760,9 +1760,15 @@ def _anota_na_caixa_preta(onde: str) -> None:
         pass
 
 
-class UpdateCheckWorker(QThread):
+class UpdateCheckWorker(QObject):
     """Consulta a última release fora da thread da GUI: rede lenta (ou ausente)
-    nunca pode congelar a janela. Mexe só numa CÓPIA do estado; a GUI grava."""
+    nunca pode congelar a janela. Mexe só numa CÓPIA do estado; a GUI grava.
+
+    Thread Python DAEMON, não QThread (22/10/2026, VM Windows): o timeout do
+    urlopen não cobre o DNS, e uma consulta pendurada ao fechar a janela era
+    uma QThread viva sendo destruída — o Qt abortava o processo, depois de a
+    janela congelar 9 s esperando. A consulta só lê: pode ser abandonada, e o
+    daemon morre com o processo. Os sinais chegam enfileirados na GUI como antes."""
     found = Signal(object, object)       # (release mais nova | None, estado "updates")
     failed = Signal(str)
 
@@ -1770,6 +1776,19 @@ class UpdateCheckWorker(QThread):
         super().__init__()
         self._cfg = {"updates": dict(state)}
         self._force = force
+        self._th: threading.Thread | None = None
+
+    def start(self):
+        self._th = threading.Thread(target=self.run, name="sfs-update-check", daemon=True)
+        self._th.start()
+
+    def isRunning(self) -> bool:
+        return bool(self._th and self._th.is_alive())
+
+    def wait(self, ms: int | None = None) -> bool:
+        if self._th:
+            self._th.join(None if ms is None else ms / 1000)
+        return not self.isRunning()
 
     def run(self):
         try:
@@ -3128,8 +3147,7 @@ class MainWindow(QMainWindow):
             return
         self._threads_encerradas = True
         self._tick.stop()
-        if getattr(self, "_upd_worker", None) and self._upd_worker.isRunning():
-            self._upd_worker.wait(9000)          # urlopen tem timeout de 8 s
+        # a consulta de atualização (thread daemon) é abandonada: só lê a rede
         for tab in self._all_tabs():              # F5: uma busca viva por aba
             tab.stop()
         if getattr(self, "dup_panel", None):      # F10c: aborta o hash em voo

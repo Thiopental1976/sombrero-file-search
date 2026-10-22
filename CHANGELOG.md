@@ -59,6 +59,10 @@ Detailed rationale and measurements live in the commit messages and in
 - **Monospaced text uses a modern monospace font**: Consolas on Windows
   (it was Courier New), the distro's monospace font on Linux — in the *Disk*
   column of *Duplicates* and in the snippet panel.
+- **Closing the window during a slow update check no longer crashes.** The
+  network timeout does not cover name resolution; with a slow network the
+  window froze for 9 seconds on close and then the process aborted. The check
+  now runs in a background thread that is simply dropped on close.
 - **Failed update checks can be diagnosed.** The dialog still shows a plain
   sentence, but the technical error now goes to `queda.log` in the cache
   folder.
