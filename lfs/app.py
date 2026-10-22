@@ -138,9 +138,13 @@ def _fmt_elapsed(sec: float) -> str:
 
 
 def _mono() -> QFont:
-    """Fonte monoespaçada do sistema (Consolas no Windows, a mono da distro no
-    Linux). QFont("monospace") no Windows caía na Courier New."""
-    return QFontDatabase.systemFont(QFontDatabase.FixedFont)
+    """Fonte monoespaçada: a mono da distro no Linux, Consolas no Windows.
+    No Windows tanto QFont("monospace") quanto a FixedFont do Qt dão Courier
+    New (visto na VM, 22/10/2026) — por isso a Consolas vai pedida pelo nome."""
+    f = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+    if engine.plat.IS_WIN:
+        f.setFamilies(["Consolas", "Cascadia Mono", f.family()])
+    return f
 
 
 def _esc(s: str) -> str:
