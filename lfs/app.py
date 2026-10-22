@@ -1725,6 +1725,22 @@ class DuplicatesPanel(QWidget):
 
 
 # ----------------------------------------------------------------- atualizações
+def _anota_na_caixa_preta(onde: str) -> None:
+    """Erro TRATADO que a janela mostra só em frase humana ("Could not reach
+    GitHub: The operation could not be completed"): a pilha técnica vai para o
+    queda.log, senão ninguém diagnostica (22/10/2026, VM Windows). Chamar de
+    dentro do `except`."""
+    import traceback
+    try:
+        base = engine.plat.cache_dir()
+        os.makedirs(base, exist_ok=True)
+        with open(os.path.join(base, "queda.log"), "a", encoding="utf-8") as fh:
+            fh.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} {onde}\n")
+            fh.write(traceback.format_exc())
+    except OSError:
+        pass
+
+
 class UpdateCheckWorker(QThread):
     """Consulta a última release fora da thread da GUI: rede lenta (ou ausente)
     nunca pode congelar a janela. Mexe só numa CÓPIA do estado; a GUI grava."""
@@ -1741,6 +1757,7 @@ class UpdateCheckWorker(QThread):
             rel = updates.check(self._cfg, force=self._force)
             self.found.emit(rel, self._cfg["updates"])
         except Exception as e:           # só chega aqui na consulta pedida na mão
+            _anota_na_caixa_preta("consulta de atualização falhou")
             self.failed.emit(humane.human_error(e))
 
 
@@ -1766,6 +1783,7 @@ class UpdateApplyWorker(QThread):
         except InterruptedError:
             self.failed.emit(t("Update cancelled."))
         except Exception as e:
+            _anota_na_caixa_preta("atualização falhou")
             self.failed.emit(humane.human_error(e))
 
 
