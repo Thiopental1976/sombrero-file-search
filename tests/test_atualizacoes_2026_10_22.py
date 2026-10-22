@@ -50,13 +50,13 @@ dev = os.path.join(tmp, "dev"); os.makedirs(os.path.join(dev, ".git"))
 src = os.path.join(tmp, "src"); os.makedirs(src)
 img = os.path.join(tmp, "Sombrero.AppImage"); open(img, "wb").close()
 ok(updates.install_kind(dev, env={}) == "dev", "worktree com .git = dev")
-ok(updates.install_kind(src, env={}) == "source", "cópia do install.sh = source")
-if not plat.IS_WIN:      # caminhos de Linux: no Windows /usr/lib vira C:\usr\lib
+if not plat.IS_WIN:      # no Windows fora do .exe é sempre "dev" (seção abaixo); /usr/lib vira C:\usr\lib
+    ok(updates.install_kind(src, env={}) == "source", "cópia do install.sh = source")
     ok(updates.install_kind("/usr/lib/sombrero-file-search", env={}) == "deb", "/usr/lib = deb")
     ok(updates.install_kind("/usr/lib/sombrero-file-search", env={"APPIMAGE": img}) == "appimage",
        "$APPIMAGE vence o caminho")
-ok(updates.install_kind(src, env={"APPIMAGE": "/nao/existe"}) == "source",
-   "$APPIMAGE apontando para o nada é ignorado")
+    ok(updates.install_kind(src, env={"APPIMAGE": "/nao/existe"}) == "source",
+       "$APPIMAGE apontando para o nada é ignorado")
 
 _win, _frozen = plat.IS_WIN, plat.frozen
 try:
