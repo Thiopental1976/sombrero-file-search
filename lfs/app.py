@@ -21,7 +21,7 @@ from urllib.parse import quote
 from PySide6.QtCore import (Qt, QThread, Signal, QAbstractTableModel, QModelIndex,
                             QUrl, QTimer, QSortFilterProxyModel, QRect, QSize,
                             QByteArray, QMimeData, QEvent)
-from PySide6.QtGui import (QColor, QDesktopServices, QFont, QGuiApplication,
+from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontDatabase, QGuiApplication,
                            QIcon, QImageReader, QPixmap, QKeySequence, QShortcut,
                            QTextCharFormat, QTextCursor, QTextDocument)
 from PySide6.QtWidgets import (
@@ -135,6 +135,12 @@ def _fmt_elapsed(sec: float) -> str:
     """Tempo decorrido curto para o cabeçalho da narrativa: '12s' / '1m32s'."""
     s = int(sec)
     return f"{s//60}m{s % 60:02d}s" if s >= 60 else f"{s}s"
+
+
+def _mono() -> QFont:
+    """Fonte monoespaçada do sistema (Consolas no Windows, a mono da distro no
+    Linux). QFont("monospace") no Windows caía na Courier New."""
+    return QFontDatabase.systemFont(QFontDatabase.FixedFont)
 
 
 def _esc(s: str) -> str:
@@ -1622,7 +1628,7 @@ class DuplicatesPanel(QWidget):
         (cópia idêntica / versão diferente / mistura); os filhos mostram em que
         disco cada arquivo mora, com o tamanho ao lado (versões costumam diferir
         já no tamanho)."""
-        mono = QFont("monospace"); mono.setStyleHint(QFont.Monospace)
+        mono = _mono()
         if not names:
             self.tree.clear()
             top = QTreeWidgetItem([t("No repeated names among the results."), "", ""])
@@ -1664,7 +1670,7 @@ class DuplicatesPanel(QWidget):
             top.setExpanded(True)
 
     def _fill_tree(self, groups):
-        mono = QFont("monospace"); mono.setStyleHint(QFont.Monospace)
+        mono = _mono()
         for g in groups:
             top = QTreeWidgetItem([
                 t("{k} copies · {each} each · {waste} recoverable",
@@ -2332,7 +2338,7 @@ class MainWindow(QMainWindow):
         # página 0: trecho de texto
         self.preview = QPlainTextEdit(); self.preview.setReadOnly(True)
         self.preview.setLineWrapMode(QPlainTextEdit.NoWrap)
-        f = QFont("monospace"); f.setStyleHint(QFont.Monospace); self.preview.setFont(f)
+        self.preview.setFont(_mono())
         self.preview.setPlaceholderText(t("Select a result to see the snippet…"))
         self.pv_stack.addWidget(self.preview)
 

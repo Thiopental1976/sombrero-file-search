@@ -56,6 +56,8 @@ Detailed rationale and measurements live in the commit messages and in
 - **A finished search keeps its time.** The summary's elapsed time kept
   counting whenever it was redrawn (switching tabs, for instance): a 7-second
   search could later read "1m40s". It now stops when the search ends.
+- **Monospaced text uses the system's monospace font** (Consolas on Windows)
+  instead of Courier New, in the *Disk* column of *Duplicates*.
 - **Failed update checks can be diagnosed.** The dialog still shows a plain
   sentence, but the technical error now goes to `queda.log` in the cache
   folder.
