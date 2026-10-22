@@ -38,6 +38,16 @@ Detailed rationale and measurements live in the commit messages and in
   Fedora/Bazzite — they rendered as nothing. They were replaced by plain
   symbols and text, and the verdict dots are now drawn by the app in the theme
   colors. A test keeps color emoji out of the interface.
+- **Results are visible on 768-pixel-high screens.** On a 1366×768 laptop (or
+  1024×768) the snippet panel took the space and the results table showed
+  zero rows. Now the snippet yields first: it shrinks to about three lines and
+  then folds away (drag the divider to bring it back), and it returns when the
+  window grows. The table keeps 5 rows at 1366×768.
+- **The tab close button follows the theme.** It was a blue box on Windows
+  and an orange one on Linux; it is now a plain × in the theme colors.
+- **Failed update checks can be diagnosed.** The dialog still shows a plain
+  sentence, but the technical error now goes to `queda.log` in the cache
+  folder.
 
 ### Changed
 

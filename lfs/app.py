@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QSplitter, QHeaderView, QSpinBox, QMenu, QTextEdit,
     QAbstractItemView, QToolButton, QFrame, QStackedWidget, QSlider, QSizePolicy,
     QLayout, QDialog, QDialogButtonBox, QProgressBar, QFormLayout, QMessageBox,
-    QInputDialog, QTabWidget, QTreeWidget, QTreeWidgetItem, QScrollArea)
+    QInputDialog, QTabWidget, QTabBar, QTreeWidget, QTreeWidgetItem, QScrollArea)
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -694,6 +694,10 @@ QTabBar::tab {{ background: {bg1}; color: {muted}; border: 1px solid {border};
     padding: 6px 14px; margin-right: 3px; }}
 QTabBar::tab:selected {{ background: {bg2}; color: {txt}; border-color: {border2}; font-weight: 600; }}
 QTabBar::tab:hover:!selected {{ color: {txt}; }}
+/* fechar aba: o botão nativo saía quadrado azul no Windows e laranja no Linux */
+QToolButton#tabclose {{ background: transparent; color: {muted}; border: 0;
+    border-radius: 4px; padding: 0 4px; font-size: 14px; }}
+QToolButton#tabclose:hover {{ background: {bg3}; color: {txt}; }}
 
 /* Diálogos e caixas de mensagem: o QLabel global pinta o texto com {txt}; sem
    fundo próprio ficava texto claro no branco do sistema (janela de erro ilegível). */
@@ -2275,6 +2279,12 @@ class MainWindow(QMainWindow):
         split.addWidget(self._build_preview())
         split.setStretchFactor(0, 3); split.setStretchFactor(1, 2)
         split.setSizes([470, 240])
+        # Tela baixa: o trecho cede primeiro, a tabela nunca fica sem linhas.
+        split.setCollapsible(0, False); split.setCollapsible(1, True)
+        self._pv_min = 3 * self.preview.fontMetrics().lineSpacing() + 16
+        self.pv_stack.setMinimumHeight(self._pv_min)
+        self.split_res = split
+        split.installEventFilter(self)
         sp.addWidget(split, 1)
 
         # ---------- fila de cópia (visível só quando há operação) ----------
@@ -2493,6 +2503,11 @@ class MainWindow(QMainWindow):
         tab = SearchTab(self)
         tab.form = self.form_state()
         i = self.tabs.addTab(tab, t("New search"))
+        x = QToolButton(); x.setObjectName("tabclose"); x.setText("\u00d7")
+        x.setToolTip(t("Close tab")); x.setCursor(Qt.PointingHandCursor)
+        x.setAutoRaise(True)
+        x.clicked.connect(lambda: self.close_tab(self.tabs.indexOf(tab)))
+        self.tabs.tabBar().setTabButton(i, QTabBar.RightSide, x)
         if focus:
             self.tabs.setCurrentIndex(i)
             self.ed_name.setFocus(); self.ed_name.selectAll()
@@ -2842,6 +2857,7 @@ class MainWindow(QMainWindow):
             self._render_narrative(tab)
 
     NARR_LINHAS = 7         # teto da lista de discos; o resto da janela é dos resultados
+    RES_LINHAS_MIN = 5      # piso da tabela de resultados em tela baixa (_reparte_resultados)
 
     def _render_narrative(self, tab):
         """Desenha o painel a partir do estado da aba. Sem I/O — só formata."""
@@ -2948,6 +2964,8 @@ class MainWindow(QMainWindow):
         ed.selectAll()
 
     def eventFilter(self, obj, ev):
+        if obj is getattr(self, "split_res", None) and ev.type() == QEvent.Resize:
+            QTimer.singleShot(0, self._reparte_resultados)
         # F10a #3: ↑/↓ no campo de nome caminham pelo histórico do F5.
         if obj is self.ed_name and ev.type() == QEvent.KeyPress:
             k = ev.key()
@@ -2956,6 +2974,34 @@ class MainWindow(QMainWindow):
             if k == Qt.Key_Down:
                 self._history_step(-1); return True
         return super().eventFilter(obj, ev)
+
+    def _reparte_resultados(self):
+        """22/10/2026 (VM Windows 1024x768): numa tela de 768 px de altura o painel
+        do trecho ficava com o espaço e a tabela com ZERO linhas — medido igual no
+        Linux a 1366x705. Agora, ao redimensionar, a tabela garante RES_LINHAS_MIN
+        linhas; o trecho encolhe até ~3 linhas e, abaixo disso, recolhe (a
+        divisória continua arrastável). Quando volta a caber, o trecho reaparece.
+        Só age no redimensionamento: o arraste do usuário é respeitado."""
+        split = self.split_res
+        sizes = split.sizes()
+        total = sum(sizes)
+        table = getattr(self.tabs.currentWidget(), "table", None)
+        if len(sizes) != 2 or total <= 0 or table is None:
+            return
+        tabs_px, pv_px = sizes
+        rh = table.verticalHeader().defaultSectionSize()
+        quer = (tabs_px - table.viewport().height()) + self.RES_LINHAS_MIN * rh
+        if pv_px == 0:                            # recolhido: volta quando couber
+            if total >= quer + 2 * self._pv_min:
+                pv_px = max(self._pv_min, min(total * 2 // 5, total - quer))
+                split.setSizes([total - pv_px, pv_px])
+            return
+        if tabs_px >= quer:
+            return
+        pv_px = total - quer
+        if pv_px < self._pv_min:
+            pv_px = 0
+        split.setSizes([total - pv_px, pv_px])
 
     def _history_step(self, direction: int):
         """+1 = mais antigo (↑), -1 = mais novo (↓). A posição -1 é o rascunho que

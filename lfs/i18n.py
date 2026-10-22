@@ -385,6 +385,7 @@ _PT = {
 
     # F5 — abas, buscas salvas, histórico, exportação
     "New search": "Nova busca",
+    "Close tab": "Fechar aba",
     "Searches ▾": "Buscas ▾",
     "Save current search…  (Ctrl+S)": "Salvar busca atual…  (Ctrl+S)",
     "Export results…  (Ctrl+E)": "Exportar resultados…  (Ctrl+E)",
