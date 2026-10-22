@@ -1,0 +1,9 @@
+// Cloudflare: publica o site do projeto (pasta site/, estático, sem build) como
+// Worker de "static assets". O painel roda `npx wrangler deploy` a cada push no main.
+{
+  "name": "sombrero-file-search",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./site"
+  }
+}
