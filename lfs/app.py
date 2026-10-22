@@ -1231,6 +1231,10 @@ class SearchTab(QWidget):
         self.table.setDefaultDropAction(Qt.CopyAction)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
+        # linha única: com a quebra de palavra (padrão do Qt) um caminho com "~"
+        # (C:\Windows\servicing\LCU\Package_for_RollupFix~…) quebrava depois do
+        # "C:" e a coluna Pasta mostrava só "C:..."
+        self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(28)
         hh = self.table.horizontalHeader()

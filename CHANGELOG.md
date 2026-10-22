@@ -45,6 +45,11 @@ Detailed rationale and measurements live in the commit messages and in
   window grows. The table keeps 5 rows at 1366×768.
 - **The tab close button follows the theme.** It was a blue box on Windows
   and an orange one on Linux; it is now a plain × in the theme colors.
+- **Folders with a `~` in the path are shown in full.** The results table
+  wrapped text, and a path like
+  `C:\Windows\servicing\LCU\Package_for_RollupFix~…` broke right after `C:`,
+  so the *Folder* column read just "C:...". Cells are now a single line,
+  cut at the end.
 - **Failed update checks can be diagnosed.** The dialog still shows a plain
   sentence, but the technical error now goes to `queda.log` in the cache
   folder.

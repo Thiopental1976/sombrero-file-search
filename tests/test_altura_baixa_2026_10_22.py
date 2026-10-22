@@ -13,7 +13,10 @@ O que este teste garante:
      tabela tem RES_LINHAS_MIN linhas, ou o trecho está recolhido;
   2. quando a janela volta a crescer, o trecho reaparece;
   3. cada aba de busca tem o "×" do tema (QToolButton#tabclose), e ele fecha
-     a aba certa.
+     a aba certa;
+  4. a tabela não quebra linha: com a quebra (padrão do Qt) a pasta
+     C:\\Windows\\servicing\\LCU\\Package_for_RollupFix~… saía só "C:..." (o "~"
+     abre ponto de quebra depois do "C:").
 
 Rode (precisa do PySide6 — use o Python do venv do app):
     ~/.local/share/sombrero-file-search/venv/bin/python tests/test_altura_baixa_2026_10_22.py
@@ -92,6 +95,10 @@ ok(all(isinstance(b, QToolButton) and b.objectName() == "tabclose" for b in boto
 alvo = w.tabs.widget(1)
 botoes[1].click(); assenta()
 ok(w.tabs.count() == 2 and w.tabs.indexOf(alvo) == -1, "o × fecha a aba dele, não outra")
+
+# ---------------------------------------------------------------- 4. linha única
+ok(all(not w.tabs.widget(i).table.wordWrap() for i in range(w.tabs.count())),
+   "tabela de resultados sem quebra de linha (caminho com ~ não vira \"C:...\")")
 
 QTimer.singleShot(0, w.close); assenta()          # fechar para as threads da janela
 if w._upd_worker:
