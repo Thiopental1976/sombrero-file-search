@@ -18,7 +18,7 @@ quando não há binários. Roda em qualquer distro.
 Duas caras, o mesmo motor:
 
 - **GUI** — `sombrero-file-search` (ou pelo menu, *Sombrero File Search*).
-- **CLI** — `lfs`, feita para scripts e pipelines (`| xargs`, `| wc`, `| fzf`).
+- **CLI** — `sfs`, feita para scripts e pipelines (`| xargs`, `| wc`, `| fzf`).
 
 O que a GUI acha, a CLI acha igual: são a mesma engine.
 
@@ -158,7 +158,7 @@ Selecione resultados e:
 - **Arraste** para outro aplicativo/gerenciador de arquivos, ou
 - **Copie** para uma pasta de destino.
 
-Antes de copiar, o LFS faz uma **pré-checagem do destino**: espaço livre, limite de
+Antes de copiar, o SFS faz uma **pré-checagem do destino**: espaço livre, limite de
 4 GiB do FAT32, nomes ilegais para o sistema de arquivos de destino, e se a montagem
 está de fato montada. Em **pendrive/removível**, a escrita é feita **em ritmo**
 (sincroniza a cada 16 MiB) para não sequestrar o cache do sistema e travar a máquina —
@@ -171,7 +171,7 @@ num disco interno isso não acontece, o kernel administra bem.
 > no mesmo caminho vivo, com o mesmo tamanho e o mesmo segundo, colapsariam
 > numa linha. Na prática é o mesmo arquivo.
 
-> **Nunca destrói a origem.** O LFS lê e copia; jamais move, renomeia ou apaga o
+> **Nunca destrói a origem.** O SFS lê e copia; jamais move, renomeia ou apaga o
 > arquivo de origem. Se a cópia for cancelada, o destino parcial é removido.
 
 > **Dispositivos MTP (celular, media players).** A escrita via MTP montado (gvfs)
@@ -183,13 +183,14 @@ num disco interno isso não acontece, o kernel administra bem.
 
 ---
 
-## 3. A CLI — `lfs`
+## 3. A CLI — `sfs`
 
 ```
-lfs [opções] PASTA [PASTA ...]
+sfs [opções] PASTA [PASTA ...]
 ```
 
 Uma ou mais pastas como argumento posicional; as opções dizem **o que** procurar.
+(`lfs` continua funcionando como apelido de `sfs` — era o nome de desenvolvimento.)
 Sem nenhum critério, lista tudo sob a(s) pasta(s) (como um `ls -R` com filtros).
 
 ### Opções
@@ -240,25 +241,25 @@ Sem nenhum critério, lista tudo sob a(s) pasta(s) (como um `ls -R` com filtros)
 
 ```bash
 # todos os PDFs sob ~/docs, só os caminhos
-lfs ~/docs -n '*.pdf' -l 2>/dev/null
+sfs ~/docs -n '*.pdf' -l 2>/dev/null
 
 # arquivos que contêm "laudo" (mostra a linha)
-lfs ~/docs -c laudo
+sfs ~/docs -c laudo
 
 # booleano dentro de documentos (PDF/docx…)
-lfs ~/docs -D -b '(laudo OR relatório) AND paciente NOT rascunho' -l
+sfs ~/docs -D -b '(laudo OR relatório) AND paciente NOT rascunho' -l
 
 # vídeos grandes modificados na última semana
-lfs /mnt/DiscoL -n '*.mp4,*.mkv' --min-size 500M --days 7 -l 2>/dev/null
+sfs /mnt/DiscoL -n '*.mp4,*.mkv' --min-size 500M --days 7 -l 2>/dev/null
 
 # alimentar outro comando com segurança (nomes com espaço)
-lfs ~/fotos -n '*.jpg' -0 2>/dev/null | xargs -0 -n1 identify
+sfs ~/fotos -n '*.jpg' -0 2>/dev/null | xargs -0 -n1 identify
 
 # contar quantos arquivos batem
-lfs ~/projetos -c 'TODO' -l 2>/dev/null | wc -l
+sfs ~/projetos -c 'TODO' -l 2>/dev/null | wc -l
 
 # escolher interativamente
-lfs ~ -n '*.md' -l 2>/dev/null | fzf
+sfs ~ -n '*.md' -l 2>/dev/null | fzf
 ```
 
 ### Observações

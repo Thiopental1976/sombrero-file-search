@@ -19,7 +19,7 @@ binaries are missing. Runs on any distro.
 Two faces, one engine:
 
 - **GUI** — `sombrero-file-search` (or *Sombrero File Search* in your menu).
-- **CLI** — `lfs`, built for scripts and pipelines (`| xargs`, `| wc`, `| fzf`).
+- **CLI** — `sfs`, built for scripts and pipelines (`| xargs`, `| wc`, `| fzf`).
 
 Whatever the GUI finds, the CLI finds too: they share the same engine.
 
@@ -159,7 +159,7 @@ Select results and either:
 - **Drag** them to another app/file manager, or
 - **Copy** them to a destination folder.
 
-Before copying, LFS runs a **destination pre-check**: free space, the FAT32 4 GiB
+Before copying, SFS runs a **destination pre-check**: free space, the FAT32 4 GiB
 file limit, filenames illegal on the destination filesystem, and whether the mount
 is actually mounted. On a **USB stick / removable** drive the write is **paced**
 (synced every 16 MiB) so it doesn't hijack the system's page cache and freeze the
@@ -172,7 +172,7 @@ machine — on an internal disk this doesn't happen, the kernel handles it well.
 > the same size and the same second, would collapse into one row. In practice
 > that is the same file.
 
-> **Never destroys the source.** LFS reads and copies; it never moves, renames or
+> **Never destroys the source.** SFS reads and copies; it never moves, renames or
 > deletes the source. If a copy is cancelled, the partial destination is removed.
 
 > **MTP devices (phones, media players).** Writing over a mounted MTP device
@@ -184,13 +184,14 @@ machine — on an internal disk this doesn't happen, the kernel handles it well.
 
 ---
 
-## 3. The CLI — `lfs`
+## 3. The CLI — `sfs`
 
 ```
-lfs [options] FOLDER [FOLDER ...]
+sfs [options] FOLDER [FOLDER ...]
 ```
 
 One or more folders as positional arguments; the options say **what** to look for.
+(`lfs` still works as an alias of `sfs` — it was the development name.)
 With no criteria, it lists everything under the folder(s) (like `ls -R` with filters).
 
 ### Options
@@ -239,25 +240,25 @@ With no criteria, it lists everything under the folder(s) (like `ls -R` with fil
 
 ```bash
 # every PDF under ~/docs, paths only
-lfs ~/docs -n '*.pdf' -l 2>/dev/null
+sfs ~/docs -n '*.pdf' -l 2>/dev/null
 
 # files containing "invoice" (shows the line)
-lfs ~/docs -c invoice
+sfs ~/docs -c invoice
 
 # boolean, inside documents (PDF/docx…)
-lfs ~/docs -D -b '(invoice OR receipt) AND client NOT draft' -l
+sfs ~/docs -D -b '(invoice OR receipt) AND client NOT draft' -l
 
 # large videos modified in the last week
-lfs /mnt/Disk -n '*.mp4,*.mkv' --min-size 500M --days 7 -l 2>/dev/null
+sfs /mnt/Disk -n '*.mp4,*.mkv' --min-size 500M --days 7 -l 2>/dev/null
 
 # feed another command safely (names with spaces)
-lfs ~/photos -n '*.jpg' -0 2>/dev/null | xargs -0 -n1 identify
+sfs ~/photos -n '*.jpg' -0 2>/dev/null | xargs -0 -n1 identify
 
 # count how many files match
-lfs ~/projects -c 'TODO' -l 2>/dev/null | wc -l
+sfs ~/projects -c 'TODO' -l 2>/dev/null | wc -l
 
 # pick interactively
-lfs ~ -n '*.md' -l 2>/dev/null | fzf
+sfs ~ -n '*.md' -l 2>/dev/null | fzf
 ```
 
 ### Notes
