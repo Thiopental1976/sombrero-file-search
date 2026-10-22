@@ -20,7 +20,8 @@ import hashlib, io, os, stat, subprocess, sys, tarfile, tempfile
 
 RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(RAIZ, "lfs"))
-import updates, version
+import updates, version, plat
+import pathlib
 
 falhas = []
 def ok(cond, msg):
@@ -29,7 +30,8 @@ def ok(cond, msg):
         falhas.append(msg)
 
 def url(p):
-    return "file://" + p
+    # as_uri: no Windows "file://" + "C:\\..." não é URL (o CI de 22/10 caiu aqui)
+    return pathlib.Path(p).as_uri()
 
 tmp = tempfile.mkdtemp(prefix="sfs-test-upd-")
 
@@ -49,11 +51,23 @@ src = os.path.join(tmp, "src"); os.makedirs(src)
 img = os.path.join(tmp, "Sombrero.AppImage"); open(img, "wb").close()
 ok(updates.install_kind(dev, env={}) == "dev", "worktree com .git = dev")
 ok(updates.install_kind(src, env={}) == "source", "cópia do install.sh = source")
-ok(updates.install_kind("/usr/lib/sombrero-file-search", env={}) == "deb", "/usr/lib = deb")
-ok(updates.install_kind("/usr/lib/sombrero-file-search", env={"APPIMAGE": img}) == "appimage",
-   "$APPIMAGE vence o caminho")
+if not plat.IS_WIN:      # caminhos de Linux: no Windows /usr/lib vira C:\usr\lib
+    ok(updates.install_kind("/usr/lib/sombrero-file-search", env={}) == "deb", "/usr/lib = deb")
+    ok(updates.install_kind("/usr/lib/sombrero-file-search", env={"APPIMAGE": img}) == "appimage",
+       "$APPIMAGE vence o caminho")
 ok(updates.install_kind(src, env={"APPIMAGE": "/nao/existe"}) == "source",
    "$APPIMAGE apontando para o nada é ignorado")
+
+_win, _frozen = plat.IS_WIN, plat.frozen
+try:
+    plat.IS_WIN = True
+    plat.frozen = lambda: True
+    ok(updates.install_kind(src, env={}) == "windows", "Windows empacotado (.exe) = windows")
+    plat.frozen = lambda: False
+    ok(updates.install_kind(src, env={}) == "dev",
+       "Windows rodando do código: dev (não há install.sh para se atualizar)")
+finally:
+    plat.IS_WIN, plat.frozen = _win, _frozen
 
 # ---------------------------------------------------------------- 2. consulta 1×/dia
 def rel(tag, assets=(), tarball=""):
@@ -132,50 +146,69 @@ try:
 except InterruptedError:
     ok(not os.path.exists(d3 + ".part"), "cancelado: .part apagado")
 
-# ---------------------------------------------------------------- 5a. AppImage
-velho = os.path.join(tmp, "Meu_SFS.AppImage"); open(velho, "wb").write(b"velho")
-novo = os.path.join(tmp, "novo.AppImage"); open(novo, "wb").write(b"#!novo")
-R = rel("v9.9.9", [{"name": "Sombrero_File_Search-9.9.9-x86_64.AppImage", "url": url(novo),
-                    "size": 6, "digest": ""}])
-res = updates.apply("appimage", R, env={"APPIMAGE": velho})
-ok(open(velho, "rb").read() == b"#!novo", "AppImage: conteúdo trocado")
-ok(os.stat(velho).st_mode & stat.S_IXUSR, "AppImage: continua executável")
-ok(res["restart"] == [velho], "AppImage: relança pelo MESMO caminho (atalhos continuam valendo)")
-R["assets"][0]["size"] = 999
-open(velho, "wb").write(b"bom")
+# ---------------------------------------------------------------- 5. Windows
+# O exe aberto não se sobrescreve: baixa o .zip para Downloads e devolve o
+# caminho para a GUI abrir a pasta.
+zipw = os.path.join(tmp, "w.zip"); open(zipw, "wb").write(b"PK-zip")
+baixar_em = os.path.join(tmp, "Downloads"); os.makedirs(baixar_em)
+_dd = updates.downloads_dir
+updates.downloads_dir = lambda: baixar_em
 try:
-    updates.apply("appimage", R, env={"APPIMAGE": velho}); ok(False, "AppImage truncado")
-except updates.UpdateError:
-    ok(open(velho, "rb").read() == b"bom", "AppImage truncado NÃO substitui o bom")
+    Rw = rel("v9.9.9", [{"name": "SombreroFileSearch-9.9.9-windows-x64.zip", "url": url(zipw),
+                         "size": 6, "digest": ""}])
+    res = updates.apply("windows", Rw)
+    alvo = os.path.join(baixar_em, "SombreroFileSearch-9.9.9-windows-x64.zip")
+    ok(res == {"restart": None, "opened": alvo} and open(alvo, "rb").read() == b"PK-zip",
+       "Windows: o .zip vai para Downloads e nada é relançado")
+finally:
+    updates.downloads_dir = _dd
 
-# ---------------------------------------------------------------- 5b. código-fonte
-tgz = os.path.join(tmp, "rel.tar.gz")
-script = b'#!/bin/bash\nprintf "%s|%s" "$*" "$PREFIX" > "$PREFIX/marca"\n'
-with tarfile.open(tgz, "w:gz") as tf:
-    ti = tarfile.TarInfo("Thiopental1976-sombrero-file-search-abc123/install.sh")
-    ti.size = len(script); ti.mode = 0o755
-    tf.addfile(ti, io.BytesIO(script))
-prefix = os.path.join(tmp, "prefix"); os.makedirs(prefix)
-res = updates.apply("source", rel("v9.9.9", tarball=url(tgz)), root=prefix, env=dict(os.environ))
-marca = open(os.path.join(prefix, "marca")).read()
-ok(marca == "-y --app-only|" + prefix, "código-fonte: install.sh -y --app-only com o PREFIX atual")
-ok(res["restart"][-1] in (os.path.join(prefix, "lfs", "app.py"),
-                          os.path.expanduser("~/.local/bin/sombrero-file-search")),
-   "código-fonte: relança pelo lançador (ou o app.py instalado)")
-mau = os.path.join(tmp, "mau.tar.gz")
-with tarfile.open(mau, "w:gz") as tf:
-    ti = tarfile.TarInfo("../fora.sh"); ti.size = 1
-    tf.addfile(ti, io.BytesIO(b"x"))
-try:
-    updates.apply("source", rel("v9.9.9", tarball=url(mau)), root=prefix, env=dict(os.environ))
-    ok(False, "tarball com '..'")
-except Exception:
-    ok(not os.path.exists(os.path.join(tmp, "fora.sh")), "tarball com '..' é recusado")
+# AppImage, install.sh e bash só existem no Linux.
+if not plat.IS_WIN:
+    # ---------------------------------------------------------------- 5a. AppImage
+    velho = os.path.join(tmp, "Meu_SFS.AppImage"); open(velho, "wb").write(b"velho")
+    novo = os.path.join(tmp, "novo.AppImage"); open(novo, "wb").write(b"#!novo")
+    R = rel("v9.9.9", [{"name": "Sombrero_File_Search-9.9.9-x86_64.AppImage", "url": url(novo),
+                        "size": 6, "digest": ""}])
+    res = updates.apply("appimage", R, env={"APPIMAGE": velho})
+    ok(open(velho, "rb").read() == b"#!novo", "AppImage: conteúdo trocado")
+    ok(os.stat(velho).st_mode & stat.S_IXUSR, "AppImage: continua executável")
+    ok(res["restart"] == [velho], "AppImage: relança pelo MESMO caminho (atalhos continuam valendo)")
+    R["assets"][0]["size"] = 999
+    open(velho, "wb").write(b"bom")
+    try:
+        updates.apply("appimage", R, env={"APPIMAGE": velho}); ok(False, "AppImage truncado")
+    except updates.UpdateError:
+        ok(open(velho, "rb").read() == b"bom", "AppImage truncado NÃO substitui o bom")
 
-# ---------------------------------------------------------------- install.sh --app-only
-out = subprocess.run(["bash", os.path.join(RAIZ, "install.sh"), "--help"],
-                     capture_output=True, text=True).stdout
-ok("--app-only" in out, "install.sh --help documenta --app-only")
+    # ---------------------------------------------------------------- 5b. código-fonte
+    tgz = os.path.join(tmp, "rel.tar.gz")
+    script = b'#!/bin/bash\nprintf "%s|%s" "$*" "$PREFIX" > "$PREFIX/marca"\n'
+    with tarfile.open(tgz, "w:gz") as tf:
+        ti = tarfile.TarInfo("Thiopental1976-sombrero-file-search-abc123/install.sh")
+        ti.size = len(script); ti.mode = 0o755
+        tf.addfile(ti, io.BytesIO(script))
+    prefix = os.path.join(tmp, "prefix"); os.makedirs(prefix)
+    res = updates.apply("source", rel("v9.9.9", tarball=url(tgz)), root=prefix, env=dict(os.environ))
+    marca = open(os.path.join(prefix, "marca")).read()
+    ok(marca == "-y --app-only|" + prefix, "código-fonte: install.sh -y --app-only com o PREFIX atual")
+    ok(res["restart"][-1] in (os.path.join(prefix, "lfs", "app.py"),
+                              os.path.expanduser("~/.local/bin/sombrero-file-search")),
+       "código-fonte: relança pelo lançador (ou o app.py instalado)")
+    mau = os.path.join(tmp, "mau.tar.gz")
+    with tarfile.open(mau, "w:gz") as tf:
+        ti = tarfile.TarInfo("../fora.sh"); ti.size = 1
+        tf.addfile(ti, io.BytesIO(b"x"))
+    try:
+        updates.apply("source", rel("v9.9.9", tarball=url(mau)), root=prefix, env=dict(os.environ))
+        ok(False, "tarball com '..'")
+    except Exception:
+        ok(not os.path.exists(os.path.join(tmp, "fora.sh")), "tarball com '..' é recusado")
+
+    # ---------------------------------------------------------------- install.sh --app-only
+    out = subprocess.run(["bash", os.path.join(RAIZ, "install.sh"), "--help"],
+                         capture_output=True, text=True).stdout
+    ok("--app-only" in out, "install.sh --help documenta --app-only")
 
 print()
 if falhas:

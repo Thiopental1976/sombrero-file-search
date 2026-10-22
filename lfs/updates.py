@@ -67,8 +67,9 @@ def install_kind(root: str | None = None, env=None) -> str:
     com .git: quem desenvolve atualiza com git, nunca por cima do próprio repo."""
     root = root or _ROOT
     env = os.environ if env is None else env
-    if plat.IS_WIN and plat.frozen():
-        return "windows"
+    if plat.IS_WIN:
+        # Fora do .exe é alguém rodando do código: não há install.sh no Windows.
+        return "windows" if plat.frozen() else "dev"
     if env.get("APPIMAGE") and os.path.isfile(env["APPIMAGE"]):
         return "appimage"
     if os.path.abspath(root).startswith("/usr/"):
