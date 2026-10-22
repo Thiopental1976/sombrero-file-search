@@ -1,0 +1,6 @@
+# Shows the "Sponsor" button on the GitHub repository page.
+# Same account names as site/donate.js.
+github: [Thiopental1976]
+ko_fi: sombrerofilesearch
+liberapay: sombrerofilesearch
+custom: ["https://sombrerofilesearch.com/#donate"]

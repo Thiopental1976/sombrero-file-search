@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sombrero File Search</title>
+<meta name="description" content="Native file search for Linux: by name, by content, boolean and inside documents. Live, index-free, and honest: when it could not look somewhere, it says so.">
+<link rel="canonical" href="https://sombrerofilesearch.com/">
+<link rel="alternate" hreflang="en" href="https://sombrerofilesearch.com/">
+<link rel="alternate" hreflang="pt-BR" href="https://sombrerofilesearch.com/pt-br/">
+<link rel="alternate" hreflang="x-default" href="https://sombrerofilesearch.com/">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="icon" href="assets/icon_128.png" type="image/png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://sombrerofilesearch.com/">
+<meta property="og:title" content="Sombrero File Search">
+<meta property="og:description" content="Live, index-free file search for Linux, by name, content, boolean and inside documents. It never says “0 results” when it did not look.">
+<meta property="og:image" content="https://sombrerofilesearch.com/assets/social_preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#050b10">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/icon_128.png" alt="" width="32" height="32">Sombrero File Search</a>
+    <nav class="nav" aria-label="Site">
+      <a href="#honest">Why</a>
+      <a href="#features">Features</a>
+      <a href="#duplicates">Duplicates</a>
+      <a href="#safe">Safety</a>
+      <a href="#install">Install</a>
+      <a href="#donate" data-donate-link hidden>Donate</a>
+      <a href="https://github.com/Thiopental1976/sombrero-file-search">GitHub</a>
+      <a class="lang" href="pt-br/" hreflang="pt-BR" lang="pt-BR">Português</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero">
+  <div class="wrap">
+    <img class="hero-icon" src="assets/icon_256.png" alt="Sombrero File Search icon" width="88" height="88">
+    <h1>Find every file. Know when you can’t.</h1>
+    <p class="lead">Native file search for Linux, by name, by content, boolean and inside documents. Live and index-free. <em>When it could not look somewhere, it says so.</em></p>
+    <div class="cta">
+      <a class="btn btn-main" data-dl="AppImage" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Download AppImage <small data-ver>latest</small></a>
+      <a class="btn btn-ghost" data-dl="deb" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">.deb for Debian / Ubuntu / Mint</a>
+      <p class="cta-note">Free software, GPL-3.0-or-later. AppImage runs on any distro with nothing to install. Windows build coming.</p>
+    </div>
+  </div>
+</section>
+
+<section class="demo" aria-label="Demo">
+  <div class="wrap">
+    <figure>
+      <video class="demo-video" autoplay muted loop playsinline width="960" height="600" poster="assets/demo_poster.jpg" aria-label="Searching by name, then by content inside PDF and ODT files, then with a boolean expression">
+        <source src="assets/demo.mp4" type="video/mp4">
+        <img src="assets/demo.gif" width="960" height="600" alt="Searching by name, then by content inside PDF and ODT files, then with a boolean expression">
+      </video>
+      <figcaption>Name → content <strong>inside documents</strong> (PDF/ODT) → boolean expression. Live, no index.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="honest">
+  <div class="wrap split">
+    <div>
+      <div class="eyebrow">The thesis</div>
+      <h2>A search that says “0 results” without looking is lying.</h2>
+      <p>A folder that denied reading, a disk that was not mounted, a NAS that stopped answering, a typo in the path: every one of these used to look exactly like <em>“the file is not there”</em>.</p>
+      <p>Sombrero routes every loss of completeness through a single channel. The GUI status bar, the CLI, the JSON stream and the exit code all read from it, so a new kind of loss shows up everywhere at once.</p>
+    </div>
+    <div class="term" role="img" aria-label="Terminal: a search over a path that does not exist reports an incomplete result and exits with code 2">
+      <div class="term-bar"><i></i><i></i><i></i></div>
+<pre><span class="ln"><span class="p">$</span> sfs /mnt/backup -c invoice</span><span class="ln"><span class="w"># incomplete: invalid location in /mnt/backup: path does not exist (disk unmounted? typo?)</span></span><span class="ln"><span class="w">#        results are INCOMPLETE — this is not 'nothing was found'</span></span><span class="ln"><span class="p">$</span> echo $?</span><span class="ln"><span class="w">2</span></span></pre>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="codes">
+      <div class="code k0"><b>0</b><span>found</span></div>
+      <div class="code k1"><b>1</b><span>looked everywhere, nothing found</span></div>
+      <div class="code k2"><b>2</b><span>the result may be wrong: something could not be searched</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="measure">
+  <div class="wrap">
+    <div class="eyebrow">Disk-aware, and measured</div>
+    <h2>One mechanical head, one process.</h2>
+    <p>Built on, and for, a home server with a dozen mechanical disks, SMR drives on USB and network mounts that sometimes die. Roots are grouped by the physical disk behind them, and each disk class gets the thread pool it can actually use. Every number was measured on cold cache.</p>
+    <div class="bignum" aria-label="From 1094 seconds to 80 seconds">
+      <span class="from">1 094 s</span><span class="arrow">→</span><span class="to">80 s</span>
+    </div>
+    <p class="muted">Same search over a 10-mount archive: a single process with 24 threads, against one process per disk.</p>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Disk / operation</th><th>1 thread</th><th>4 threads</th><th>Full pool (24)</th><th>Policy</th></tr></thead>
+        <tbody>
+          <tr><td class="what">NVMe, name search (<code>/usr</code>, 92 680 hits)</td><td data-label="1 thread" class="n">5.2 s</td><td data-label="4 threads" class="n">1.5 s</td><td data-label="Full pool (24)" class="n"><b>0.5 s</b></td><td data-label="Policy">SSD: full pool</td></tr>
+          <tr><td class="what">SMR 8 TB, name search (2.76 M inodes)</td><td data-label="1 thread" class="n"><b>35 s</b></td><td data-label="4 threads" class="n">38 s</td><td data-label="Full pool (24)" class="n">39 s</td><td data-label="Policy">Rotational, names: 1 thread</td></tr>
+          <tr><td class="what">SMR 8 TB, content search (25 k files)</td><td data-label="1 thread" class="n">36 s</td><td data-label="4 threads" class="n">30 s</td><td data-label="Full pool (24)" class="n"><b>29 s</b></td><td data-label="Policy">Rotational, content: full pool</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="eyebrow">Features</div>
+    <h2>Searches like Agent Ransack, native to Linux.</h2>
+    <div class="feats">
+      <div class="feat"><span class="tag">Name + content</span><p>Glob or regex, plain text or regex, highlighted in the preview.</p></div>
+      <div class="feat"><span class="tag">Boolean</span><p><code>(note OR report) AND patient NOT draft</code>, with parentheses and quoted phrases.</p></div>
+      <div class="feat"><span class="tag">Inside documents</span><p>PDF, docx, odt, epub and zip, through a bundled ripgrep-all. No pandoc needed.</p></div>
+      <div class="feat"><span class="tag">Media preview</span><p>Thumbnails and an audio/video player right in the results.</p></div>
+      <div class="feat"><span class="tag">Tabs &amp; export</span><p>Search tabs, saved searches, history, CSV/JSON export, light and dark theme.</p></div>
+      <div class="feat"><span class="tag">Safe copy</span><p>Never moves or deletes. Checks free space, FAT32 limits and illegal names before writing.</p></div>
+      <div class="feat"><span class="tag">Duplicates</span><p>Finds byte-identical groups and never deletes. Which copy goes is your call.</p></div>
+      <div class="feat"><span class="tag">Matching CLI</span><p>Same engine. <code>--print0</code> for pipelines, <code>--json</code> for scripts, <code>--nice-io</code> for cron.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="duplicates">
+  <div class="wrap split">
+    <div>
+      <div class="eyebrow">Duplicate finder</div>
+      <h2>Find the copies eating your disks.</h2>
+      <p>Point it at one folder or at every disk. It returns groups of byte-identical files, sorted by the space they waste, with the disk each copy lives on. Export the list to CSV or JSON and decide calmly.</p>
+      <p class="muted">Hard links are recognized as the same file, not as duplicates: reporting them would invite you to delete something that takes no extra space.</p>
+    </div>
+    <ol class="funnel" aria-label="How duplicates are confirmed">
+      <li><b>Same file?</b><span>Hard links are grouped first and counted once.</span></li>
+      <li><b>Same size?</b><span>Free: the size is already known. Unique sizes drop out.</span></li>
+      <li><b>Same beginning?</b><span>BLAKE2b of the first 64 KiB rules out most candidates without reading whole files.</span></li>
+      <li><b>Same content.</b><span>Full BLAKE2b only for the survivors, read one disk at a time so mechanical heads do not fight.</span></li>
+    </ol>
+  </div>
+</section>
+
+<section id="safe" class="safe">
+  <div class="wrap">
+    <div class="eyebrow">Read-only by design</div>
+    <h2>It searches. It does not manage your files.</h2>
+    <p>Sombrero is not a file manager. It has no button to move, rename or delete anything, so a search can never cost you data.</p>
+    <div class="safe-grid">
+      <div class="safe-item"><h3>Never moves or deletes</h3><p>There is no move, rename or delete anywhere in the program. Decisions about your files stay in your file manager, with you.</p></div>
+      <div class="safe-item"><h3>Copies leave the original alone</h3><p>Copying only creates new files. The source is never touched, and an existing file at the destination is skipped unless you choose to overwrite it.</p></div>
+      <div class="safe-item"><h3>Duplicates, shown, never removed</h3><p>It finds byte-identical copies and lists them. Which one goes is your call, made somewhere else.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <div class="eyebrow">Install</div>
+    <h2>Pick your way in.</h2>
+    <div class="installs">
+      <div class="inst">
+        <h3>AppImage <small>any distro</small></h3>
+        <p>Nothing to install. Python, PySide6, rg, fd and rga are bundled.</p>
+<pre>chmod +x Sombrero_File_Search-*.AppImage
+./Sombrero_File_Search-*.AppImage</pre>
+      </div>
+      <div class="inst">
+        <h3>.deb <small>Debian · Ubuntu · Mint</small></h3>
+        <p>Thin package. <code>--setup-gui</code> builds the GUI environment in your home.</p>
+<pre>sudo apt install ./sombrero-file-search_*_all.deb</pre>
+      </div>
+      <div class="inst">
+        <h3>From source <small>no root</small></h3>
+        <p>Installs into <code>~/.local</code>. Works on immutable distros too.</p>
+<pre>git clone https://github.com/Thiopental1976/sombrero-file-search.git
+cd sombrero-file-search &amp;&amp; ./install.sh</pre>
+      </div>
+      <div class="inst soon">
+        <h3>Windows <span class="badge">Coming</span></h3>
+        <p>A portable build is in testing: unzip and run, no administrator rights needed.</p>
+      </div>
+    </div>
+    <p class="muted" style="margin-top:22px">Full guide in the <a href="https://github.com/Thiopental1976/sombrero-file-search/blob/main/MANUAL.md">manual</a>. No Flatpak on purpose: a tool that sweeps the whole disk does not belong in a sandbox.</p>
+  </div>
+</section>
+<section id="donate" class="donate" hidden>
+  <div class="wrap">
+    <div class="eyebrow">Support the project</div>
+    <h2>Free on Linux, and it stays that way.</h2>
+    <p>Sombrero File Search is free software, made by one developer. Donations pay for development time, the domain and the upkeep of the site and the program.</p>
+    <div class="give">
+      <div class="give-card" data-canal="sponsors" hidden><h3>GitHub Sponsors</h3><p>Monthly or one-time, from your GitHub account.</p><a class="btn btn-ghost" href="#">Sponsor</a></div>
+      <div class="give-card" data-canal="kofi" hidden><h3>Ko-fi</h3><p>Card or PayPal, no account needed.</p><a class="btn btn-ghost" href="#">Buy a coffee</a></div>
+      <div class="give-card" data-canal="liberapay" hidden><h3>Liberapay</h3><p>Recurring donations, run by a non-profit.</p><a class="btn btn-ghost" href="#">Donate</a></div>
+      <div class="give-card pix" data-canal="pix" hidden><h3>Pix <small>Brazil</small></h3><div class="pix-qr" data-pix-qr></div>
+        <label class="sr" for="pix-code">Pix copy and paste code</label><input id="pix-code" data-pix-code readonly>
+        <button type="button" class="btn btn-ghost" data-pix-copy data-ok="Copied">Copy Pix code</button></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Sombrero File Search · GPL-3.0-or-later</span>
+    <nav aria-label="Footer">
+      <a href="https://github.com/Thiopental1976/sombrero-file-search">GitHub</a>
+      <a href="https://github.com/Thiopental1976/sombrero-file-search/blob/main/MANUAL.md">Manual</a>
+      <a href="https://github.com/Thiopental1976/sombrero-file-search/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/Thiopental1976/sombrero-file-search/issues">Report a problem</a>
+      <a href="#donate" data-donate-link hidden>Donate</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="release.js" defer></script>
+<script src="copy.js" defer></script>
+<script src="demo.js" defer></script>
+<script src="vendor/qrcode.min.js" defer></script>
+<script src="donate.js" defer></script>
+</body>
+</html>

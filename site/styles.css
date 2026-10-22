@@ -1,0 +1,305 @@
+/* Sombrero File Search — site
+   Layout: hero full-bleed over the Sombrero galaxy, then a single 1080px column of sections
+   alternating text and "instrument" panels (terminal, tables). One deliberate dark theme,
+   taken from the app icon: deep space, teal ring, a trace of the galaxy's magenta dust. */
+:root {
+  --space: #050b10;
+  --space-2: #0b1720;
+  --space-3: #10222d;
+  --line: #1b3542;
+  --fg: #e4f0f2;
+  --muted: #8ea9b0;
+  --teal: #46d6d9;
+  --teal-deep: #1d8f98;
+  --dust: #e05ab8;
+  --warn: #f2b84b;
+  --ok: #7fe0a0;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "DejaVu Sans Mono", Consolas, monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box }
+[hidden] { display: none !important }  /* layout rules (e.g. the phone footer grid) must not reveal hidden items */
+html { scroll-behavior: smooth }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto } }
+body {
+  margin: 0; background: var(--space); color: var(--fg);
+  font: 17px/1.6 var(--f-body); -webkit-font-smoothing: antialiased;
+}
+img { max-width: 100%; height: auto; display: block }
+a { color: var(--teal) }
+a:hover { color: #9ff3f0 }
+:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; border-radius: 4px }
+code, pre, kbd { font-family: var(--f-mono) }
+
+.wrap {
+  max-width: 1080px; margin: 0 auto;
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+}
+
+/* Top bar */
+.top { position: absolute; inset: 0 0 auto; z-index: 2 }
+.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 18px }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--fg); text-decoration: none; font: 600 1rem var(--f-display) }
+.brand img { width: 32px; height: 32px }
+.nav { display: flex; gap: 18px; align-items: center; font-size: .92rem; flex-wrap: wrap; justify-content: flex-end }
+.nav a { color: var(--muted); text-decoration: none }
+.nav a:hover { color: var(--fg) }
+.nav .lang { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; color: var(--fg) }
+
+/* Hero */
+.hero {
+  position: relative; overflow: hidden;
+  background: var(--space) url("assets/hero.jpg") 72% 50% / cover no-repeat;
+  padding-block: 150px 96px;
+}
+.hero::before {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, rgba(5,11,16,.94) 0%, rgba(5,11,16,.78) 45%, rgba(5,11,16,.15) 100%),
+              linear-gradient(0deg, var(--space) 0%, rgba(5,11,16,0) 30%);
+}
+.hero .wrap { position: relative }
+.hero-icon { width: 88px; height: 88px; margin-bottom: 22px; filter: drop-shadow(0 8px 30px rgba(70,214,217,.25)) }
+.hero h1 {
+  font: 700 clamp(2.6rem, 6vw, 4.6rem)/1.0 var(--f-display); letter-spacing: -.02em;
+  margin: 0; max-width: 12ch; text-wrap: balance;
+}
+.hero .lead { font-size: clamp(1.1rem, 2.2vw, 1.35rem); max-width: 34ch; margin: 22px 0 0; color: #cfe2e5; text-wrap: balance }
+.hero .lead em { color: var(--teal); font-style: normal }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; align-items: center }
+.btn {
+  display: inline-flex; align-items: center; gap: 10px; text-decoration: none;
+  font: 600 1rem var(--f-body); padding: 13px 22px; border-radius: 10px; border: 1px solid transparent;
+}
+.btn-main { background: var(--teal); color: #032024 }
+.btn-main:hover { background: #7ae6e8; color: #032024 }
+.btn-ghost { border-color: var(--line); color: var(--fg); background: rgba(11,23,32,.6) }
+.btn-ghost:hover { border-color: var(--teal); color: var(--fg) }
+.btn small { font: 500 .78rem var(--f-mono); opacity: .75 }
+.cta-note { width: 100%; font-size: .88rem; color: var(--muted); margin: 4px 0 0 }
+
+/* Sections */
+section { padding-block: 84px }
+.eyebrow { font: 600 .76rem var(--f-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--teal) }
+h2 { font: 700 clamp(1.9rem, 4vw, 2.7rem)/1.08 var(--f-display); letter-spacing: -.015em; margin: 10px 0 18px; text-wrap: balance; max-width: 22ch }
+h3 { font: 600 1.15rem/1.3 var(--f-display); margin: 0 0 6px }
+p { margin: 0 0 14px; max-width: 64ch }
+.muted { color: var(--muted) }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 48px; align-items: center }
+@media (max-width: 860px) { .split { grid-template-columns: minmax(0, 1fr); gap: 28px } }
+
+/* Demo */
+.demo { padding-top: 24px }
+.demo figure { margin: 0 auto; max-width: 962px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--space-2); box-shadow: 0 30px 80px rgba(0,0,0,.5) }
+.demo video { display: block; width: 100%; height: auto }
+.tap-hint { display: none }
+@media (max-width: 640px) {
+  .demo video { cursor: zoom-in }
+  .tap-hint { display: block; margin-top: 4px; font: 600 .74rem var(--f-mono); letter-spacing: .04em; color: var(--teal) }
+}
+.demo figcaption { padding: 12px 18px; font-size: .9rem; color: var(--muted); border-top: 1px solid var(--line) }
+
+/* Terminal */
+.term { background: #02070a; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; min-width: 0 }
+.term-bar { display: flex; gap: 7px; padding: 11px 14px; border-bottom: 1px solid var(--line) }
+.term-bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--space-3) }
+.term pre { margin: 0; padding: 18px 18px 20px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .84rem; line-height: 1.65; color: #cfe2e5 }
+.term .ln { display: block; padding-left: 2ch; text-indent: -2ch }  /* a wrapped output line hangs under its first character */
+.term .p { color: var(--teal) }
+.term .w { color: var(--warn) }
+.term .c { color: var(--muted) }
+
+/* Exit codes */
+.codes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 26px }
+@media (max-width: 560px) { .codes { grid-template-columns: minmax(0, 1fr) } }
+.code { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--space-2) }
+.code b { font: 700 1.8rem/1 var(--f-mono); display: block; margin-bottom: 6px }
+.code span { font-size: .92rem; color: var(--muted) }
+.code.k0 b { color: var(--ok) } .code.k1 b { color: var(--muted) } .code.k2 b { color: var(--warn) }
+.code.k2 { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)) }
+@media (max-width: 560px) {
+  .codes { gap: 8px }
+  .code { display: grid; grid-template-columns: 2ch minmax(0, 1fr); gap: 14px; align-items: center; padding: 10px 14px }
+  .code b { margin: 0; font-size: 1.5rem }
+  .term pre { font-size: .76rem; padding: 14px 14px 16px }
+}
+
+/* Measured */
+.measure { background: linear-gradient(180deg, var(--space) 0%, var(--space-2) 100%) }
+.bignum { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; margin: 26px 0 8px; font-family: var(--f-display) }
+.bignum .from { font-size: clamp(2rem, 5vw, 3rem); color: var(--muted); text-decoration: line-through; text-decoration-color: var(--dust); text-decoration-thickness: 3px }
+.bignum .arrow { color: var(--muted); font-size: 2rem }
+.bignum .to { font-size: clamp(3rem, 8vw, 5rem); font-weight: 700; color: var(--teal); line-height: 1 }
+.tbl { overflow-x: auto; margin-top: 28px; border: 1px solid var(--line); border-radius: 12px }
+table { border-collapse: collapse; width: 100%; font-size: .93rem; min-width: 560px }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line) }
+tr:last-child td { border-bottom: 0 }
+th { font: 600 .74rem var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--space-2) }
+td.n { font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap }
+td b { color: var(--teal) }
+
+/* Features */
+.feats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-top: 30px }
+.feat { background: var(--space); padding: 24px 22px }
+/* 8 features: 4 across, 2×4 in the middle, 1 on phones, so no row is left with an empty cell */
+@media (max-width: 1000px) { .feats { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
+@media (max-width: 560px) { .feats { grid-template-columns: minmax(0, 1fr) } }
+.feat code { white-space: nowrap }
+.feat p > code:only-of-type { white-space: normal }  /* the boolean example is long: let it wrap */
+.feat .tag { font: 600 .72rem var(--f-mono); color: var(--teal); letter-spacing: .1em; text-transform: uppercase; display: block; margin-bottom: 10px }
+.feat p { font-size: .95rem; color: var(--muted); margin: 0 }
+
+/* Install */
+/* Install grid: 2×2 (the commands need the width), 1 column on phones */
+.installs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 28px }
+@media (max-width: 560px) { .installs { grid-template-columns: minmax(0, 1fr) } }
+.inst { border: 1px solid var(--line); border-radius: 12px; padding: 20px; background: var(--space-2); display: flex; flex-direction: column; gap: 10px; min-width: 0 }
+.inst h3 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px }
+.inst h3 small { font: 500 .74rem var(--f-mono); color: var(--muted) }
+.inst p { font-size: .93rem; color: var(--muted); margin: 0 }
+.inst pre { margin: auto 0 0; background: #02070a; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: .78rem; overflow-x: auto; color: #cfe2e5 }
+.cmd { position: relative; margin-top: auto }
+.cmd pre { margin: 0; padding-right: 64px }
+.copy {
+  position: absolute; top: 6px; right: 6px; cursor: pointer;
+  font: 600 .7rem var(--f-mono); letter-spacing: .04em; color: var(--muted);
+  background: var(--space-3); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px;
+}
+.copy:hover { color: var(--fg); border-color: var(--teal-deep) }
+.copy.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, var(--line)) }
+.inst pre { white-space: pre-wrap; overflow-wrap: anywhere }
+.inst.soon { border-style: dashed; background: transparent }
+.badge { font: 600 .7rem var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dust); border: 1px solid color-mix(in srgb, var(--dust) 50%, transparent); border-radius: 999px; padding: 2px 8px }
+
+/* Footer */
+footer { border-top: 1px solid var(--line); padding-block: 36px 48px; color: var(--muted); font-size: .9rem }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 14px 28px; justify-content: space-between; align-items: center }
+footer nav { display: flex; gap: 18px; flex-wrap: wrap }
+footer a { color: var(--muted) }
+@media (max-width: 640px) {
+  footer nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; width: 100% }
+  footer nav a {
+    display: flex; align-items: center; justify-content: center; min-height: 44px; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 10px; background: var(--space-2);
+    text-decoration: none; text-align: center; line-height: 1.2;
+  }
+  footer nav a:hover, footer nav a:active { color: var(--fg); border-color: var(--teal-deep) }
+}
+
+/* Phone: keep the brand on one line, show only the language switch */
+.brand { white-space: nowrap }
+@media (max-width: 640px) {
+  .nav a:not(.lang) { display: none }
+  .hero { padding-block: 110px 64px }
+  section { padding-block: 60px }
+}
+
+/* Read-only promise */
+.safe { background: var(--space-2); border-block: 1px solid var(--line) }
+.safe-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin-top: 30px }
+@media (max-width: 760px) { .safe-grid { grid-template-columns: minmax(0, 1fr) } }
+.safe-item { border-top: 2px solid var(--teal); padding-top: 16px }
+.safe-item p { font-size: .95rem; color: var(--muted); margin: 0 }
+
+/* Duplicate funnel: four real stages, in order */
+.funnel { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: st }
+.funnel li { counter-increment: st; display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); column-gap: 14px;
+  background: var(--space-2); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px }
+.funnel li::before { content: counter(st); grid-row: span 2; font: 700 1.5rem/1 var(--f-mono); color: var(--teal) }
+.funnel li:nth-child(2) { margin-inline: 4% 0 } .funnel li:nth-child(3) { margin-inline: 8% 0 } .funnel li:nth-child(4) { margin-inline: 12% 0; border-color: var(--teal-deep) }
+.funnel b { font: 600 1.02rem var(--f-display) }
+.funnel span { font-size: .92rem; color: var(--muted) }
+@media (max-width: 860px) {
+  .funnel li:nth-child(1) { margin-inline: 0 } .funnel li:nth-child(2) { margin-inline: 3% 0 }
+  .funnel li:nth-child(3) { margin-inline: 6% 0 } .funnel li:nth-child(4) { margin-inline: 9% 0 }
+}
+
+/* Phone layout: hero text clear of the galaxy, full-width buttons, table rows as cards */
+@media (max-width: 640px) {
+  .hero { background-position: 70% 0; background-size: auto 480px }
+  .hero::before {
+    background: linear-gradient(180deg, rgba(5,11,16,0) 0%, rgba(5,11,16,.25) 150px, rgba(5,11,16,.6) 300px, var(--space) 480px);
+  }
+  .hero h1, .hero .lead { text-shadow: 0 2px 14px rgba(5,11,16,.9), 0 0 2px rgba(5,11,16,.8) }
+  .hero h1 { max-width: none }
+  .cta .btn { width: 100%; justify-content: center }
+  .bignum { gap: 12px }
+
+  .tbl { border: 0; border-radius: 0; overflow: visible }
+  .tbl table { min-width: 0 }
+  .tbl thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0) }
+  .tbl tbody { display: grid; gap: 12px }
+  .tbl tr {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px;
+    border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: var(--space-2);
+  }
+  .tbl td { display: block; padding: 0; border: 0 }
+  .tbl td.what { grid-column: 1 / -1; font-weight: 600 }
+  .tbl td[data-label]::before {
+    content: attr(data-label); display: block; margin-bottom: 2px;
+    font: 600 .66rem var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); white-space: normal;
+  }
+  .tbl td.n { font-size: 1.05rem; align-self: end }
+  .tbl td:last-child { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--line); font-size: .88rem; color: var(--muted) }
+}
+
+/* Foldables, book-style (Galaxy Z Fold): the unfolded inner screen is almost square, with the crease
+   down the middle. Equal columns put the gap between them on the crease, so no text crosses the fold.
+   Placed last so it overrides the single-column .split below 860px. */
+@media (min-width: 600px) and (max-width: 1000px) and (min-aspect-ratio: 4/5) and (max-aspect-ratio: 5/4) {
+  .split { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 48px; align-items: center }
+  /* hero text and buttons stay in the left half, the galaxy fills the right */
+  .hero h1, .hero .lead, .cta { max-width: calc(50vw - 44px) }
+  .cta .btn { width: 100%; justify-content: center }
+  .funnel li:nth-child(n) { margin-inline: 0 }
+  .funnel li:nth-child(2) { margin-left: 3% } .funnel li:nth-child(3) { margin-left: 6% } .funnel li:nth-child(4) { margin-left: 9% }
+}
+
+/* Half-folded like a laptop (Flex mode): the browser reports two segments, one above the hinge
+   and one below. The demo stays in the top half; the page scrolls in the bottom half. */
+@media (vertical-viewport-segments: 2) {
+  .demo {
+    position: fixed; z-index: 5; inset: 0 0 auto; padding: 8px 12px;
+    height: env(viewport-segment-height 0 0); background: var(--space);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .demo .wrap { height: 100%; padding: 0; display: flex; justify-content: center }
+  .demo figure { height: 100%; width: auto; max-width: 100%; display: flex; flex-direction: column; box-shadow: none }
+  .demo video, .demo img { height: 100%; width: auto; max-width: 100%; object-fit: contain; cursor: default }
+  .demo figcaption, .tap-hint { display: none }
+  body { padding-top: env(viewport-segment-top 0 1) }
+  .top { top: env(viewport-segment-top 0 1) }
+}
+
+/* Medium widths (unfolded Fold ~690 px, small tablets): the full menu no longer fits beside the brand.
+   Tighter spacing, and GitHub leaves the top bar (it stays in the footer). */
+@media (min-width: 641px) and (max-width: 820px) {
+  .nav { gap: 10px; font-size: .84rem; flex-wrap: nowrap }
+  .nav a[href*="github.com"] { display: none }
+}
+
+/* Donations */
+.donate { border-top: 1px solid var(--line) }
+.give { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 26px }
+.give-card { border: 1px solid var(--line); border-radius: 12px; padding: 20px; background: var(--space-2); display: flex; flex-direction: column; gap: 10px; min-width: 0 }
+.give-card p { font-size: .93rem; color: var(--muted); margin: 0 }
+.give-card .btn { margin-top: auto; align-self: flex-start }
+.give-card h3 small { font: 500 .74rem var(--f-mono); color: var(--muted) }
+.pix-qr { background: #fff; border-radius: 8px; padding: 8px; width: 168px; max-width: 100% }
+.pix-qr:empty { display: none }
+.pix-qr svg { display: block; width: 100%; height: auto }
+.give-card input { font: .72rem var(--f-mono); background: #02070a; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; width: 100% }
+/* 561–1000 px (Fold aberto, tablet): 2 colunas fixas. Com número ímpar de canais o Pix
+   ocupa a linha inteira, QR à esquerda, em vez de deixar uma célula vazia (donate.js põe .impar). */
+@media (min-width: 561px) and (max-width: 1000px) {
+  .give { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .give.impar .pix { grid-column: 1 / -1; display: grid; grid-template-columns: 168px minmax(0, 1fr);
+                     grid-template-rows: auto auto 1fr; column-gap: 20px; align-content: start }
+  .give.impar .pix .pix-qr { grid-column: 1; grid-row: 1 / 4 }
+  .give.impar .pix > :not(.pix-qr) { grid-column: 2 }
+  .give.impar .pix .btn { align-self: start; justify-self: start; margin-top: 0 }
+}
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap }

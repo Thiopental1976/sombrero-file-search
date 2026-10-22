@@ -94,7 +94,7 @@ green cell regresses *and* if a pinned known gap starts working without being un
 
 The second thesis is that a search over many disks has to respect what each disk can do.
 The rule of the house is *one mechanical head, one process* — and every rule below was
-measured on cold cache (`drop_caches`) on a quiesced machine, in September 2026, on the
+measured on cold cache (`drop_caches`) on a quiesced machine, in September and October 2026, on the
 hardware named. Numbers that were not measured are not in this README.
 
 **Partition by physical disk.** The roots of a search are grouped by the physical disk
@@ -114,12 +114,12 @@ and whether the search reads *names* or *contents*:
 | disk / operation | 1 thread | 4 threads | full pool (24) | policy |
 |---|---|---|---|---|
 | NVMe, name search (`/usr`, 92 680 hits) | 5.2 s | 1.5 s | **0.5 s** | SSD: full pool |
-| SMR 8 TB, **name** search (1.15 M inodes) | **38 s** | — | 48 s | rotational, names: 1 thread |
+| SMR 8 TB, **name** search (2.76 M inodes) | **35 s** | 38 s | 39 s | rotational, names: 1 thread |
 | SMR 8 TB, **content** search (rg, 25 k files) | 36 s | 30 s | **29 s** | rotational, content: full pool |
 | USB HDD, two roots on the same platter (100 k inodes) | 1 process 4.8 s · 2 processes 5.5 s · 2 processes with full pools 6.4 s | | | keep one process per platter |
 
-Name search is metadata, laid out sequentially on the platter: one thread wins and a full
-pool costs 21 %. Content search opens every file, and there the disk reorders reads when
+Name search is metadata, laid out sequentially on the platter: one thread wins, four threads
+cost 8 % and a full pool 11 %. Content search opens every file, and there the disk reorders reads when
 several requests are in flight: throttling `rg` only cost 17 %. Throttling the SSD would cost
 **12.5×**. A small tree does not tell these policies apart — it takes volume for the head to
 start travelling, which is why the first measurement round, on a 175 k-inode disk, showed no

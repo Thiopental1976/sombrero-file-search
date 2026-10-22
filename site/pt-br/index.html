@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sombrero File Search</title>
+<meta name="description" content="Busca de arquivos nativa para Linux: por nome, por conteúdo, booleana e dentro de documentos. Ao vivo, sem índice, e honesta: quando não conseguiu olhar em algum lugar, ela avisa.">
+<link rel="canonical" href="https://sombrerofilesearch.com/pt-br/">
+<link rel="alternate" hreflang="en" href="https://sombrerofilesearch.com/">
+<link rel="alternate" hreflang="pt-BR" href="https://sombrerofilesearch.com/pt-br/">
+<link rel="alternate" hreflang="x-default" href="https://sombrerofilesearch.com/">
+<link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+<link rel="icon" href="../assets/icon_128.png" type="image/png">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="pt_BR">
+<meta property="og:url" content="https://sombrerofilesearch.com/pt-br/">
+<meta property="og:title" content="Sombrero File Search">
+<meta property="og:description" content="Busca de arquivos para Linux, ao vivo e sem índice: por nome, conteúdo, booleana e dentro de documentos. Nunca diz “0 resultados” sem ter olhado.">
+<meta property="og:image" content="https://sombrerofilesearch.com/assets/social_preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#050b10">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="../assets/icon_128.png" alt="" width="32" height="32">Sombrero File Search</a>
+    <nav class="nav" aria-label="Site">
+      <a href="#honesta">Por quê</a>
+      <a href="#recursos">Recursos</a>
+      <a href="#duplicatas">Duplicatas</a>
+      <a href="#segura">Segurança</a>
+      <a href="#instalar">Instalar</a>
+      <a href="#doar" data-donate-link hidden>Doar</a>
+      <a href="https://github.com/Thiopental1976/sombrero-file-search">GitHub</a>
+      <a class="lang" href="../" hreflang="en" lang="en">English</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero">
+  <div class="wrap">
+    <img class="hero-icon" src="../assets/icon_256.png" alt="Ícone do Sombrero File Search" width="88" height="88">
+    <h1>Ache todo arquivo. Saiba quando não deu.</h1>
+    <p class="lead">Busca de arquivos nativa para Linux: por nome, por conteúdo, booleana e dentro de documentos. Ao vivo e sem índice. <em>Quando não conseguiu olhar em algum lugar, ela avisa.</em></p>
+    <div class="cta">
+      <a class="btn btn-main" data-dl="AppImage" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Baixar AppImage <small data-ver>última</small></a>
+      <a class="btn btn-ghost" data-dl="deb" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">.deb para Debian / Ubuntu / Mint</a>
+      <p class="cta-note">Software livre, GPL-3.0-ou-posterior. O AppImage roda em qualquer distro, sem instalar nada. Versão para Windows a caminho.</p>
+    </div>
+  </div>
+</section>
+
+<section class="demo" aria-label="Demonstração">
+  <div class="wrap">
+    <figure>
+      <video class="demo-video" autoplay muted loop playsinline width="960" height="600" poster="../assets/demo_poster.jpg" aria-label="Busca por nome, depois por conteúdo dentro de arquivos PDF e ODT, depois com uma expressão booleana">
+        <source src="../assets/demo.mp4" type="video/mp4">
+        <img src="../assets/demo.gif" width="960" height="600" alt="Busca por nome, depois por conteúdo dentro de arquivos PDF e ODT, depois com uma expressão booleana">
+      </video>
+      <figcaption>Nome → conteúdo <strong>dentro de documentos</strong> (PDF/ODT) → expressão booleana. Ao vivo, sem índice.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="honesta">
+  <div class="wrap split">
+    <div>
+      <div class="eyebrow">A tese</div>
+      <h2>Busca que diz “0 resultados” sem ter olhado está mentindo.</h2>
+      <p>Uma pasta que negou leitura, um disco que não estava montado, um NAS que parou de responder, um erro de digitação no caminho: cada um desses parecia exatamente com <em>“o arquivo não existe”</em>.</p>
+      <p>O Sombrero passa toda perda de completude por um canal único. A barra de status da interface, a CLI, o fluxo JSON e o código de saída leem dele, então um tipo novo de perda aparece em todos os lugares ao mesmo tempo.</p>
+    </div>
+    <div class="term" role="img" aria-label="Terminal: uma busca num caminho que não existe avisa que o resultado está incompleto e sai com código 2">
+      <div class="term-bar"><i></i><i></i><i></i></div>
+<pre><span class="ln"><span class="p">$</span> sfs /mnt/backup -c fatura</span><span class="ln"><span class="w"># incomplete: invalid location in /mnt/backup: path does not exist (disk unmounted? typo?)</span></span><span class="ln"><span class="w">#        results are INCOMPLETE — this is not 'nothing was found'</span></span><span class="ln"><span class="p">$</span> echo $?</span><span class="ln"><span class="w">2</span></span></pre>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="codes">
+      <div class="code k0"><b>0</b><span>achou</span></div>
+      <div class="code k1"><b>1</b><span>olhou tudo e não achou nada</span></div>
+      <div class="code k2"><b>2</b><span>o resultado pode estar errado: algum lugar não pôde ser buscado</span></div>
+    </div>
+    <p class="muted" style="margin-top:14px;font-size:.9rem">A CLI fala inglês de propósito, para scripts do mundo todo; a interface gráfica segue o idioma do sistema.</p>
+  </div>
+</section>
+
+<section class="measure">
+  <div class="wrap">
+    <div class="eyebrow">Atenta aos discos, e medida</div>
+    <h2>Uma cabeça mecânica, um processo.</h2>
+    <p>Feito num servidor caseiro, e para ele: uma dúzia de discos mecânicos, discos SMR por USB e montagens de rede que às vezes morrem. As pastas são agrupadas pelo disco físico por trás delas, e cada tipo de disco recebe o número de threads que de fato aproveita. Todos os números foram medidos com cache frio.</p>
+    <div class="bignum" aria-label="De 1094 segundos para 80 segundos">
+      <span class="from">1 094 s</span><span class="arrow">→</span><span class="to">80 s</span>
+    </div>
+    <p class="muted">A mesma busca num acervo de 10 montagens: um processo só com 24 threads, contra um processo por disco.</p>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Disco / operação</th><th>1 thread</th><th>4 threads</th><th>Todas (24)</th><th>Política</th></tr></thead>
+        <tbody>
+          <tr><td class="what">NVMe, busca por nome (<code>/usr</code>, 92 680 achados)</td><td data-label="1 thread" class="n">5,2 s</td><td data-label="4 threads" class="n">1,5 s</td><td data-label="Todas (24)" class="n"><b>0,5 s</b></td><td data-label="Política">SSD: todas as threads</td></tr>
+          <tr><td class="what">SMR 8 TB, busca por nome (2,76 mi inodes)</td><td data-label="1 thread" class="n"><b>35 s</b></td><td data-label="4 threads" class="n">38 s</td><td data-label="Todas (24)" class="n">39 s</td><td data-label="Política">Mecânico, nomes: 1 thread</td></tr>
+          <tr><td class="what">SMR 8 TB, busca por conteúdo (25 mil arquivos)</td><td data-label="1 thread" class="n">36 s</td><td data-label="4 threads" class="n">30 s</td><td data-label="Todas (24)" class="n"><b>29 s</b></td><td data-label="Política">Mecânico, conteúdo: todas</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="recursos">
+  <div class="wrap">
+    <div class="eyebrow">Recursos</div>
+    <h2>Busca como o Agent Ransack, nativo do Linux.</h2>
+    <div class="feats">
+      <div class="feat"><span class="tag">Nome + conteúdo</span><p>Glob ou regex, texto simples ou regex, com destaque na prévia.</p></div>
+      <div class="feat"><span class="tag">Booleana</span><p><code>(nota OR laudo) AND paciente NOT rascunho</code>, com parênteses e frases entre aspas.</p></div>
+      <div class="feat"><span class="tag">Dentro de documentos</span><p>PDF, docx, odt, epub e zip, pelo ripgrep-all embutido. Sem precisar de pandoc.</p></div>
+      <div class="feat"><span class="tag">Prévia de mídia</span><p>Miniaturas e player de áudio e vídeo direto nos resultados.</p></div>
+      <div class="feat"><span class="tag">Abas e exportação</span><p>Abas de busca, buscas salvas, histórico, exportação CSV/JSON, tema claro e escuro.</p></div>
+      <div class="feat"><span class="tag">Cópia segura</span><p>Nunca move nem apaga. Confere espaço livre, limites do FAT32 e nomes proibidos antes de gravar.</p></div>
+      <div class="feat"><span class="tag">Duplicatas</span><p>Acha grupos idênticos byte a byte e nunca apaga. Qual cópia sai é decisão sua.</p></div>
+      <div class="feat"><span class="tag">CLI equivalente</span><p>O mesmo motor. <code>--print0</code> para pipelines, <code>--json</code> para scripts, <code>--nice-io</code> para o cron.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="duplicatas">
+  <div class="wrap split">
+    <div>
+      <div class="eyebrow">Localizador de duplicatas</div>
+      <h2>Ache as cópias que estão comendo os seus discos.</h2>
+      <p>Aponte para uma pasta ou para todos os discos. Ele devolve grupos de arquivos idênticos byte a byte, ordenados pelo espaço desperdiçado, mostrando em que disco fica cada cópia. Exporte a lista em CSV ou JSON e decida com calma.</p>
+      <p class="muted">Hard links são reconhecidos como o mesmo arquivo, e não como duplicatas: listá-los convidaria a apagar algo que não ocupa espaço extra.</p>
+    </div>
+    <ol class="funnel" aria-label="Como as duplicatas são confirmadas">
+      <li><b>Mesmo arquivo?</b><span>Os hard links são agrupados primeiro e contados uma vez só.</span></li>
+      <li><b>Mesmo tamanho?</b><span>Sai de graça: o tamanho já é conhecido. Tamanhos únicos saem da disputa.</span></li>
+      <li><b>Mesmo começo?</b><span>BLAKE2b dos primeiros 64 KiB elimina a maioria sem ler arquivos inteiros.</span></li>
+      <li><b>Mesmo conteúdo.</b><span>BLAKE2b completo só para quem sobrou, lendo um disco de cada vez para as cabeças mecânicas não brigarem.</span></li>
+    </ol>
+  </div>
+</section>
+
+<section id="segura" class="safe">
+  <div class="wrap">
+    <div class="eyebrow">Só leitura, por princípio</div>
+    <h2>Ele busca. Não gerencia os seus arquivos.</h2>
+    <p>O Sombrero não é um gerenciador de arquivos. Não tem botão de mover, renomear ou apagar, então nenhuma busca pode custar os seus dados.</p>
+    <div class="safe-grid">
+      <div class="safe-item"><h3>Nunca move nem apaga</h3><p>Não existe mover, renomear ou apagar em lugar nenhum do programa. As decisões sobre os seus arquivos ficam no seu gerenciador de arquivos, com você.</p></div>
+      <div class="safe-item"><h3>A cópia não toca no original</h3><p>Copiar só cria arquivos novos. A origem nunca é alterada, e um arquivo que já existe no destino é pulado, a não ser que você escolha sobrescrever.</p></div>
+      <div class="safe-item"><h3>Duplicatas: mostra, nunca remove</h3><p>Acha as cópias idênticas byte a byte e lista. Qual delas sai é decisão sua, tomada em outro lugar.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="instalar">
+  <div class="wrap">
+    <div class="eyebrow">Instalar</div>
+    <h2>Escolha o seu caminho.</h2>
+    <div class="installs">
+      <div class="inst">
+        <h3>AppImage <small>qualquer distro</small></h3>
+        <p>Nada a instalar. Python, PySide6, rg, fd e rga vêm embutidos.</p>
+<pre>chmod +x Sombrero_File_Search-*.AppImage
+./Sombrero_File_Search-*.AppImage</pre>
+      </div>
+      <div class="inst">
+        <h3>.deb <small>Debian · Ubuntu · Mint</small></h3>
+        <p>Pacote enxuto. O <code>--setup-gui</code> monta o ambiente da interface na sua pasta pessoal.</p>
+<pre>sudo apt install ./sombrero-file-search_*_all.deb</pre>
+      </div>
+      <div class="inst">
+        <h3>Pelo código <small>sem root</small></h3>
+        <p>Instala em <code>~/.local</code>. Funciona também em distros imutáveis.</p>
+<pre>git clone https://github.com/Thiopental1976/sombrero-file-search.git
+cd sombrero-file-search &amp;&amp; ./install.sh</pre>
+      </div>
+      <div class="inst soon">
+        <h3>Windows <span class="badge">Em breve</span></h3>
+        <p>Uma versão portátil está em teste: descompactar e usar, sem precisar de administrador.</p>
+      </div>
+    </div>
+    <p class="muted" style="margin-top:22px">Guia completo no <a href="https://github.com/Thiopental1976/sombrero-file-search/blob/main/MANUAL.pt-BR.md">manual</a>. Sem Flatpak de propósito: uma ferramenta que varre o disco inteiro não cabe numa sandbox.</p>
+  </div>
+</section>
+<section id="doar" class="donate" hidden>
+  <div class="wrap">
+    <div class="eyebrow">Apoie o projeto</div>
+    <h2>Grátis no Linux, e vai continuar assim.</h2>
+    <p>O Sombrero File Search é software livre, feito por um desenvolvedor só. As doações pagam o tempo de desenvolvimento, o domínio e a manutenção do site e do programa.</p>
+    <div class="give">
+      <div class="give-card" data-canal="sponsors" hidden><h3>GitHub Sponsors</h3><p>Mensal ou única, pela sua conta do GitHub.</p><a class="btn btn-ghost" href="#">Patrocinar</a></div>
+      <div class="give-card" data-canal="kofi" hidden><h3>Ko-fi</h3><p>Cartão ou PayPal, sem precisar de conta.</p><a class="btn btn-ghost" href="#">Pagar um café</a></div>
+      <div class="give-card" data-canal="liberapay" hidden><h3>Liberapay</h3><p>Doações recorrentes, por uma organização sem fins lucrativos.</p><a class="btn btn-ghost" href="#">Doar</a></div>
+      <div class="give-card pix" data-canal="pix" hidden><h3>Pix</h3><div class="pix-qr" data-pix-qr></div>
+        <label class="sr" for="pix-code">Código Pix copia e cola</label><input id="pix-code" data-pix-code readonly>
+        <button type="button" class="btn btn-ghost" data-pix-copy data-ok="Copiado">Copiar código Pix</button></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Sombrero File Search · GPL-3.0-ou-posterior</span>
+    <nav aria-label="Rodapé">
+      <a href="https://github.com/Thiopental1976/sombrero-file-search">GitHub</a>
+      <a href="https://github.com/Thiopental1976/sombrero-file-search/blob/main/MANUAL.pt-BR.md">Manual</a>
+      <a href="https://github.com/Thiopental1976/sombrero-file-search/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/Thiopental1976/sombrero-file-search/issues">Relatar um problema</a>
+      <a href="#doar" data-donate-link hidden>Doar</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="../release.js" defer></script>
+<script src="../copy.js" defer></script>
+<script src="../demo.js" defer></script>
+<script src="../vendor/qrcode.min.js" defer></script>
+<script src="../donate.js" defer></script>
+</body>
+</html>

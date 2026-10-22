@@ -94,7 +94,7 @@ célula verde regride *e* se uma lacuna conhecida, pinada, passa a funcionar sem
 
 A segunda tese é que uma busca em muitos discos tem de respeitar o que cada disco consegue
 fazer. A regra da casa é *um cabeçote mecânico, um processo* — e cada regra abaixo foi medida
-com cache frio (`drop_caches`) numa máquina quiescida, em setembro de 2026, no hardware
+com cache frio (`drop_caches`) numa máquina quiescida, em setembro e outubro de 2026, no hardware
 nomeado. Número que não foi medido não está neste README.
 
 **Partição por disco físico.** As raízes de uma busca são agrupadas pelo disco físico por trás
@@ -115,12 +115,12 @@ busca lê *nomes* ou *conteúdo*:
 | disco / operação | 1 thread | 4 threads | pool cheio (24) | política |
 |---|---|---|---|---|
 | NVMe, busca por nome (`/usr`, 92 680 achados) | 5,2 s | 1,5 s | **0,5 s** | SSD: pool cheio |
-| SMR 8 TB, busca por **nome** (1,15 M inodes) | **38 s** | — | 48 s | rotacional, nomes: 1 thread |
+| SMR 8 TB, busca por **nome** (2,76 M inodes) | **35 s** | 38 s | 39 s | rotacional, nomes: 1 thread |
 | SMR 8 TB, busca por **conteúdo** (rg, 25 k arquivos) | 36 s | 30 s | **29 s** | rotacional, conteúdo: pool cheio |
 | HD USB, duas raízes no mesmo prato (100 k inodes) | 1 processo 4,8 s · 2 processos 5,5 s · 2 processos com pool cheio 6,4 s | | | um processo por prato |
 
-Busca por nome é metadado, disposto sequencialmente no prato: uma thread ganha e o pool cheio
-custa 21 %. Busca por conteúdo abre cada arquivo, e aí o disco reordena leituras quando há
+Busca por nome é metadado, disposto sequencialmente no prato: uma thread ganha, quatro threads
+custam 8 % e o pool cheio, 11 %. Busca por conteúdo abre cada arquivo, e aí o disco reordena leituras quando há
 vários pedidos em voo: estrangular o `rg` só custava 17 %. Estrangular o SSD custaria
 **12,5×**. Uma árvore pequena não distingue essas políticas — é preciso volume para o cabeçote
 começar a passear, e foi por isso que a primeira rodada de medição, num disco de 175 k inodes,
