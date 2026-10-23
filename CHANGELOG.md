@@ -8,8 +8,18 @@ Detailed rationale and measurements live in the commit messages and in
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-10-23
+
+A Windows build (beta), an update checker, and document search that works out
+of the box in every Linux package.
+
 ### Added
 
+- **Windows build (beta).** A portable package for Windows 10/11 (x64): unzip
+  and run `SombreroFileSearch.exe`, no installer and no administrator rights;
+  `ripgrep`, `fd` and `rga` are bundled. It is new and still being tested;
+  Linux remains the primary platform. Steps in `README-Windows.txt`, attached
+  to the release.
 - **Update checker.** The installed version is always shown in the header;
   clicking it opens *Versions and updates* (installed build, latest release,
   its notes). Once a day, at startup and in the background, Sombrero asks
@@ -67,6 +77,12 @@ Detailed rationale and measurements live in the commit messages and in
   sentence, but the technical error now goes to `queda.log` in the cache
   folder.
 
+- **Bundled engines are found in every channel.** The engine only looked for
+  bundled binaries under `~/.local/share/sombrero-file-search/bin` (the
+  `install.sh` location); it now also looks in `bin/` next to its own code.
+- **`rga` no longer fails when `rg` is bundled but not on `PATH`.** `rga` looks
+  for `rg` only on `PATH`; the engine now adds `rg`'s folder when running `rga`.
+
 ### Changed
 
 - **Document search works out of the box in every channel.** `ripgrep-all`
@@ -87,14 +103,6 @@ Detailed rationale and measurements live in the commit messages and in
 - **The command line is documented as `sfs`.** The manuals and the .deb
   messages now use `sfs`; `lfs` (the development name) still works as an alias,
   so existing scripts keep running.
-
-### Fixed
-
-- **Bundled engines are found in every channel.** The engine only looked for
-  bundled binaries under `~/.local/share/sombrero-file-search/bin` (the
-  `install.sh` location); it now also looks in `bin/` next to its own code.
-- **`rga` no longer fails when `rg` is bundled but not on `PATH`.** `rga` looks
-  for `rg` only on `PATH`; the engine now adds `rg`'s folder when running `rga`.
 
 ## [1.2.0] — 2026-09-22
 

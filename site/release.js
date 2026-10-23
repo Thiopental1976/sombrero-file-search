@@ -10,7 +10,7 @@
     const ver = (rel.tag_name || "").replace(/^v/, "");
     document.querySelectorAll("[data-ver]").forEach(el => { if (ver) el.textContent = ver; });
     for (const a of document.querySelectorAll("[data-dl]")) {
-      const ext = { deb: ".deb", zip: "-windows-x64.zip" }[a.dataset.dl] || ".AppImage";
+      const ext = { deb: "_amd64.deb", zip: "-windows-x64.zip" }[a.dataset.dl] || ".AppImage";
       const asset = (rel.assets || []).find(x => x.name.endsWith(ext));
       if (asset) a.href = asset.browser_download_url;
     }

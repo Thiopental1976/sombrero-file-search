@@ -206,6 +206,7 @@ buscar explicitamente.
 | **AppImage** | qualquer distro, nada a instalar | sim — Python, PySide6, `rg` e `fd` embutidos |
 | **.deb** | Debian/Ubuntu/Mint | precisa do PySide6 (`sombrero-file-search --setup-gui` cria um venv no seu home) |
 | **install.sh** | qualquer distro, instala em `~/.local`, sem root, distros imutáveis incluídas | sim |
+| **Windows (beta)** | Windows 10/11 x64: descompactar e abrir o `SombreroFileSearch.exe`, sem administrador; passos no `README-Windows.txt` da release | sim |
 
 ```bash
 # AppImage
@@ -213,7 +214,7 @@ chmod +x Sombrero_File_Search-*.AppImage && ./Sombrero_File_Search-*.AppImage
 ./Sombrero_File_Search-*.AppImage --cli ~/docs -n '*.pdf'    # exatamente a mesma CLI
 
 # .deb
-sudo apt install ./sombrero-file-search_*_all.deb
+sudo apt install ./sombrero-file-search_*_amd64.deb
 
 # a partir do código
 git clone https://github.com/Thiopental1976/sombrero-file-search.git
