@@ -420,6 +420,10 @@ _PT = {
     "network": "rede",
     "unreachable": "inacessível",
     "scanning…": "varrendo…",
+    # 24/10/2026: barra de progresso por disco
+    "stopped": "parado",
+    "first pass here": "primeira passagem aqui",
+    "past the last pass": "além da última passagem",
     "{n} found": "{n} achados",
     "{verb} {done}/{total} locations · {found} found · {sec}":
         "{verb} {done}/{total} locais · {found} achados · {sec}",

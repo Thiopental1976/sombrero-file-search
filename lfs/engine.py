@@ -25,8 +25,10 @@ from typing import Callable, Optional
 
 try:                       # pacote (GUI) e flat (cli.py/testes)
     from . import plat
+    from . import progresso as _progresso
 except ImportError:
     import plat                                  # type: ignore
+    import progresso as _progresso               # type: ignore
 
 # Separadores de caminho do SO: "/" no Linux; "\\" e "/" no Windows (o Win32
 # aceita os dois). Contar/cortar só "/" dava profundidade 0 a tudo no Windows,
@@ -1159,7 +1161,7 @@ def _rg_linha(campo, termos=(), q=None) -> str:
     return texto_para_termos(raw, termos, q) if termos else texto_legivel(raw)
 
 
-def _vigia_cancel(proc, cancel, intervalo: float = 0.2):
+def _vigia_cancel(proc, cancel, intervalo: float = 0.2, sonda=None):
     """Faz o CANCELAR valer mesmo com o motor calado (revisão Fable, 21/09/2026).
 
     Os leitores do fd/rg só olham `cancel()` ENTRE leituras, e a leitura do pipe
@@ -1178,12 +1180,18 @@ def _vigia_cancel(proc, cancel, intervalo: float = 0.2):
     leitor sai pelo caminho normal (finally -> _reap). Devolve o Event que o
     chamador DEVE setar no finally, para a vigia morrer junto com o processo.
     `cancel` precisa ser barato e seguro entre threads (é uma flag nos três
-    chamadores: GUI, CLI e o `parar` do particionado)."""
+    chamadores: GUI, CLI e o `parar` do particionado).
+
+    24/10/2026: `sonda` (lfs/progresso.py) pega carona na MESMA thread — a barra
+    de progresso por disco não abre thread nova. A leitura vem ANTES do poll():
+    o poll() colhe o zumbi, e é do /proc/<pid>/stat do zumbi que sai o total."""
     fim = threading.Event()
 
     def vigia():
         while not fim.wait(intervalo):
             try:
+                if sonda is not None:
+                    sonda.tick()
                 if proc.poll() is not None:
                     return
                 if cancel():
@@ -1573,9 +1581,23 @@ def _oculto(pasta: str, nome: str) -> bool:
     return bool(getattr(st, "st_file_attributes", 0) & _ATTR_OCULTO)
 
 
-def _iter_names_python(q: Query, stats=None, cancel=None):
+def _iter_names_python(q: Query, stats=None, cancel=None, progresso=None):
     """Fallback universal: os.walk com profundidade/hidden/symlink/meta/one-fs.
-    N2: `stats` recebe 'denied' de diretórios sem permissão (onerror do os.walk)."""
+    N2: `stats` recebe 'denied' de diretórios sem permissão (onerror do os.walk).
+    `progresso` (24/10/2026): aqui a contagem de entradas é EXATA — sonda em
+    modo contador, sem processo."""
+    sonda = _progresso.nova_sonda(progresso, q, "py_nome")
+    completo = False
+    try:
+        yield from _iter_names_python_(q, stats, cancel, sonda)
+        completo = not (cancel and cancel())
+    finally:
+        if sonda is not None:
+            sonda.tick(forca=True)
+            sonda.fecha(completo)
+
+
+def _iter_names_python_(q, stats, cancel, sonda):
     match_name = _name_matcher(q)
     # profundidade efetiva no MESMO sentido que o fd (--max-depth N conta filhos
     # diretos como 1). Uma entrada dentro de um dir de `depth` d tem fd-depth d+1,
@@ -1597,6 +1619,8 @@ def _iter_names_python(q: Query, stats=None, cancel=None):
                                     onerror=_walk_onerror(stats)):
             if cancel and cancel():                 # E10: honra cancelamento no fallback
                 return
+            if sonda is not None:
+                sonda.soma(len(dns) + len(fns))
             depth = _nivel(dp) - base_depth
             if seen_dirs is not None:               # E4: não revisita dir já visto (ciclo)
                 try:
@@ -1799,9 +1823,21 @@ def _merge_globs(pats, q=None) -> Optional[str]:
     return "(?:" + "|".join(partes) + ")"
 
 
-def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
+def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None, progresso=None):
     """fd/fdfind quando disponível (rápido). Multi-glob: >3 padrões viram UMA regex
-    alternada (opt#3, 1 só fd); até 3, um fd por padrão."""
+    alternada (opt#3, 1 só fd); até 3, um fd por padrão.
+    `progresso` (24/10/2026): callback da barra por disco — ver lfs/progresso.py.
+    A linha de comando do fd NÃO muda por causa dela."""
+    sonda = _progresso.nova_sonda(progresso, q, "nome")
+    completo = [False]
+    try:
+        yield from _iter_names_fd_(q, cancel, stats, jobs, procs, sonda, completo, progresso)
+    finally:
+        if sonda is not None:
+            sonda.fecha(completo[0])
+
+
+def _iter_names_fd_(q, cancel, stats, jobs, procs, sonda, completo, progresso):
     pats = q.name_patterns or ["."]
     use_glob = bool(q.name_patterns) and not q.name_is_regex
     # opt#3: muitos globs -> funde numa regex única (uma varredura só). Glob com
@@ -1865,8 +1901,13 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
             # NÃO é fallback silencioso: o walker Python não é equivalente ao fd
             anota_incompleto(stats, "engine_missing",
                              detalhe="fd could not be run; using the Python walker")
-            yield from _iter_names_python(q, stats, cancel); return
-        vigia = _vigia_cancel(proc, cancel)       # Cancelar solta mesmo com o fd calado
+            if sonda is not None:                 # a barra passa ao walker (outra
+                sonda.fecha(False)                # medida, outra chave de histórico)
+            yield from _iter_names_python(q, stats, cancel, progresso); return
+        if sonda is not None:
+            sonda.processo(proc)
+        vigia = _vigia_cancel(proc, cancel, sonda=sonda)   # Cancelar solta mesmo com o fd calado
+        eof = False
         try:
             buf = b""
             read1 = getattr(proc.stdout, "read1", proc.stdout.read)
@@ -1908,10 +1949,16 @@ def _iter_names_fd(q: Query, cancel, stats=None, jobs=None, procs=None):
                         continue
                     yield Match(fp, st.st_size, st.st_mtime, is_dir=is_dir, ident=ident)
                 if not chunk:
+                    eof = True
                     break
         finally:
             vigia.set()
+            if sonda is not None:
+                sonda.tick(forca=True)            # antes do _reap: o zumbi ainda tem stat
             _reap(proc, errf, stats)              # B1/B8: mata processo + conta inacessíveis
+        if not eof or proc.returncode is None or proc.returncode < 0:
+            return                                # cortado: não é passagem completa
+    completo[0] = True
 
 
 # ---------------------------------------------------------------- busca por CONTEÚDO
@@ -1976,7 +2023,7 @@ def rg_flags_comuns(q: Query, matching: bool = True):
     return cmd
 
 
-def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
+def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None, progresso=None):
     """ripgrep --json (ou rga p/ documentos): filtra por nome (glob) E casa conteúdo, streaming.
 
     Em modo documentos (q.documents + rga presente) o rga extrai texto de PDF/docx/epub/zip…
@@ -2012,10 +2059,16 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
         # decodifica UTF-16/UTF-32 com BOM, que o rg acha. Avisar é obrigatório.
         anota_incompleto(stats, "engine_missing",
                          detalhe="rg could not be run; the Python walker does not read UTF-16/UTF-32 with BOM")
-        yield from _iter_content_python(q, cancel, stats); return
+        yield from _iter_content_python(q, cancel, stats, progresso); return
 
     cur = None
-    vigia = _vigia_cancel(proc, cancel)           # Cancelar solta mesmo com o rg calado
+    # 24/10/2026: barra por disco (lfs/progresso.py) — mesma CPU do fd; o rga
+    # roda o rg como filho, e a leitura soma a árvore
+    sonda = _progresso.nova_sonda(progresso, q, "docs" if docs else "conteudo")
+    if sonda is not None:
+        sonda.processo(proc)
+    vigia = _vigia_cancel(proc, cancel, sonda=sonda)   # Cancelar solta mesmo com o rg calado
+    eof = False
     try:
         for line in proc.stdout:
             if cancel():
@@ -2053,9 +2106,15 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None):
             elif t == "end" and cur is not None:
                 yield cur
                 cur = None
+        else:
+            eof = True                              # o for chegou ao fim sozinho
     finally:
         vigia.set()
+        if sonda is not None:
+            sonda.tick(forca=True)                  # antes do _reap: o zumbi ainda tem stat
         _reap(proc, errf, stats)                    # B1/B8
+        if sonda is not None:
+            sonda.fecha(eof and proc.returncode is not None and proc.returncode >= 0)
 
 
 def _content_regex(content: str, q: Query) -> "re.Pattern":
@@ -2070,14 +2129,29 @@ def _content_regex(content: str, q: Query) -> "re.Pattern":
     return re.compile(alt, flags)
 
 
-def _iter_content_python(q: Query, cancel, stats=None):
+def _iter_content_python(q: Query, cancel, stats=None, progresso=None):
     """Fallback: varre nomes e faz grep em Python (blocos, ignora binário).
-    N2: conta 'denied' de diretórios (os.walk) e de arquivos sem permissão."""
+    N2: conta 'denied' de diretórios (os.walk) e de arquivos sem permissão.
+    `progresso` (24/10/2026): conta os arquivos examinados — exato."""
+    sonda = _progresso.nova_sonda(progresso, q, "py_conteudo")
+    completo = False
+    try:
+        yield from _iter_content_python_(q, cancel, stats, sonda)
+        completo = not cancel()
+    finally:
+        if sonda is not None:
+            sonda.tick(forca=True)
+            sonda.fecha(completo)
+
+
+def _iter_content_python_(q, cancel, stats, sonda):
     rx = _content_regex(q.content, q)
     encs = encs_dos_termos([q.content], q)     # espelho das variantes do rg (22/09/2026)
     for m in _iter_names_python(q, stats, cancel):
         if cancel():
             return
+        if sonda is not None:
+            sonda.soma(1)
         try:
             # T1: FIFO/socket/device fazem open() bloquear pra sempre (pipe sem
             # escritor). O rg pula não-regulares sozinho; no fallback a guarda é nossa.
@@ -3198,14 +3272,32 @@ def _rodada(q, roots, classes, cancel, stats, on_event, entrega, origem_de=None,
     # F11: fábrica do iterador — a MESMA nos dois modos (serial e particionado).
     # `jobs` só é aplicado no modo particionado; no serial o fd/rg segue com o
     # pool padrão (nº de CPUs), que é o certo quando há um processo só.
+    def _prog(info):
+        # 24/10/2026: barra por disco. Na extensão o processo varre a árvore
+        # podada; a barra é a do DONO (a linha que o usuário vê). SÓ na
+        # extensão: na rodada viva o dono_de é o _dono_vivo, que CONTA um
+        # achado a cada chamada — perguntar o dono por tick inflava o placar
+        # e a extensão aos snapshots nunca acontecia ("vivo zero" virava
+        # "vivo com achado"). Lá os paths já são as raízes.
+        try:
+            ps = info.get("paths") or []
+            if origem_de is not None and dono_de is not None:
+                ps = [dono_de(p) or p for p in ps]
+            info["paths"] = list(dict.fromkeys(ps))
+            if counts is not None:            # achados AO VIVO por raiz (leitura
+                info["found_por"] = {p: counts.get(p, 0) for p in info["paths"]}  # sob o GIL)
+            on_event("root_progress", info)
+        except Exception:
+            pass
+
     def _fabrica(qq, cc, ss, jobs=None, procs=None):
         if qq.content:
             if RG or (qq.documents and RGA):
-                return _iter_content_rg(qq, cc, ss, jobs=jobs, procs=procs)
-            return _iter_content_python(qq, cc, ss)
+                return _iter_content_rg(qq, cc, ss, jobs=jobs, procs=procs, progresso=_prog)
+            return _iter_content_python(qq, cc, ss, progresso=_prog)
         if FD:
-            return _iter_names_fd(qq, cc, ss, jobs=jobs, procs=procs)
-        return _iter_names_python(qq, ss, cc)
+            return _iter_names_fd(qq, cc, ss, jobs=jobs, procs=procs, progresso=_prog)
+        return _iter_names_python(qq, ss, cc, progresso=_prog)
 
     grupos = _separa_raizes_com_mortas(_grupos_por_disco(roots), q.excluded_paths)
     # Root apontado PARA DENTRO de um snapshot ganha grupo PROPRIO, senao a
@@ -3248,7 +3340,8 @@ def _rodada(q, roots, classes, cancel, stats, on_event, entrega, origem_de=None,
                                   "klass": None, "reason": "error",
                                   "erro": erro[0].get("erro", "")[:200]})
                     else:
-                        on_event("root_done", {"path": r, "found": counts[r]})
+                        on_event("root_done", {"path": r, "found": counts[r],
+                                               "completo": not cancel()})
 
         it = _iter_particionado(
             q, cancel, stats, grupos,
@@ -3291,8 +3384,11 @@ def _rodada(q, roots, classes, cancel, stats, on_event, entrega, origem_de=None,
     if eventos_por_grupo:
         for r in roots:                   # F11: no modo particionado a maioria já
             if r in pendentes:            # foi anunciada assim que o disco fechou;
-                on_event("root_done", {"path": r, "found": counts[r]})   # aqui sobram
-    return parou                          # os interrompidos por cancel/max_results
+                on_event("root_done", {"path": r, "found": counts[r],   # aqui sobram
+                                       # cancelar antes do 1º achado não passa
+                                       # pelo `parou` do laço — daí o cancel()
+                                       "completo": not (parou or cancel())})  # os cortados por
+    return parou                          # cancel/max_results — a barra NÃO vai a 100
 
 
 def _estende_snapshots(q, roots, classes, counts, parou, cancel, stats, on_event,
@@ -3319,10 +3415,11 @@ def _estende_snapshots(q, roots, classes, counts, parou, cancel, stats, on_event
     classes2 = dict(classes)
     for a in plano:
         classes2[a["arvore"]] = classes.get(a["dono"], "unknown")
-    rodada(q2, q2.paths, classes2, cancel, stats, on_event, entrega,
-           origem_de=origem, dono_de=dono, counts=counts, eventos_por_grupo=False)
+    cortou = rodada(q2, q2.paths, classes2, cancel, stats, on_event, entrega,
+                    origem_de=origem, dono_de=dono, counts=counts, eventos_por_grupo=False)
     for d in donos:
-        on_event("root_done", {"path": d, "found": counts.get(d, 0)})
+        on_event("root_done", {"path": d, "found": counts.get(d, 0),
+                               "completo": not cortou})
 
 
 def search(q: Query, on_result: Callable[[Match], None],

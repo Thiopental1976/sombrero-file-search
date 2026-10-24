@@ -2854,6 +2854,18 @@ class MainWindow(QMainWindow):
             # linha do dono relê o Match (data() lê m.copies ao vivo); o "+N"
             # fecha certo no on_done, que repinta a coluna.
             return
+        if ev == "root_progress":
+            # 24/10/2026: barra por disco. Chega a 2 Hz por processo; aqui só
+            # GUARDA — quem pinta é o heartbeat de 0,5 s, que já redesenha o
+            # painel (13 discos não viram 26 repinturas por segundo)
+            for p in info.get("paths") or ():
+                rec = tab.roots.get(p)
+                if rec is not None and rec["state"] == "scanning":
+                    rec["prog"] = info
+                    achados = (info.get("found_por") or {}).get(p)
+                    if achados is not None:
+                        rec["found"] = achados
+            return
         path = info.get("path") or info.get("mount") or ""
         if not path:
             return
@@ -2867,7 +2879,9 @@ class MainWindow(QMainWindow):
             else:
                 name = disks.volume_label(path) or os.path.basename(path.rstrip("/")) or path
             rec = {"name": name, "klass": info.get("klass", "unknown"),
-                   "state": "scanning", "found": 0, "reason": "", "snap": False}
+                   "state": "scanning", "found": 0, "reason": "", "snap": False,
+                   "prog": None, "t_ini": time.time(), "t_fim": None,
+                   "completo": None, "path_raiz": path}
             tab.roots[path] = rec
             tab.root_order.append(path)
         if ev == "snapshots_skipped":
@@ -2879,6 +2893,9 @@ class MainWindow(QMainWindow):
             # a busca foi ESTENDIDA à árvore podada; o rótulo diz que foi
             rec["snap"] = "searched_ostree" if info.get("ostree") else "searched"
         elif ev == "root_scanning":
+            if rec["state"] == "done":            # extensão a snapshots: outra
+                rec["prog"] = None                # passagem, a barra recomeça
+                rec["t_fim"] = None
             rec["state"] = "scanning"
             rec["klass"] = info.get("klass", rec["klass"])
         elif ev == "root_skipped":
@@ -2886,12 +2903,88 @@ class MainWindow(QMainWindow):
             rec["klass"] = info.get("klass", rec["klass"])
             why = info.get("reason", "")
             rec["reason"] = t(engine.REASON_TEXTO[why]) if why in engine.REASON_TEXTO else (why or t("unreachable"))
+            rec["t_fim"] = time.time()
         elif ev == "root_done":
             if rec["state"] != "skipped":
                 rec["state"] = "done"
             rec["found"] = info.get("found", rec["found"])
+            rec["t_fim"] = time.time()
+            rec["completo"] = info.get("completo", True)
         if tab is self.tab:
             self._render_narrative(tab)
+
+    BARRA_CELAS = 18        # largura da barra de progresso por disco, em blocos
+
+    def _barra(self, frac, cor, trilho, pos_indet=None):
+        """Barra em texto: blocos de 1/8 (▏…█) sobre um trilho. `pos_indet` =
+        barra indeterminada (sem histórico / além dele): um bloco que anda."""
+        n = self.BARRA_CELAS
+        # o trilho é feito do MESMO glifo (█) na cor do trilho: espaço e bloco
+        # não têm a mesma largura, e as barras dos discos saíam desalinhadas
+        if pos_indet is not None:
+            larg = 4
+            ini = pos_indet % (n + larg) - larg
+            cel = [ini <= k < ini + larg for k in range(n)]
+            txt = "".join(f'<span style="color:{cor if c else trilho}">█</span>' for c in cel)
+        else:
+            oitavos = int(round(max(0.0, min(1.0, frac)) * n * 8))
+            inteiros, resto = divmod(oitavos, 8)
+            parcial = (f'<span style="color:{cor}; background-color:{trilho}">'
+                       f'{" ▏▎▍▌▋▊▉"[resto]}</span>') if resto else ""
+            vazio = n - inteiros - (1 if resto else 0)
+            txt = (f'<span style="color:{cor}">{"█" * inteiros}</span>{parcial}'
+                   f'<span style="color:{trilho}">{"█" * vazio}</span>')
+        return f'<span style="font-size:9px">{txt}</span>'
+
+    def _linha_progresso(self, r, pal, agora):
+        """(barra, %, detalhe) de uma linha do painel. Números REAIS no detalhe
+        (tempo do disco, achados, pasta, MB/s); a % é estimativa e vem com '~'."""
+        pr = r.get("prog") or {}
+        fim = r.get("t_fim")
+        seg = _fmt_elapsed((fim or agora) - r.get("t_ini", agora))
+        partes = [seg, t("{n} found", n=_grp(r["found"]))]
+        trilho = pal["bg3"]
+        if r["state"] == "done":
+            if r.get("completo", True):
+                barra, pct = self._barra(1.0, pal["green"], trilho), "100%"
+            else:
+                f = pr.get("frac")
+                barra = self._barra(f or 0.0, pal["amber"], trilho)
+                pct = f"{int(f * 100)}%" if f is not None else "—"
+                partes.append(t("stopped"))
+        else:
+            f = pr.get("frac")
+            estado = pr.get("estado")
+            if f is not None:
+                barra, pct = self._barra(f, pal["accent"], trilho), f"~{int(f * 100)}%"
+            else:
+                barra = self._barra(0, pal["accent"], trilho, pos_indet=int(agora * 4))
+                pct = "—"
+            taxa = pr.get("taxa_bps") if pr.get("modo") in ("conteudo", "docs") else pr.get("disco_bps")
+            if taxa and taxa >= 1e6:
+                partes.append(f"{taxa / 1e6:.0f} MB/s")
+            if estado == "sem_historico":
+                partes.append(t("first pass here"))
+            elif estado == "alem":
+                partes.append(t("past the last pass"))
+            pasta = pr.get("pasta")
+            if pasta:
+                partes.append(self._pasta_curta(pasta, r))
+        det = f'<span style="color:{pal["muted"]}">{_esc(" · ".join(partes))}</span>'
+        pct = f'<span style="color:{pal["muted"]}">{pct}</span>'
+        return barra, f"&nbsp;{pct}", det
+
+    @staticmethod
+    def _pasta_curta(pasta, r, teto=48):
+        """Pasta em que o motor está agora, relativa ao disco, cortada no MEIO
+        (o começo diz onde, o fim diz o quê)."""
+        base = r.get("path_raiz") or ""
+        if base and pasta.startswith(base.rstrip("/") + "/"):
+            pasta = pasta[len(base.rstrip("/")) + 1:]
+        if len(pasta) > teto:
+            meio = teto // 2 - 1
+            pasta = pasta[:meio] + "…" + pasta[-(teto - meio - 1):]
+        return pasta
 
     NARR_LINHAS = 7         # teto da lista de discos; o resto da janela é dos resultados
     RES_LINHAS_MIN = 5      # piso da tabela de resultados em tela baixa (_reparte_resultados)
@@ -2927,6 +3020,8 @@ class MainWindow(QMainWindow):
         peso = {"skipped": 0, "scanning": 1}
         recs = sorted(recs, key=lambda r: peso.get(r["state"], 2))
         lines = []
+        agora = time.time()
+        booleana = bool(tab.worker and getattr(tab.worker, "boolexpr", ""))
         for r in recs:
             tag = self._KLASS_TAG.get(r["klass"])
             if tag is None:
@@ -2934,29 +3029,39 @@ class MainWindow(QMainWindow):
             name = _esc(r["name"])
             badge = (f'<span style="color:{pal["muted"]}">[{_esc(tag)}]</span> '
                      if tag else "")
+            barra = pct = ""
             if r["state"] == "skipped":
                 dot = f'<span style="color:{pal["red"]}">●</span>'
                 why = _esc(r["reason"])
-                line = (f'{dot} {badge}<span style="color:{pal["red"]}">{name}</span>'
-                        f' — <span style="color:{pal["red"]}">{why}</span>')
-            elif r["state"] == "done":
-                dot = f'<span style="color:{pal["green"]}">●</span>'
-                cnt = t("{n} found", n=_grp(r["found"]))
-                line = (f'{dot} {badge}<span style="color:{pal["txt"]}">{name}</span>'
-                        f' <span style="color:{pal["muted"]}">— {cnt}</span>')
-            else:                              # scanning
-                dot = f'<span style="color:{pal["accent"]}">●</span>'
-                line = (f'{dot} {badge}<span style="color:{pal["txt"]}">{name}</span>'
-                        f' <span style="color:{pal["muted"]}">— {_esc(t("scanning…"))}</span>')
+                nome = f'{dot} {badge}<span style="color:{pal["red"]}">{name}</span>'
+                det = f'<span style="color:{pal["red"]}">— {why}</span>'
+            else:
+                cor = pal["green"] if r["state"] == "done" else pal["accent"]
+                dot = f'<span style="color:{cor}">●</span>'
+                nome = f'{dot} {badge}<span style="color:{pal["txt"]}">{name}</span>'
+                if booleana:
+                    # booleano: sem barra (v1, decisão do Rodrigo 24/10) — o
+                    # texto de sempre
+                    det = (t("{n} found", n=_grp(r["found"])) if r["state"] == "done"
+                           else t("scanning…"))
+                    det = f'<span style="color:{pal["muted"]}">— {_esc(det)}</span>'
+                else:
+                    barra, pct, det = self._linha_progresso(r, pal, agora)
             if r.get("snap"):
                 rotulo = {"ostree": t("ostree deployments skipped"),
                           "searched": t("snapshots searched too"),
                           "searched_ostree": t("ostree deployments searched too")
                           }.get(r["snap"], t("snapshots skipped"))
-                line += (f' <span style="color:{pal["muted"]}">'
-                         f'({_esc(rotulo)})</span>')
-            lines.append(line)
-        self.narr_body.setText("<br>".join(lines))
+                det += (f' <span style="color:{pal["muted"]}">'
+                        f'({_esc(rotulo)})</span>')
+            # 24/10/2026: tabela, para as barras dos discos ficarem ALINHADAS —
+            # é o alinhamento que mostra "são N discos andando ao mesmo tempo"
+            lines.append(f'<tr><td style="white-space:pre">{nome}&nbsp;&nbsp;</td>'
+                         f'<td style="white-space:pre">{barra}</td>'
+                         f'<td align="right" style="white-space:pre">{pct}</td>'
+                         f'<td>&nbsp;&nbsp;{det}</td></tr>')
+        self.narr_body.setText('<table cellspacing="0" cellpadding="0">'
+                               + "".join(lines) + "</table>")
         # altura: cabe tudo até NARR_LINHAS linhas; acima disso, rola
         # altura de UMA linha medida no texto renderizado (o rich-text é mais alto
         # que fontMetrics().lineSpacing() — medido: 16 px contra 14)
