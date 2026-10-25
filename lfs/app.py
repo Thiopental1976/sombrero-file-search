@@ -2971,8 +2971,21 @@ class MainWindow(QMainWindow):
             if pasta:
                 partes.append(self._pasta_curta(pasta, r))
         det = f'<span style="color:{pal["muted"]}">{_esc(" · ".join(partes))}</span>'
-        pct = f'<span style="color:{pal["muted"]}">{pct}</span>'
-        return barra, f"&nbsp;{pct}", det
+        return barra, self._pct_col(pct, pal), det
+
+    _PCT_FAM = None
+
+    @classmethod
+    def _pct_col(cls, pct, pal):
+        """A % em coluna de largura fixa: fonte monoespaçada ('~' e '—' têm a
+        largura de um dígito) e completada à esquerda até o tamanho de '100%'.
+        As famílias vêm de _mono() — 'monospace' vira Courier New no Windows."""
+        if cls._PCT_FAM is None:
+            f = _mono()
+            cls._PCT_FAM = ", ".join(f"'{x}'" for x in (f.families() or [f.family()]))
+        pct = "&nbsp;" * max(0, 4 - len(pct)) + pct
+        return (f'&nbsp;<span style="color:{pal["muted"]}; font-family:{cls._PCT_FAM}">'
+                f'{pct}</span>')
 
     @staticmethod
     def _pasta_curta(pasta, r, teto=48):
@@ -3030,6 +3043,9 @@ class MainWindow(QMainWindow):
             badge = (f'<span style="color:{pal["muted"]}">[{_esc(tag)}]</span> '
                      if tag else "")
             barra = pct = ""
+            if r["state"] == "skipped" and not booleana:
+                # trilho vazio: o nome fica na mesma coluna dos outros discos
+                barra, pct = self._barra(0, pal["red"], pal["bg3"]), self._pct_col("—", pal)
             if r["state"] == "skipped":
                 dot = f'<span style="color:{pal["red"]}">●</span>'
                 why = _esc(r["reason"])
@@ -3054,14 +3070,12 @@ class MainWindow(QMainWindow):
                           }.get(r["snap"], t("snapshots skipped"))
                 det += (f' <span style="color:{pal["muted"]}">'
                         f'({_esc(rotulo)})</span>')
-            # 24/10/2026: tabela, para as barras dos discos ficarem ALINHADAS —
-            # é o alinhamento que mostra "são N discos andando ao mesmo tempo"
-            lines.append(f'<tr><td style="white-space:pre">{nome}&nbsp;&nbsp;</td>'
-                         f'<td style="white-space:pre">{barra}</td>'
-                         f'<td align="right" style="white-space:pre">{pct}</td>'
-                         f'<td>&nbsp;&nbsp;{det}</td></tr>')
-        self.narr_body.setText('<table cellspacing="0" cellpadding="0">'
-                               + "".join(lines) + "</table>")
+            # 24/10/2026: a barra ABRE a linha — mesmo glifo, mesmas células, então
+            # as barras dos discos saem alinhadas sem <table> (a tabela custava
+            # ~20 ms por pintura no QLabel com quebra de linha; assim, ~7 ms)
+            lines.append(f'{barra}{pct}&nbsp;&nbsp;{nome}&nbsp;&nbsp;{det}' if barra
+                         else f'{nome} {det}')
+        self.narr_body.setText("<br>".join(lines))
         # altura: cabe tudo até NARR_LINHAS linhas; acima disso, rola
         # altura de UMA linha medida no texto renderizado (o rich-text é mais alto
         # que fontMetrics().lineSpacing() — medido: 16 px contra 14)

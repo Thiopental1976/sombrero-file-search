@@ -8,6 +8,17 @@ Detailed rationale and measurements live in the commit messages and in
 
 ## [Unreleased]
 
+### Added
+
+- **Progress bar per disk.** Each disk line in the search summary now opens
+  with a bar and a percentage, followed by the time that disk took, live hits,
+  MB/s and the folder being walked, so a multi-disk search shows the disks
+  advancing in parallel. `fd` and `rg` only report matches, so the percentage
+  is an estimate against the last complete pass over the same disk; the first
+  pass shows a moving bar ("first pass here"). A cancelled search leaves the
+  bar stopped in amber. Boolean search has no bar. Measured on a 7.3 TB HDD:
+  no change in search time and identical disk reads.
+
 ## [1.3.0] — 2026-10-23
 
 A Windows build (beta), an update checker, and document search that works out
