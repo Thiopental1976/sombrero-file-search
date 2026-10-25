@@ -8,6 +8,11 @@ Detailed rationale and measurements live in the commit messages and in
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-10-25
+
+A progress bar per disk, so a long multi-disk search shows how far each disk
+has gone and how fast it is reading.
+
 ### Added
 
 - **Progress bar per disk.** Each disk line in the search summary now opens
