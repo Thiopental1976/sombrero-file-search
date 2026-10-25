@@ -24,6 +24,10 @@ RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(RAIZ, "lfs"))
 os.environ["XDG_CACHE_HOME"] = tempfile.mkdtemp(prefix="sfs-test-prog-")
 os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="sfs-test-prog-")
+# no Windows o cache é %LOCALAPPDATA% (plat.cache_base): sem isto o teste lia o
+# histórico deixado pelas outras suítes do CI (visto 25/10: 30300 -> 11.0)
+os.environ["LOCALAPPDATA"] = tempfile.mkdtemp(prefix="sfs-test-prog-")
+os.environ["APPDATA"] = tempfile.mkdtemp(prefix="sfs-test-prog-")
 
 import progresso as P
 import engine as E
@@ -70,8 +74,9 @@ cpu = P.le_cpu_linux(100, base)
 ok(cpu is not None and abs(cpu - 3.0) < 0.05, f"CPU = processo (2,0) + filho vivo (1,0) = 3,0 s ({cpu})")
 ok(P.le_cpu_linux(999, base) is None, "processo sumido -> None")
 ok(P.le_io_linux(100, base) == (5000000, 4096), "io: (rchar, read_bytes)")
-ok(P.pasta_atual_linux(100, [raiz], base) == os.path.join(raiz, "a", "b"),
-   "pasta atual = o fd mais fundo sob a raiz (ignora /dev/null e /tmp)")
+if not plat.IS_WIN:              # symlink de /proc/<pid>/fd: coisa de Linux
+    ok(P.pasta_atual_linux(100, [raiz], base) == os.path.join(raiz, "a", "b"),
+       "pasta atual = o fd mais fundo sob a raiz (ignora /dev/null e /tmp)")
 
 # ------------------------------------------------------------ 2. estima
 ok(P.estima(5, None) == (None, "sem_historico"), "sem histórico")
@@ -126,6 +131,15 @@ class ProcF:
     _handle = None
 
 
+_leitores_win = (P.le_cpu_win, P.le_io_win)
+if plat.IS_WIN:
+    # a sonda lê pelo kernel32 no Windows, não pelo /proc falso: o mesmo
+    # processo (3,0 s de CPU) servido pelos leitores do Windows
+    ProcF._handle = object()
+    P.le_cpu_win = lambda h: 3.0
+    P.le_io_win = lambda h: None
+
+
 rel = Rel()
 emit = []
 arq2 = os.path.join(tempfile.mkdtemp(), "p.json")
@@ -139,7 +153,8 @@ s.tick()
 ok(len(emit) == 2, f"emite no máximo a cada {P.INTERVALO}s ({len(emit)} emissões)")
 ok(abs(emit[-1]["frac"] - 0.5) < 0.01 and emit[-1]["estado"] == "estimado",
    f"3,0 s de 6,0 s = 50 % ({emit[-1]['frac']})")
-ok(emit[-1]["pasta"] == os.path.join(raiz, "a", "b"), "a emissão leva a pasta atual")
+if not plat.IS_WIN:              # o Windows não mostra a pasta (sem /proc)
+    ok(emit[-1]["pasta"] == os.path.join(raiz, "a", "b"), "a emissão leva a pasta atual")
 s.fecha(False)
 ok(not os.path.exists(arq2), "passagem cortada NÃO grava histórico")
 s2 = P.Sonda([raiz], "kz", "nome", emit.append, historia={}, base=base, relogio=rel, arq=arq2)
@@ -162,6 +177,7 @@ try:
     ok(True, "exceção no consumidor não escapa da sonda")
 except Exception:
     ok(False, "exceção no consumidor não escapa da sonda")
+P.le_cpu_win, P.le_io_win = _leitores_win     # o motor de verdade lê o kernel32 real
 
 
 # ------------------------------------------------------------ 6. motor de verdade
