@@ -37,8 +37,9 @@ SOURCE_STRINGS = frozenset(EFEITO.values()) | {EFEITO_OUTRO, COMO_PACOTE, COMO_S
                                                COMO_SISTEMA_SEM_CMD}
 
 # Vêm no pacote completo: rg, fd e rga no AppImage e no zip do Windows (o .deb
-# traz o rga e recomenda rg/fd ao apt); o zip do Windows traz também o
-# pdftotext. No Linux o pdftotext e o pandoc são do sistema.
+# traz o rga e recomenda rg/fd ao apt). O pdftotext vem no zip do Windows e,
+# desde 26/10/2026, no AppImage; quem usa o .deb ou o install.sh o tem pela
+# distro, então no Linux a orientação continua sendo o comando do sistema.
 _NO_PACOTE = frozenset({"fd", "rg", "rga"})
 _NO_PACOTE_WIN = _NO_PACOTE | {"pdftotext"}
 

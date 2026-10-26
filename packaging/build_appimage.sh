@@ -17,7 +17,13 @@
 # rga EMBUTIDO também (28/09/2026, decisão do Rodrigo): sem ele o modo
 # documentos não existia no AppImage. docx/odt/epub o próprio SFS lê
 # (lfs/docs_text.py); o pandoc (~160–200 MB, só formatos raros) NÃO entra —
-# se o sistema tiver, o rga o usa. PDF usa o pdftotext do sistema.
+# se o sistema tiver, o rga o usa.
+#
+# pdftotext EMBUTIDO (26/10/2026, decisão do Rodrigo): sem ele no sistema o
+# modo documentos não lia PDF nenhum. O da distro não serve (52 bibliotecas e a
+# glibc de quem empacota); este é estático (musl), compilado de uma poppler
+# enxuta por build_pdftotext_static.sh, em container. O do sistema, se houver,
+# continua na frente (o AppRun põe usr/bin no FIM do PATH).
 #
 # Por que AppImage e não Flatpak: o Flatpak roda em sandbox e este programa
 # existe para varrer o disco INTEIRO. Concedê-lo `--filesystem=host` é anular a
@@ -68,6 +74,16 @@ fetch "$PYURL" "$CACHE/python-standalone.tar.gz"
 fetch "$RGURL" "$CACHE/ripgrep-$RGV.tar.gz"
 fetch "$FDURL" "$CACHE/fd-$FDV.tar.gz"
 fetch "$RGAURL" "$CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz"
+# pdftotext estático: compilado uma vez por versão da poppler e guardado no cache
+POPPLER_V="$(sed -n 's/^POPPLER_V="\(.*\)"$/\1/p' "$SRC/packaging/build_pdftotext_static.sh")"
+PDFT="$CACHE/pdftotext-poppler-$POPPLER_V"
+if [ -x "$PDFT/pdftotext" ]; then
+  ok "cache: pdftotext (poppler $POPPLER_V)"
+else
+  echo "  compilando pdftotext estático (poppler $POPPLER_V, alguns minutos)…"
+  bash "$SRC/packaging/build_pdftotext_static.sh" "$PDFT.parcial"
+  rm -rf "$PDFT"; mv "$PDFT.parcial" "$PDFT"
+fi
 echo "$RGASHA  $CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz" | sha256sum -c --quiet - \
   || { rm -f "$CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz"; echo "sha256 do rga não confere" >&2; exit 1; }
 
@@ -122,7 +138,7 @@ StartupNotify=true
 EOF
 cp "$appdir/$APP.desktop" "$appdir/usr/share/applications/"
 
-say "[4/5] Motores rg, fd e rga (estáticos)"
+say "[4/5] Motores rg, fd, rga e pdftotext (estáticos)"
 # Um binário de cada tarball, e só ele: o tarball do rg traz manpage/completions
 # que não fazem falta aqui. `find -name` em vez de caminho fixo porque a pasta
 # de topo carrega a versão no nome.
@@ -150,11 +166,24 @@ embute_motor "$CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz" rga-preproc
 mkdir -p "$appdir/usr/lib/$APP/licenses"
 tar -xzf "$CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz" -O --wildcards '*/LICENSE.md' \
   > "$appdir/usr/lib/$APP/licenses/ripgrep-all-LICENSE.md"
+install -m 755 "$PDFT/pdftotext" "$appdir/usr/bin/pdftotext"
+if ldd "$appdir/usr/bin/pdftotext" 2>&1 | grep -q '=>'; then
+  echo "pdftotext não é estático (ldd lista dependências)" >&2; exit 1
+fi
+ok "pdftotext $("$appdir/usr/bin/pdftotext" -v 2>&1 | head -1 | sed 's/pdftotext version //')"
+install -m 644 "$PDFT/poppler-COPYING" "$appdir/usr/lib/$APP/licenses/poppler-COPYING"
 cat > "$appdir/usr/lib/$APP/licenses/README" <<EOF
 usr/bin/rga and usr/bin/rga-preproc are unmodified release binaries of
 ripgrep-all $RGAV (AGPL-3.0-or-later, license text alongside).
 Source code of this exact version:
 https://github.com/phiresky/ripgrep-all/tree/$RGAV
+
+usr/bin/pdftotext is built from unmodified Poppler $POPPLER_V
+(GPL-2.0-or-later, license text in poppler-COPYING), statically linked with
+musl, FreeType, fontconfig, expat, libpng, zlib, bzip2 and brotli (Alpine
+3.20 packages). Build recipe: packaging/build_pdftotext_static.sh in the
+Sombrero source. Poppler source of this exact version:
+https://poppler.freedesktop.org/poppler-$POPPLER_V.tar.xz
 EOF
 
 # AppRun: o ponto de entrada. Duas responsabilidades além de chamar o Python —

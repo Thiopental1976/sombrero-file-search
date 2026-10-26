@@ -23,6 +23,13 @@ Detailed rationale and measurements live in the commit messages and in
   includes them. For `pdftotext` it is your distribution's command (for
   example `sudo apt install poppler-utils`). The `--json` reason is
   `component_missing`, a warning; `where` is the program.
+- **The AppImage reads PDFs on any distribution.** It now brings its own
+  `pdftotext`, built from Poppler 24.08 as a single static program, like the
+  bundled `ripgrep`, `fd` and `rga`. Before, PDFs were read only if the system
+  had `poppler-utils` installed. A `pdftotext` installed on the system is still
+  used first. The AppImage grows by 1.9 MB. Checked on 60 real PDFs: the same
+  text as the system's `pdftotext`. Also checked on a clean Debian 12 without
+  Poppler.
 
 ### Fixed
 

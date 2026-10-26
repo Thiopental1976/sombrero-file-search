@@ -130,7 +130,8 @@ em falha; tudo roda em tempdir, sem tocar o acervo.
 |---|---|
 | `install.sh` | Sem root: rg/fd/rga/pandoc estáticos em espaço de usuário primeiro (gerenciador como alternativa; nunca `sudo` em ostree), PySide6 do sistema ou venv, copia `lfs/` + `assets/`, gera lançadores, ícones e `.desktop`; migra do nome antigo |
 | `packaging/build_deb.sh` | `.deb` magro (`Depends: python3`, rg/fd como Recommends) |
-| `packaging/build_appimage.sh` | AppImage autocontido (python-build-standalone + PySide6 + rg/fd estáticos) |
+| `packaging/build_appimage.sh` | AppImage autocontido (python-build-standalone + PySide6 + rg/fd/rga/pdftotext estáticos) |
+| `packaging/build_pdftotext_static.sh` | `pdftotext` estático (musl) de uma Poppler enxuta, compilado em container Alpine (podman/docker); o build do AppImage guarda em cache por versão da Poppler |
 
 ---
 
@@ -431,7 +432,7 @@ container não tem `stat` → `Match(path, 0, 0)` para não perder o hit.
 | **fd** (`fd`/`fdfind`) | busca por nome | recomendada (senão fallback Python) |
 | **ripgrep-all** (`rga`) | modo documentos | opcional |
 | **pandoc** | docx/epub/odt no rga | opcional |
-| **poppler** (`pdftotext`) | texto de PDF no rga | opcional |
+| **poppler** (`pdftotext`) | texto de PDF no rga | opcional (o AppImage e o build Windows trazem o seu) |
 
 **Nome do pacote por gerenciador:**
 
