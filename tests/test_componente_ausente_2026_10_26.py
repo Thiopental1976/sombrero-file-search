@@ -98,16 +98,19 @@ if engine.FD and engine.RG:
 shutil.rmtree(base, ignore_errors=True)
 
 # 3. orientação
-for prog in ("fd", "rg", "rga"):
+WIN = os.name == "nt"
+for prog in ("fd", "rg", "rga") + (("pdftotext",) if WIN else ()):
     o = componentes.orientacao(prog)
     ok(o["url"] == componentes.SITE_INSTALL and o["cmd"] is None, f"{prog}: pacote completo")
 d = tempfile.mkdtemp(prefix="sfs_osrel_")
+if WIN:   # sem gerenciador de pacotes: o zip do Windows traz o pdftotext
+    ok(componentes.gestor() is None, "Windows: sem gestor de pacotes")
 casos = {('ID=linuxmint\nID_LIKE="ubuntu debian"\n', None): "sudo apt install poppler-utils",
          ('ID=fedora\n', None): "sudo dnf install poppler-utils",
          ('ID=bazzite\nID_LIKE="fedora"\n', "sim"): "rpm-ostree install poppler-utils",
          ('ID=arch\n', None): "sudo pacman -S poppler",
          ('ID="opensuse-tumbleweed"\nID_LIKE="opensuse suse"\n', None): "sudo zypper install poppler-tools"}
-for (conteudo, ostree), esperado in casos.items():
+for (conteudo, ostree), esperado in ({} if WIN else casos).items():
     osr = os.path.join(d, "os-release")
     with open(osr, "w") as f:
         f.write(conteudo)
@@ -119,12 +122,14 @@ for (conteudo, ostree), esperado in casos.items():
     g = componentes.gestor(osr, flag)
     o = componentes.orientacao("pdftotext", g)
     ok(o["cmd"] == esperado, f"pdftotext em {conteudo.split()[0]}: {o['cmd']!r}")
-os.remove(os.path.join(d, "os-release"))
+if not WIN:
+    os.remove(os.path.join(d, "os-release"))
 ok(componentes.gestor(os.path.join(d, "os-release"), os.path.join(d, "nada")) is None,
    "sem os-release: sem gestor")
-o = componentes.orientacao("pdftotext", "desconhecido")
-ok(o["cmd"] is None and "poppler-utils" in o["args"].get("pkg", ""),
-   "distro desconhecida: nome do pacote, sem comando")
+if not WIN:
+    o = componentes.orientacao("pdftotext", "desconhecido")
+    ok(o["cmd"] is None and "poppler-utils" in o["args"].get("pkg", ""),
+       "distro desconhecida: nome do pacote, sem comando")
 shutil.rmtree(d, ignore_errors=True)
 
 # 4. CLI (pdftotext fora do PATH)
@@ -170,7 +175,10 @@ ok(box is not None and box.isVisible(), "GUI: diálogo aberto")
 ok(box is not None and not box.isModal() or box.windowModality() != gui.Qt.ApplicationModal,
    "GUI: diálogo não trava o programa")
 botoes = [b.text() for b in box.buttons()] if box else []
-ok(any("Copy command" in b or "Copiar comando" in b for b in botoes), f"GUI: botão de copiar ({botoes})")
+if WIN:   # pdftotext vem no zip: a saída é a página de download
+    ok(any("download" in b.lower() for b in botoes), f"GUI: botão da página de download ({botoes})")
+else:
+    ok(any("Copy command" in b or "Copiar comando" in b for b in botoes), f"GUI: botão de copiar ({botoes})")
 ok(box is not None and "pdftotext" in box.text() and "12" in box.text(), "GUI: nomeia o programa e a contagem")
 box.close(); qa.processEvents()
 w._dialogo_componentes = None

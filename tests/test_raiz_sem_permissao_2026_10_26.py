@@ -28,9 +28,25 @@ def ok(cond, msg):
     if not cond:
         falhas.append(msg)
 
-if os.geteuid() == 0:
+WIN = os.name == "nt"
+if not WIN and os.geteuid() == 0:
     print("(rodando como root: permissão não se nega, teste pulado)")
     sys.exit(0)
+
+# Linux: chmod. Windows: o chmod não toca as ACLs — nega a leitura a Todos
+# (S-1-1-0) com icacls, como um usuário sem acesso veria (CI 26/10/2026)
+def fecha(p):
+    if WIN:
+        subprocess.run(["icacls", p, "/deny", "*S-1-1-0:(OI)(CI)(RX)"],
+                       check=True, capture_output=True)
+    else:
+        os.chmod(p, 0)
+
+def abre(p):
+    if WIN:
+        subprocess.run(["icacls", p, "/remove:d", "*S-1-1-0"], capture_output=True)
+    else:
+        os.chmod(p, 0o755)
 
 base = tempfile.mkdtemp(prefix="sfs_sem_perm_")
 fechada = os.path.join(base, "fechada")
@@ -38,8 +54,8 @@ aberta = os.path.join(base, "aberta")
 os.makedirs(fechada); os.makedirs(os.path.join(aberta, "sub"))
 for d in (fechada, aberta, os.path.join(aberta, "sub")):
     with open(os.path.join(d, "x.txt"), "w") as f: f.write("agulha\n")
-os.chmod(fechada, 0)
-os.chmod(os.path.join(aberta, "sub"), 0)
+fecha(fechada)
+fecha(os.path.join(aberta, "sub"))
 
 cli = [sys.executable, os.path.join(RAIZ, "lfs", "cli.py")]
 env = dict(os.environ, LANG="C.UTF-8")
@@ -79,7 +95,7 @@ try:
     ok(os.path.join(aberta, "x.txt") in p.stdout, "a raiz aberta é buscada mesmo com a fechada junto")
     ok(p.returncode == 2, f"com uma raiz digitada fechada, a busca toda sai 2 ({p.returncode})")
 finally:
-    os.chmod(fechada, 0o755); os.chmod(os.path.join(aberta, "sub"), 0o755)
+    abre(fechada); abre(os.path.join(aberta, "sub"))
     shutil.rmtree(base, ignore_errors=True)
 
 if falhas:

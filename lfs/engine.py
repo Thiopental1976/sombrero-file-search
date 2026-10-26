@@ -2294,7 +2294,21 @@ def _iter_content_python_(q, cancel, stats, sonda):
 # ---------------------------------------------------------------- API pública
 _existe = os.path.exists     # injetáveis: os testes do gate montam topologias
 _eh_pasta = os.path.isdir    # fictícias (/mnt/nas2/y) sem NAS nenhum na máquina
-_legivel = lambda p: os.access(p, os.R_OK | os.X_OK)
+def _legivel(p) -> bool:
+    """A pasta deixa listar? No Linux, os.access (sem IO). No Windows o
+    os.access ignora as ACLs (só olha o atributo somente-leitura) e diz que
+    toda pasta se lê; lá a única resposta honesta é tentar abrir (CI
+    windows-latest, 26/10/2026)."""
+    if not plat.IS_WIN:
+        return os.access(p, os.R_OK | os.X_OK)
+    try:
+        with os.scandir(p) as it:
+            next(it, None)
+        return True
+    except PermissionError:
+        return False
+    except OSError:
+        return True                 # outro erro não é "sem permissão": o gate segue
 
 
 def _vazia(p) -> bool:
