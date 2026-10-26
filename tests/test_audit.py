@@ -1756,11 +1756,11 @@ def test_descent_gate_skips_dead_network_mount():
     # nas travou (no_response), nas2 vivo — o gate lê o status, não só um bool
     status = {"/mnt/nas": "no_response", "/mnt/nas2": "alive"}
     orig_prof, orig_status = _disks.search_profile, _disks.mount_status
-    orig_existe = (engine._existe, engine._eh_pasta)
+    orig_existe = (engine._existe, engine._eh_pasta, engine._legivel)
     try:
         _disks.search_profile = lambda p, mounts=None: by_path[p]
         _disks.mount_status = lambda mp, timeout=3.0, **k: status[mp]
-        engine._existe = engine._eh_pasta = lambda p: True      # H3: os roots são fictícios; o gate
+        engine._existe = engine._eh_pasta = engine._legivel = lambda p: True      # H3: os roots são fictícios; o gate
         stats: dict = {}                     # de existência é outro teste
         roots = engine._live_roots(["/mnt/repo", "/mnt/nas/x", "/mnt/nas2/y"], stats)
         assert roots == ["/mnt/repo", "/mnt/nas2/y"], f"gate errou os vivos: {roots}"
@@ -1774,7 +1774,7 @@ def test_descent_gate_skips_dead_network_mount():
         assert st2["skipped_mounts"][0]["reason"] == "broken_mount", "motivo F2 ausente"
     finally:
         _disks.search_profile, _disks.mount_status = orig_prof, orig_status
-        engine._existe, engine._eh_pasta = orig_existe
+        engine._existe, engine._eh_pasta, engine._legivel = orig_existe
     print("ok  F9a  gate de descida: NAS morto/quebrado pulado c/ aviso, vivo passa")
 
 
@@ -3553,12 +3553,12 @@ def test_root_events_stream():
                     is_network=True, max_workers=4, enumerate_default=True)
     by_path = {"/mnt/repo": prof_local, "/mnt/nas/x": prof_dead}
     orig_prof, orig_status = disks.search_profile, disks.mount_status
-    orig_existe = (engine._existe, engine._eh_pasta)
+    orig_existe = (engine._existe, engine._eh_pasta, engine._legivel)
     try:
         disks.search_profile = lambda p, mounts=None: by_path[p]
         disks.mount_status = lambda mp, timeout=3.0, **k: (
             "no_response" if mp == "/mnt/nas" else "alive")
-        engine._existe = engine._eh_pasta = lambda p: True      # H3: roots fictícios (ver acima)
+        engine._existe = engine._eh_pasta = engine._legivel = lambda p: True      # H3: roots fictícios (ver acima)
         evs = []
         roots = engine._live_roots(["/mnt/repo", "/mnt/nas/x"], {},
                                    on_event=lambda ev, info: evs.append((ev, info)))
@@ -3571,7 +3571,7 @@ def test_root_events_stream():
         assert scanned == ["/mnt/repo"], scanned
     finally:
         disks.search_profile, disks.mount_status = orig_prof, orig_status
-        engine._existe, engine._eh_pasta = orig_existe
+        engine._existe, engine._eh_pasta, engine._legivel = orig_existe
     print("ok  F10a narrativa: root_scanning/root_skipped/root_done ao vivo, com achados por root")
 
 

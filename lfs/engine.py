@@ -560,6 +560,7 @@ REASON_TEXTO = {
     "broken_mount": "broken mount",
     "invalid_root": "folder not found",
     "not_a_folder": "is a file, not a folder",
+    "denied":       "permission denied",
     "not_mounted":  "disk not mounted",
     "not_entered":  "not entered by default",
     "error":        "disk error",
@@ -2270,6 +2271,7 @@ def _iter_content_python_(q, cancel, stats, sonda):
 # ---------------------------------------------------------------- API pública
 _existe = os.path.exists     # injetáveis: os testes do gate montam topologias
 _eh_pasta = os.path.isdir    # fictícias (/mnt/nas2/y) sem NAS nenhum na máquina
+_legivel = lambda p: os.access(p, os.R_OK | os.X_OK)
 
 
 def _vazia(p) -> bool:
@@ -2346,14 +2348,26 @@ def _raiz_montada(root, stats, on_event=lambda ev, info: None) -> bool:
     r = root.rstrip(_SEPS) or os.sep
     if plat.IS_WIN and len(r) == 2 and r[1] == ":":
         r += os.sep                     # "C:" é a pasta atual de C:, não a raiz
-    if _eh_mountpoint(r):
-        return True
-    if r in _fstab_alvos():
+    montada = _eh_mountpoint(r)
+    if not montada and r in _fstab_alvos():
         anota_incompleto(stats, "not_mounted", onde=root,
                          detalhe="listed in /etc/fstab but not mounted")
         on_event("root_skipped", {"path": root, "mount": None, "fstype": None,
                                   "klass": None, "reason": "not_mounted"})
         return False
+    # 26/10/2026 (Fable §2.4): a pasta DIGITADA que nega leitura saía 1 com
+    # "N directories without permission — partial results" — parcial de nada.
+    # Mesma regra da montagem morta digitada: nada foi olhado, então é grave.
+    # Subpasta sem permissão segue não-grave. O reason do --json fica
+    # permission_denied (contrato); a gravidade vai na entrada.
+    if not _legivel(r):
+        anota_incompleto(stats, "permission_denied", onde=root,
+                         detalhe="the folder itself denied reading", grave=True)
+        on_event("root_skipped", {"path": root, "mount": None, "fstype": None,
+                                  "klass": None, "reason": "denied"})
+        return False
+    if montada:
+        return True
     if _eh_vaga_de_montagem(r) and _vazia(r):
         anota_incompleto(stats, "empty_mountpoint", onde=root,
                          detalhe="empty folder where disks are mounted — is the disk mounted?")

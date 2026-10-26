@@ -8,6 +8,16 @@ Detailed rationale and measurements live in the commit messages and in
 
 ## [Unreleased]
 
+### Fixed
+
+- **A folder you cannot read is no longer "nothing found".** Typing a folder
+  that denies reading gave "1 directories without permission — partial
+  results" and exit 1, as if the search had looked and found nothing. Nothing
+  was looked at, so it is now an error, like a dead network mount you typed:
+  exit 2, `"error"` in `--json` (the reason is still `permission_denied`), and
+  the disk line says "permission denied". A subfolder without permission is
+  still a warning and the search goes on.
+
 ## [1.4.1] — 2026-10-26
 
 Three fixes, each one a case where Sombrero said less than the truth about a
