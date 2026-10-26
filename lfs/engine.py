@@ -26,9 +26,11 @@ from typing import Callable, Optional
 try:                       # pacote (GUI) e flat (cli.py/testes)
     from . import plat
     from . import progresso as _progresso
+    from . import componentes
 except ImportError:
     import plat                                  # type: ignore
     import progresso as _progresso               # type: ignore
+    import componentes                           # type: ignore
 
 # Separadores de caminho do SO: "/" no Linux; "\\" e "/" no Windows (o Win32
 # aceita os dois). Contar/cortar só "/" dava profundidade 0 a tudo no Windows,
@@ -552,7 +554,7 @@ MOTIVO_TEXTO = {
     "read_error":        "read error",
     "interrupted":       "interrupted",
     "mount_not_entered": "mount not entered",
-    "documents_unavailable": "documents not read",
+    "component_missing": "program missing",
 }
 
 # `reason` do evento root_skipped -> frase (o painel da GUI traduz por t())
@@ -614,6 +616,7 @@ _TEXTO_PODA = {
 # `detalhe="..."` das chamadas de anota_incompleto ficam em UMA linha, literal:
 # a guarda os varre no fonte, e concatenação implícita a cegaria.
 SOURCE_STRINGS = (frozenset(MOTIVO_TEXTO.values()) | frozenset(REASON_TEXTO.values())
+                  | componentes.SOURCE_STRINGS
                   | frozenset(_TEXTO_PODA.values())
                   | {" in {where}", "and {n} more occurrence(s) not listed"})
 
@@ -684,6 +687,8 @@ def resumo_incompleto(stats, tr=None):
         # `onde` é caminho (passa intacto por tr) ou pseudo-local do booleano
         # ("(NOT universe)"), que se traduz
         alvo = tr(" in {where}").format(where=tr(e["onde"])) if e["onde"] else ""
+        if e["motivo"] == "component_missing":     # `onde` é o programa, não um lugar
+            alvo = f": {e['onde']}"
         vezes = f" (×{e['n']})" if e["n"] > 1 else ""
         det = texto_detalhe(e, tr)
         det = f": {det}" if det else ""
@@ -712,6 +717,11 @@ _RX_ERRO_MOTOR = re.compile(
 # "Error: copying adapter output…", "Caused by:" e outra régua. Nenhuma linha tem
 # "(os error N)", e o bloco inteiro virava engine_failed — exit 2 e "search engine
 # failed" por causa de UM documento ruim. É erro de leitura daquele arquivo.
+# 26/10/2026: sem o pdftotext (poppler-utils) o adaptador do rga falha em CADA
+# PDF com 'Could not find executable "pdftotext"' — 500 PDFs davam 500 "erros
+# de leitura" com cara de falha do Sombrero. É um programa faltando no sistema.
+_RX_SEM_EXECUTAVEL = re.compile(r'Could not find executable "([^"]+)"')
+
 _RX_PREPROC = re.compile(
     r"^(?:rg|rga)?:?\s*((?:/|[A-Za-z]:[\\/]|\\\\).*?): preprocessor command failed")
 _RX_REGUA = re.compile(r"^-{20,}\s*$")
@@ -1294,6 +1304,10 @@ def _reap(proc, errf=None, stats=None):
                 linhas = errf.readlines()
                 linhas, docs_ruins = _separa_falhas_de_documento(linhas)
                 for caminho, causa in docs_ruins:
+                    falta = _RX_SEM_EXECUTAVEL.search(causa)
+                    if falta:                  # o adaptador não achou o programa:
+                        _anota_componente(stats, falta.group(1))   # um aviso, não N erros
+                        continue
                     anota_incompleto(stats, "read_error", onde=caminho,
                                      detalhe="the document could not be read: {causa}",
                                      args={"causa": causa})
@@ -3676,14 +3690,32 @@ def _estende_snapshots(q, roots, classes, counts, parou, cancel, stats, on_event
                                "completo": not cortou})
 
 
-def _anota_docs_sem_rga(q, stats):
-    """26/10/2026 (Fable §2.7): `documents` sem rga virava rg puro em silêncio
-    no motor — só a CLI avisava, e a GUI (busca salva marca a caixa mesmo
-    desabilitada) terminava com ✔. Uma nota por busca, no funil, que todo
-    canal enxerga. Não-grave: o texto plano foi buscado de verdade."""
-    if q.documents and not RGA:
-        anota_incompleto(stats, "documents_unavailable",
-                         detalhe="rga is missing: PDF, docx, epub and the like were searched as plain text, not read")
+def _anota_componente(stats, prog):
+    """Programa externo ausente: um aviso por programa (agrega por `onde`), não
+    um erro por arquivo. Não-grave: o que foi buscado está certo. O que fazer
+    está em componentes.orientacao (CLI e diálogo da GUI)."""
+    anota_incompleto(stats, "component_missing", onde=prog,
+                     detalhe=componentes.efeito(prog))
+
+
+def componentes_faltando(stats):
+    """[(programa, n)] dos avisos component_missing do funil, na ordem."""
+    return [(e["onde"], e["n"]) for e in (stats or {}).get("incompleto") or []
+            if e["motivo"] == "component_missing"]
+
+
+def _anota_componentes(q, stats, booleano=False):
+    """26/10/2026 (Fable §2.7 + pedido do Rodrigo): `documents` sem rga virava
+    rg puro em silêncio, e sem fd/rg a busca caía no walker Python sem dizer
+    nada na janela. Uma nota por programa e por busca, no funil, que todo
+    canal enxerga."""
+    conteudo = bool(q.content) or booleano
+    if conteudo and q.documents and not RGA:
+        _anota_componente(stats, "rga")
+    if conteudo and not RG and not (q.documents and RGA):
+        _anota_componente(stats, "rg")
+    if not conteudo and not FD:
+        _anota_componente(stats, "fd")
 
 
 def search(q: Query, on_result: Callable[[Match], None],
@@ -3706,8 +3738,7 @@ def search(q: Query, on_result: Callable[[Match], None],
     por resultado absorvido pelo dedup (ver _Entrega).
     Padrão no-op: chamadores e testes antigos seguem intactos."""
     t0 = time.time()
-    if q.content:
-        _anota_docs_sem_rga(q, stats)
+    _anota_componentes(q, stats)
     classes = {}
     mortas: list = []
     plano, expandidas, forca_one_fs = planejar_raizes(q.paths, q.one_file_system,

@@ -71,7 +71,7 @@ Os identificadores de `reason` são contrato para scripts (estáveis, em inglês
 | `dead_mount` | não | uma montagem sob a busca não respondeu, ou respondeu quebrada (ENOTCONN/ESTALE), e foi pulada |
 | `empty_mountpoint` | não | a raiz é uma pasta vazia onde discos são montados (`/mnt/X`, `/media/<user>/X`) e não é ponto de montagem — o disco está montado? |
 | `mount_not_entered` | não | uma montagem gvfs (celular) ou autofs sob a raiz não foi varrida por padrão; busque pelo caminho dela |
-| `documents_unavailable` | não | modo documentos sem o `rga`: os arquivos foram buscados como texto puro, o texto de dentro de PDF/docx/epub não foi lido |
+| `component_missing` | não | falta no sistema um programa de que a busca precisa (`where` = `rga`, `fd`, `rg`, `pdftotext`…); o `hint` do `--json` diz como obtê-lo. Não é falha do Sombrero |
 | `batch_failed` | não | (booleana) um lote de arquivos não pôde ser lido |
 | `interrupted` | não | um disco não respondeu ao cancelamento a tempo; as perdas dele não foram contadas |
 | `engine_failed` | **sim** | rg/fd saíram com erro (uma flag que a versão antiga não conhece, por exemplo) |

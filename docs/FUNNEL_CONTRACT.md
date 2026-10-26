@@ -33,7 +33,7 @@ do **not** change the code: they are shown as warnings.
 | `read_error` | read error | no | files that were listed but could not be read |
 | `stat_failed` | file vanished | no | the engine listed it, but it was gone before the `stat` |
 | `mount_not_entered` | mount not entered | no | gvfs/autofs/MTP are not enumerated by default; search them by their own path |
-| `documents_unavailable` | documents not read | no | documents mode was asked for but `rga` is missing: the files were searched as plain text, so text inside PDF/docx/epub was not read |
+| `component_missing` | program missing | no | a program the search needs is not installed. `where` is the program: `rga` (documents mode searched as plain text), `fd`/`rg` (the built-in walker/reader was used), `pdftotext`/`pandoc` (those documents were not read; `count` = how many). The `--json` line carries a `hint` (the complete package, or the distro command) |
 | `empty_mountpoint` | empty mount point | no | an empty mount slot (a hint that a disk is missing) |
 | `batch_failed` | batch failed | no | one boolean batch failed; the others went on |
 | `truncated` | truncated | no | the result cap was reached (`max_results`) |

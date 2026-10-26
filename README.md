@@ -71,7 +71,7 @@ The `reason` identifiers are a contract for scripts (stable, English):
 | `dead_mount` | no | a mount under the search did not answer, or answered broken (ENOTCONN/ESTALE), and was skipped |
 | `empty_mountpoint` | no | the root is an empty folder where disks are mounted (`/mnt/X`, `/media/<user>/X`) and is not a mount point — is the disk mounted? |
 | `mount_not_entered` | no | a gvfs (phone) or autofs mount under the root was not entered by default; search it by its own path |
-| `documents_unavailable` | no | documents mode without `rga`: files were searched as plain text, text inside PDF/docx/epub was not read |
+| `component_missing` | no | a program the search needs is not installed (`where` = `rga`, `fd`, `rg`, `pdftotext`…); `hint` in `--json` says how to get it. Not a fault in Sombrero |
 | `batch_failed` | no | (boolean) one batch of files could not be read |
 | `interrupted` | no | a disk did not answer the cancel in time; its losses were not counted |
 | `engine_failed` | **yes** | rg/fd exited with an error (an unsupported flag on an old version, for instance) |

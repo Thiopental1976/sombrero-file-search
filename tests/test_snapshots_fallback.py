@@ -47,16 +47,23 @@ def escreve(p, corpo="laudo\n", mtime=None):
         os.utime(p, (mtime, mtime))
     return p
 
+def sem_componentes(st):
+    # 26/10/2026: com o backend "python" forçado, o motor anota fd/rg ausentes
+    # (component_missing); aqui o assunto é a poda, então essa nota sai
+    st["incompleto"] = [e for e in st.get("incompleto") or []
+                        if e["motivo"] != "component_missing"]
+    return st
+
 def busca(q, **kw):
     out, st, evs = [], {}, []
     n, _ = E.search(q, out.append, stats=st, on_event=lambda e, i: evs.append((e, i)), **kw)
-    return n, out, st, evs
+    return n, out, sem_componentes(st), evs
 
 def busca_bool(q, expr):
     out, st, evs = [], {}, []
     n, _ = B.search_boolean(q, expr, out.append, stats=st,
                             on_event=lambda e, i: evs.append((e, i)))
-    return n, out, st, evs
+    return n, out, sem_componentes(st), evs
 
 def com_backend(nome, fn):
     fd, rg = E.FD, E.RG

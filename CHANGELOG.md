@@ -8,6 +8,22 @@ Detailed rationale and measurements live in the commit messages and in
 
 ## [Unreleased]
 
+### Added
+
+- **A missing program is named, with how to get it.** Some searches need
+  programs outside Sombrero: `pdftotext` for PDFs, `rga` for documents, `fd`
+  and `ripgrep` for speed. When one was missing, it looked like Sombrero had
+  failed: every PDF became a "read error" of its own, and without `fd`/`rg`
+  the search quietly used the slower built-in engine. Now a missing program is
+  one line, "program missing: pdftotext", with what it cost. The window
+  shows a dialog once per session that says this is not a fault in
+  Sombrero and how to fix it, with a *Copy command* button. The command line
+  prints `# missing:` with the same advice, and `--json` carries a `hint`. For
+  `fd`, `rg` and `rga` the advice is to download the complete package, which
+  includes them. For `pdftotext` it is your distribution's command (for
+  example `sudo apt install poppler-utils`). The `--json` reason is
+  `component_missing`, a warning; `where` is the program.
+
 ### Fixed
 
 - **A folder you cannot read is no longer "nothing found".** Typing a folder
@@ -42,9 +58,8 @@ Detailed rationale and measurements live in the commit messages and in
   a *documents* search runs as a plain text search, so text inside PDF, docx
   or epub is not read. Only the command line said it; in the window, a saved
   search could tick the greyed-out *documents* box and finish with a green
-  check. The search now reports "documents not read" in the summary, in the
-  command line and in `--json` (reason `documents_unavailable`, a warning),
-  and a saved search no longer ticks the box when `rga` is missing.
+  check. The search now reports the missing `rga` (see *Added*), and a saved
+  search no longer ticks the box when `rga` is missing.
 
 ## [1.4.1] — 2026-10-26
 

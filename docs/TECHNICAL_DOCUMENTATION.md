@@ -1284,7 +1284,7 @@ populated, but they are a **view**, not the source.
 | `read_error` | any other per-file stderr line; a read error in the fallback | — |
 | `dead_mount` | `_condena_montagem` (gate); errno 107/116/112/19 in stderr (`_linha_de_montagem_morta`) | ✔ **only on the typed root** (sets the entry's `grave` flag, 2026-09-22); expanded under `/`: — |
 | `mount_not_entered` | `planejar_raizes`: gvfs/autofs/MTP (`enumerate_default=False`) | — |
-| `documents_unavailable` | `_anota_docs_sem_rga` (`search` with content, `search_boolean`): `documents` without `rga` | — |
+| `component_missing` | `_anota_componentes` (`search`, `search_boolean`): `documents` without `rga`, no `rg`/`fd`; `_reap`: rga block `Could not find executable "X"` (one entry per program, `n` = files). Advice in `lfs/componentes.py` (CLI `# missing:`, `--json` `hint`, GUI dialog once per session) | — |
 | `empty_mountpoint` | an empty mount slot that is not a mountpoint (a hint) | — |
 | `stat_failed` | the engine listed it, `stat` failed (H5) | — |
 | `batch_failed` | a boolean batch failed | — |

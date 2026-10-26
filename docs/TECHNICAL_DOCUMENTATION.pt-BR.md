@@ -1279,7 +1279,7 @@ preenchidos, mas são **vista**, não fonte.
 | `read_error` | demais linhas de stderr por arquivo; erro de leitura no fallback | — |
 | `dead_mount` | `_condena_montagem` (gate); errno 107/116/112/19 no stderr (`_linha_de_montagem_morta`) | ✔ **só na raiz digitada** (marca `grave` da entrada, 22/09); expandida sob `/`: — |
 | `mount_not_entered` | `planejar_raizes`: gvfs/autofs/MTP (`enumerate_default=False`) | — |
-| `documents_unavailable` | `_anota_docs_sem_rga` (`search` com conteúdo, `search_boolean`): `documents` sem `rga` | — |
+| `component_missing` | `_anota_componentes` (`search`, `search_boolean`): `documents` sem `rga`, sem `rg`/`fd`; `_reap`: bloco do rga `Could not find executable "X"` (uma entrada por programa, `n` = arquivos). Orientação em `lfs/componentes.py` (CLI `# missing:`, `hint` no `--json`, diálogo da GUI uma vez por sessão) | — |
 | `empty_mountpoint` | vaga de montagem vazia que não é mountpoint (indício) | — |
 | `stat_failed` | o motor listou, o `stat` falhou (H5) | — |
 | `batch_failed` | lote do booleano falhou | — |

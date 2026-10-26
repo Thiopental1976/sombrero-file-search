@@ -33,7 +33,7 @@ código: aparecem como aviso.
 | `read_error` | read error | não | arquivos listados que não puderam ser lidos |
 | `stat_failed` | file vanished | não | o motor listou, mas o arquivo sumiu antes do `stat` |
 | `mount_not_entered` | mount not entered | não | gvfs/autofs/MTP não são enumerados por padrão; busque pelo caminho deles |
-| `documents_unavailable` | documents not read | não | modo documentos pedido sem o `rga`: os arquivos foram buscados como texto puro, o texto de dentro de PDF/docx/epub não foi lido |
+| `component_missing` | program missing | não | falta um programa de que a busca precisa. `where` é o programa: `rga` (modo documentos buscou texto puro), `fd`/`rg` (usou o caminhador/leitor interno), `pdftotext`/`pandoc` (esses documentos não foram lidos; `count` = quantos). A linha do `--json` traz um `hint` (o pacote completo, ou o comando da distro) |
 | `empty_mountpoint` | empty mount point | não | vaga de montagem vazia (indício de disco ausente) |
 | `batch_failed` | batch failed | não | um lote do booleano falhou; os demais seguiram |
 | `truncated` | truncated | não | bateu no teto de resultados (`max_results`) |

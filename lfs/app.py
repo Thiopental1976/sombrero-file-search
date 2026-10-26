@@ -41,6 +41,7 @@ except ImportError:                     # QtMultimedia opcional (portabilidade)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine, boolean, disks, fileops, xdg, version, searches, humane, resultfilter, dupes, copyjobs, updates
+import componentes
 from engine import Query, Match
 xdg = engine.plat.shell()       # xdg.py no Linux, shell_win.py no Windows (mesmo contrato)
 from i18n import t
@@ -1970,6 +1971,7 @@ class MainWindow(QMainWindow):
         # O título carrega a BUILD: o app instalado é uma cópia dos fontes, então
         # commitar não muda o que o usuário roda. Ver version.py.
         self.setWindowTitle("Sombrero File Search" + version.title_suffix())
+        self._componentes_avisados = set()   # um diálogo por programa ausente, por sessão
         # cabe SEMPRE na tela (monitor em retrato tem só ~1080 de largura útil);
         # janela maior que a tela perde o botão de maximizar no Muffin/Cinnamon
         scr = QGuiApplication.primaryScreen().availableGeometry()
@@ -3409,7 +3411,51 @@ class MainWindow(QMainWindow):
         self._tab_badge(tab)
         if tab is self.tab:                       # F10a #2: congela o painel no estado final
             self._render_narrative(tab)
+        self._avisa_componentes(stats)
         self._start_pending()
+
+    def _avisa_componentes(self, stats):
+        """26/10/2026 (pedido do Rodrigo): programa ausente no sistema (pdftotext,
+        rga, fd, rg) não pode parecer falha do Sombrero. Um diálogo NÃO modal
+        (não trava a janela nem os testes) por programa, uma vez por sessão,
+        dizendo o que deixou de funcionar e como resolver."""
+        novos = [(p, n) for p, n in engine.componentes_faltando(stats)
+                 if p not in self._componentes_avisados]
+        if not novos:
+            return
+        self._componentes_avisados.update(p for p, _n in novos)
+        import html
+        itens, cmds, urls = [], [], []
+        for prog, n in novos:
+            o = componentes.orientacao(prog)
+            vezes = t(" ({n} file(s))", n=n) if n > 1 else ""
+            itens.append(f"<p><b>{html.escape(prog)}</b>{vezes}: "
+                         f"{html.escape(t(componentes.efeito(prog)))}.<br>"
+                         f"{html.escape(t(o['como']).format(**o['args']))}</p>")
+            if o["cmd"] and o["cmd"] not in cmds:
+                cmds.append(o["cmd"])
+            if o["url"] and o["url"] not in urls:
+                urls.append(o["url"])
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle(t("A program is missing"))
+        box.setTextFormat(Qt.RichText)
+        box.setText("<p>" + html.escape(t("This is not a fault in Sombrero: the search needs a "
+                                          "program that is not installed on this computer."))
+                    + "</p>" + "".join(itens))
+        box.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        b_cmd = box.addButton(t("Copy command"), QMessageBox.ActionRole) if cmds else None
+        b_url = box.addButton(t("Open download page"), QMessageBox.ActionRole) if urls else None
+        box.addButton(QMessageBox.Ok)
+        def clicado(b):
+            if b_cmd is not None and b is b_cmd:
+                QGuiApplication.clipboard().setText("\n".join(cmds))
+            elif b_url is not None and b is b_url:
+                QDesktopServices.openUrl(QUrl(urls[0]))
+        box.buttonClicked.connect(clicado)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+        self._dialogo_componentes = box
+        box.open()
 
     # ---- mapeamento proxy (visual) -> source (dados)
     def _match_at_proxy(self, row: int):

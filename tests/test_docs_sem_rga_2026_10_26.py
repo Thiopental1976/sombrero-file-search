@@ -7,7 +7,7 @@ desabilitada; a busca rodava em texto puro e terminava com ✔.
 
 Contratos presos aqui:
   1. busca de conteúdo com documents=True e sem rga: uma entrada
-     documents_unavailable, não-grave (o texto plano foi buscado);
+     component_missing em "rga", não-grave (o texto plano foi buscado);
   2. o booleano anota igual;
   3. busca só por nome não anota (documentos não mudam nada nela);
   4. com rga presente, nada;
@@ -33,7 +33,8 @@ def ok(cond, msg):
         falhas.append(msg)
 
 def motivos(stats):
-    return [e for e in stats.get("incompleto") or [] if e["motivo"] == "documents_unavailable"]
+    return [e for e in stats.get("incompleto") or []
+            if e["motivo"] == "component_missing" and e["onde"] == "rga"]
 
 base = tempfile.mkdtemp(prefix="sfs_docs_sem_rga_")
 with open(os.path.join(base, "a.txt"), "w") as f:
@@ -45,9 +46,11 @@ try:
     engine.search(Query(paths=[base], content="agulha", documents=True), lambda m: None, stats=st)
     e = motivos(st)
     ok(len(e) == 1, f"conteúdo + documentos sem rga: uma nota ({e})")
-    ok(e and not e[0].get("grave") and "documents_unavailable" not in engine.MOTIVOS_GRAVES,
+    ok(e and not e[0].get("grave") and "component_missing" not in engine.MOTIVOS_GRAVES,
        "a nota é não-grave")
     ok(e and "plain text" in engine.texto_detalhe(e[0]), "o detalhe diz que virou texto puro")
+    ok(len([x for x in st["incompleto"] if x["motivo"] == "component_missing"]) == 1,
+       "rg presente: só o rga é apontado")
 
     st = {}
     boolean.search_boolean(Query(paths=[base], documents=True), "agulha", lambda m: None, stats=st)

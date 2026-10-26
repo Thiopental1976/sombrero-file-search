@@ -9,7 +9,7 @@
 from __future__ import annotations
 import argparse, json, os, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import engine, version
+import engine, version, componentes
 from engine import Query
 
 
@@ -148,7 +148,7 @@ def main():
     )
     info = engine.engine_info()
     print(f"# engine: rg={info['ripgrep']} fd={info['fd']} rga={info['rga']}", file=sys.stderr)
-    # --docs sem rga: o motor anota documents_unavailable no funil (Fable §2.7)
+    # --docs sem rga: o motor anota component_missing (rga) no funil (Fable §2.7)
     sep = "\0" if args.print0 else "\n"
     n = [0]
     stats: dict = {}
@@ -281,9 +281,12 @@ def main():
         if denied:
             emit_json({"warn": "denied", "count": denied})
         for e in (stats.get("incompleto") or []):
-            emit_json({"warn" if not (e["motivo"] in engine.MOTIVOS_GRAVES or e.get("grave")) else "error":
-                       "incomplete", "reason": e["motivo"], "where": e["onde"],
-                       "detail": engine.texto_detalhe(e), "count": e["n"]})
+            obj = {"warn" if not (e["motivo"] in engine.MOTIVOS_GRAVES or e.get("grave")) else "error":
+                   "incomplete", "reason": e["motivo"], "where": e["onde"],
+                   "detail": engine.texto_detalhe(e), "count": e["n"]}
+            if e["motivo"] == "component_missing":       # `where` = o programa
+                obj["hint"] = componentes.texto_orientacao(e["onde"])
+            emit_json(obj)
     _descarrega()
     for sk in skipped:
         # 22/09/2026: "not responding" só quando é o caso; montagem que RESPONDEU
@@ -313,6 +316,11 @@ def main():
         print(f"# incomplete: {L}", file=sys.stderr)
     if grave:
         print("#        results are INCOMPLETE — this is not 'nothing was found'",
+              file=sys.stderr)
+    # 26/10/2026 (pedido do Rodrigo): programa ausente no sistema não é falha do
+    # Sombrero — diz qual é e como resolver (pacote completo ou comando da distro)
+    for prog, _n in engine.componentes_faltando(stats):
+        print(f"# missing: {prog} is not installed — {componentes.texto_orientacao(prog)}",
               file=sys.stderr)
     print(f"\n# {tot} files · {dt:.2f}s", file=sys.stderr)
     # contrato de exit code estilo grep: 0=achou, 1=nada, 2=erro (F9b §3.1).
