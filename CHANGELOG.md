@@ -39,7 +39,8 @@ Detailed rationale and measurements live in the commit messages and in
   was looked at, so it is now an error, like a dead network mount you typed:
   exit 2, `"error"` in `--json` (the reason is still `permission_denied`), and
   the disk line says "permission denied". A subfolder without permission is
-  still a warning and the search goes on.
+  still a warning and the search goes on. On Windows the folder's permissions
+  (ACL) are checked by opening it.
 - **Snapshots deeper in the folder are found when nothing else is.** Sombrero
   skips snapshot trees (Timeshift, snapper, ZFS, Samba) and searches them only
   when the live folders give nothing, or with `--snapshots`. It only looked
@@ -53,7 +54,8 @@ Detailed rationale and measurements live in the commit messages and in
   `.env`, a `.netrc`) came back even with hidden files off, and hidden folders
   whose name matched were searched. ripgrep lets a name pattern override its
   hidden filter. The name-only search and the fallback engine never did this;
-  now content, boolean and document searches agree with them.
+  now content, boolean and document searches agree with them. On Windows this
+  also covers files and folders marked hidden by their attribute.
 - **The command line says when it folded a file's other names.** A file with
   several hardlinks is one result (the same file under another name), and so
   is an identical copy in a snapshot. The window shows "+N copies", `--json`

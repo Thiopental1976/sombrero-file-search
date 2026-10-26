@@ -1661,6 +1661,35 @@ def _oculto(pasta: str, nome: str) -> bool:
     return bool(getattr(st, "st_file_attributes", 0) & _ATTR_OCULTO)
 
 
+def filtro_oculto_win(q: Query):
+    """26/10/2026 (lacuna da §2.5, vista na VM Windows): no rg um --glob que
+    casa o caminho vence o filtro de ocultos. O '!.*' fecha isso para o nome
+    com ponto; no Windows o oculto também é o ATRIBUTO, que glob nenhum
+    alcança — `-n rotina -c x` trazia rotina.txt com atributo oculto, que o
+    `-n rotina` sozinho (fd) esconde. Devolve None fora desse caso; senão um
+    predicado caminho -> True se o arquivo ou uma pasta abaixo da raiz é
+    oculta (com cache por pasta: um stat por pasta, não por arquivo)."""
+    if not plat.IS_WIN or q.include_hidden or not q.name_patterns or q.name_is_regex:
+        return None
+    raizes = [os.path.abspath(r) for r in q.paths]
+    visto = {}
+
+    def oculto(path):
+        raiz = _raiz_mais_especifica(path, raizes)
+        if raiz is None:
+            return False
+        cur = os.path.abspath(raiz)
+        for c in _componentes(os.path.relpath(path, cur)):
+            pai, cur = cur, os.path.join(cur, c)
+            v = visto.get(cur)
+            if v is None:
+                v = visto[cur] = _oculto(pai, c)
+            if v:
+                return True
+        return False
+    return oculto
+
+
 def _iter_names_python(q: Query, stats=None, cancel=None, progresso=None):
     """Fallback universal: os.walk com profundidade/hidden/symlink/meta/one-fs.
     N2: `stats` recebe 'denied' de diretórios sem permissão (onerror do os.walk).
@@ -2137,6 +2166,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None, progre
     name_rx = None
     if q.name_patterns and q.name_is_regex:
         name_rx = re.compile(q.name_patterns[0], 0 if q.case_sensitive else re.IGNORECASE)
+    fora_oculto = filtro_oculto_win(q)      # Windows: oculto por atributo (ver lá)
 
     errf = tempfile.TemporaryFile(mode="w+")
     try:
@@ -2174,6 +2204,9 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None, progre
             if t == "begin":
                 path = _rg_caminho(ev["data"].get("path"))   # text OU bytes (nome não-UTF-8)
                 if path is None or (name_rx and not name_rx.search(os.path.basename(path))):
+                    cur = None
+                    continue
+                if fora_oculto is not None and fora_oculto(path):
                     cur = None
                     continue
                 try:

@@ -76,6 +76,41 @@ try:
     finally:
         engine.FD, engine.RG = salvo
     ok(com_rg == sem_rg == so_visivel, f"rg e fallback concordam ({com_rg} × {sem_rg})")
+
+    # 6. Windows: oculto por ATRIBUTO (sem ponto no nome), 26/10/2026 — o '!.*'
+    # não o alcança; engine.filtro_oculto_win tira o que o --glob deixou passar
+    atrib = os.path.join(base, "rotina_atrib.txt")
+    escreve(atrib)
+    escreve(os.path.join(base, "pasta_atrib", "rotina_dentro2.txt"))
+    if os.name == "nt":
+        subprocess.run(["attrib", "+h", atrib], check=True)
+        subprocess.run(["attrib", "+h", os.path.join(base, "pasta_atrib")], check=True)
+        for modo in ("-c", "-b"):
+            r = lista("-n", "rotina", modo, "agulha", base)
+            ok(r == so_visivel, f"Windows {modo}: oculto por atributo fica de fora ({r})")
+        r = lista("-n", "rotina", "-c", "agulha", "--hidden", base)
+        ok("rotina_atrib.txt" in r, f"Windows --hidden: o oculto por atributo volta ({r})")
+    else:
+        # Linux: o atributo não existe; simula o _oculto do Windows para
+        # exercitar o filtro (raiz, componente do meio, cache por pasta)
+        salvo_win, salvo_oc = engine.plat.IS_WIN, engine._oculto
+        chamadas = []
+        engine.plat.IS_WIN = True
+        engine._oculto = lambda pasta, nome: chamadas.append(nome) or nome.endswith("atrib") or nome == "rotina_atrib.txt"
+        try:
+            f = engine.filtro_oculto_win(Query(paths=[base], name_patterns=["*rotina*"]))
+            ok(f is not None and f(atrib), "simulado: arquivo com atributo sai")
+            ok(f(os.path.join(base, "pasta_atrib", "rotina_dentro2.txt")), "simulado: pasta com atributo no caminho sai")
+            ok(not f(os.path.join(base, "visivel_rotina.txt")), "simulado: visível fica")
+            f(os.path.join(base, "normal", "a.txt"))
+            n = len(chamadas)
+            f(os.path.join(base, "normal", "b.txt"))
+            ok(len(chamadas) == n + 1, "simulado: a pasta já vista não é consultada de novo")
+            ok(engine.filtro_oculto_win(Query(paths=[base], name_patterns=["*rotina*"], include_hidden=True)) is None,
+               "simulado: com --hidden não há filtro")
+            ok(engine.filtro_oculto_win(Query(paths=[base])) is None, "simulado: sem filtro de nome não há filtro")
+        finally:
+            engine.plat.IS_WIN, engine._oculto = salvo_win, salvo_oc
 finally:
     shutil.rmtree(base, ignore_errors=True)
 

@@ -248,6 +248,13 @@ def _le_caminhos_nul(proc, cancel) -> set:
 _BATCH = 400   # caminhos por invocação do rg (evita estourar ARG_MAX — B4 e opt#1)
 
 
+def _sem_oculto_win(caminhos, q):
+    """Windows: tira o oculto por ATRIBUTO que o --glob do rg deixou passar
+    (engine.filtro_oculto_win). Fora do Windows, ou sem filtro de nome, nada."""
+    fora = engine.filtro_oculto_win(q)
+    return caminhos if fora is None else {p for p in caminhos if not fora(p)}
+
+
 def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=None) -> set[str]:
     """Arquivos que CONTÊM o termo (rg -l). Fallback Python se rg ausente.
 
@@ -294,7 +301,7 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
         finally:
             vigia.set()
             _reap_stats(proc, errf, stats)        # B1 + N2: mata órfão e conta inacessíveis
-    return out
+    return _sem_oculto_win(out, q)
 
 
 def _files_with_term_py(term: str, q: engine.Query, cancel, stats=None) -> set[str]:
@@ -349,7 +356,7 @@ def _universe(q: engine.Query, cancel, stats=None) -> set[str]:
             finally:
                 vigia.set()
                 _reap_stats(proc, errf, stats)    # B1 + N2
-            return out
+            return _sem_oculto_win(out, q)
     local = {} if stats is not None else None
     res = {os.path.abspath(m.path) for m in engine._iter_names_python(q, local, cancel)
            if _is_probably_text(m.path)}          # B1: paridade — universo só-texto
