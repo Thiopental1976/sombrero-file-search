@@ -21,6 +21,13 @@ Detailed rationale and measurements live in the commit messages and in
   a line such as `--glob=!*.txt` there silently hid files from content,
   boolean and document searches, with no warning. Sombrero now runs ripgrep
   and `rga` with `--no-config`. Name searches (fd) were never affected.
+- **One unreadable document no longer fails a whole document search.** A
+  damaged PDF, a .docx that is not a zip, or an encrypted file made the whole
+  *documents* search report "search engine failed" (exit 2, warning sign in
+  the window), although every other result was right. That file is now
+  reported on its own as a read error, with the reason the reader gave
+  ("Couldn't read xref table", "not a valid zip container"), and the search
+  ends normally.
 
 ## [1.4.0] — 2026-10-25
 

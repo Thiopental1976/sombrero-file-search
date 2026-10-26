@@ -704,6 +704,63 @@ _RX_ERRO_MOTOR = re.compile(
     r"^(?:\[fd error\]|rg|fd|fdfind)?:?\s*((?:/|[A-Za-z]:[\\/]|\\\\).*?): ([^:]*)\(os error (\d+)\)\s*$")
 
 
+# 26/10/2026 (Fable §2.1): o rga escreve a falha de um ADAPTADOR (PDF sem xref,
+# docx que não é zip, documento cifrado) em BLOCO: cabeçalho "rg: <caminho>:
+# preprocessor command failed: …", régua de traços, o que o adaptador disse,
+# "Error: copying adapter output…", "Caused by:" e outra régua. Nenhuma linha tem
+# "(os error N)", e o bloco inteiro virava engine_failed — exit 2 e "search engine
+# failed" por causa de UM documento ruim. É erro de leitura daquele arquivo.
+_RX_PREPROC = re.compile(
+    r"^(?:rg|rga)?:?\s*((?:/|[A-Za-z]:[\\/]|\\\\).*?): preprocessor command failed")
+_RX_REGUA = re.compile(r"^-{20,}\s*$")
+
+
+def _causa_do_bloco(bloco) -> str:
+    """A última linha do que o adaptador disse ("Syntax Error: Couldn't read xref
+    table", "sombrero docs_text: not a valid zip container"), sem a moldura do rga."""
+    ditas = []
+    for L in bloco:
+        s = L.strip()
+        if s.startswith("Error: copying adapter output"):
+            break
+        if (not s or s.startswith("Warning:") or s.startswith("- ")
+                or " adapter: " in s):
+            continue
+        ditas.append(s)
+    return ditas[-1][:200] if ditas else "preprocessor command failed"
+
+
+def _separa_falhas_de_documento(linhas):
+    """Tira do stderr os blocos de falha de adaptador do rga.
+    Devolve (linhas restantes, [(caminho, causa)]). O bloco vai do cabeçalho até
+    a régua que o fecha; sem régua logo depois do cabeçalho, só o cabeçalho é dele."""
+    restantes, falhas = [], []
+    caminho, bloco, estado = None, [], 0      # 0 fora · 1 viu cabeçalho · 2 dentro da moldura
+    for L in linhas:
+        s = L.strip()
+        if estado == 1:
+            if _RX_REGUA.match(s):
+                estado = 2
+                continue
+            falhas.append((caminho, _causa_do_bloco(bloco)))
+            estado = 0
+        elif estado == 2:
+            if _RX_REGUA.match(s):
+                falhas.append((caminho, _causa_do_bloco(bloco)))
+                estado = 0
+            else:
+                bloco.append(L)
+            continue
+        m = _RX_PREPROC.match(s)
+        if m:
+            caminho, bloco, estado = m.group(1), [], 1
+        else:
+            restantes.append(L)
+    if estado:
+        falhas.append((caminho, _causa_do_bloco(bloco)))
+    return restantes, falhas
+
+
 def _eh_negado(linha: str) -> bool:
     """Queixa de PERMISSÃO do rg/fd. Linux: "Permission denied". Windows: "Access
     is denied. (os error 5)" — 5 é ERROR_ACCESS_DENIED lá (no Linux, 5 é EIO:
@@ -1233,6 +1290,11 @@ def _reap(proc, errf=None, stats=None):
             try:
                 errf.seek(0)
                 linhas = errf.readlines()
+                linhas, docs_ruins = _separa_falhas_de_documento(linhas)
+                for caminho, causa in docs_ruins:
+                    anota_incompleto(stats, "read_error", onde=caminho,
+                                     detalhe="the document could not be read: {causa}",
+                                     args={"causa": causa})
                 d = sum(1 for L in linhas if _eh_negado(L))
                 if d:
                     stats["denied"] = stats.get("denied", 0) + d
@@ -1269,7 +1331,8 @@ def _reap(proc, errf=None, stats=None):
                 lacos = sum(1 for L in linhas if "File system loop found" in L)
                 motivo = next((L.strip() for L in linhas
                                if L.strip() and not benigna(L)), "")
-                so_permissao = bool(d or lacos) and not motivo
+                # (docs_ruins: já anotados como read_error, um por documento)
+                so_permissao = bool(d or lacos or docs_ruins) and not motivo
                 # 22/09/2026 (NAS TrueNAS real): o rg sai 2 quando QUALQUER arquivo
                 # falha — medido, 6 nomes reservados do Windows (CON.txt…) que o NAS
                 # lista como 8.3 ("AHY9U3~9") mas não abre (ENOENT) pintavam "search
