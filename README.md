@@ -53,7 +53,7 @@ kind of loss added anywhere shows up everywhere for free:
 | where | what you see |
 |---|---|
 | GUI status bar | `⚠ 0 result(s) · ⚠ incomplete: permission denied (×25): directories that denied reading` — the icon turns to **⚠** when the result may be *wrong*, not just short |
-| GUI narrative panel | one line per root, live: scanning / done (N found) / **skipped** with the reason (dead mount, folder not found, disk not mounted, not entered by default) |
+| GUI narrative panel | one line per root, live: scanning / done (N found) / **skipped** with the reason (dead mount, folder not found, is a file, disk not mounted, not entered by default) |
 | CLI stderr | `# incomplete: invalid location in /mnt/naoexiste: path does not exist (disk unmounted? typo?)` plus `#        results are INCOMPLETE — this is not 'nothing was found'` when it is grave |
 | `--json` | `{"warn"\|"error": "incomplete", "reason": "<id>", "where": "<path>", "detail": "...", "count": N}` in the same stream as the results |
 | exit code | **0** found · **1** nothing found · **2** the result may be wrong — grep-style |

@@ -559,6 +559,7 @@ REASON_TEXTO = {
     "no_response":  "not responding",
     "broken_mount": "broken mount",
     "invalid_root": "folder not found",
+    "not_a_folder": "is a file, not a folder",
     "not_mounted":  "disk not mounted",
     "not_entered":  "not entered by default",
     "error":        "disk error",
@@ -2244,17 +2245,22 @@ def _raiz_existe(root, stats, on_event=lambda ev, info: None) -> bool:
     search_boolean chamam _live_roots)."""
     if not _existe(root):
         detalhe = "path does not exist (disk unmounted? typo?)"
+        reason = "invalid_root"
     elif not _eh_pasta(root):
         # H3b: os backends DIVERGIAM — o rg aceita um arquivo como raiz, o fd
         # recusa ("Search path is not a directory", rc 1, mudo) e o os.walk
         # chama onerror com NotADirectoryError, ignorado. A CLI documenta
         # "folder(s) to search in"; recusar nos cinco é a única resposta igual.
-        detalhe = "not a folder — searches take folders"
+        # 26/10/2026: reason próprio no painel — com o de inexistente, a linha
+        # dizia "folder not found" de um arquivo que existe. O motivo do funil
+        # segue invalid_root (contrato do --json).
+        detalhe = "is a file, not a folder — searches take folders"
+        reason = "not_a_folder"
     else:
         return _raiz_montada(root, stats, on_event)
     anota_incompleto(stats, "invalid_root", onde=root, detalhe=detalhe)
     on_event("root_skipped", {"path": root, "mount": None, "fstype": None,
-                              "klass": None, "reason": "invalid_root"})
+                              "klass": None, "reason": reason})
     return False
 
 

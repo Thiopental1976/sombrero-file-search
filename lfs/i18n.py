@@ -178,7 +178,7 @@ _PT = {
     "the engine listed it, but the file vanished": "o motor listou, mas o arquivo sumiu",
     "the engine matched it, but the file vanished": "o motor casou, mas o arquivo sumiu",
     "path does not exist (disk unmounted? typo?)": "caminho não existe (disco desmontado? nome errado?)",
-    "not a folder — searches take folders": "não é uma pasta — a busca recebe pastas",
+    "is a file, not a folder — searches take folders": "é um arquivo, não uma pasta — a busca recebe pastas",
     # 09/09/2026 (decisão do Rodrigo): vivo primeiro, podadas só se faltar —
     # os textos vivem em engine._TEXTO_PODA; ostree é só outro texto, mesma mecânica
     "snapshots searched": "snapshots varridos",
@@ -229,6 +229,7 @@ _PT = {
     "not responding": "não responde",
     "broken mount": "montagem quebrada",
     "folder not found": "pasta não encontrada",
+    "is a file, not a folder": "é um arquivo, não uma pasta",
     "disk error": "erro no disco",
     "Searching…": "Buscando…",
     " · {d} inaccessible": " · {d} inacessível(is)",

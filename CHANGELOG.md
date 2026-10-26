@@ -8,6 +8,15 @@ Detailed rationale and measurements live in the commit messages and in
 
 ## [Unreleased]
 
+### Fixed
+
+- **A file typed as the search location is called a file.** Searches take
+  folders, and a file in *In:* is still refused, but the summary line said
+  "folder not found" about a file that exists. It now says "is a file, not a
+  folder", and the command line says "is a file, not a folder — searches take
+  folders". For scripts nothing changes: the `--json` reason is still
+  `invalid_root` and the exit code is still 2.
+
 ## [1.4.0] — 2026-10-25
 
 A progress bar per disk, so a long multi-disk search shows how far each disk

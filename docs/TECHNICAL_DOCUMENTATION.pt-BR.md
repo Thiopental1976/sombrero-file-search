@@ -1026,7 +1026,7 @@ booleano emite a **mesma** narrativa (`_atribuidor` fatorado para os dois motore
 | Evento | Payload | Quem emite |
 |---|---|---|
 | `root_scanning` | `{path, klass, mountpoint}` | `_live_roots` quando a raiz passa o gate; `_estende_snapshots` para o dono de uma árvore podada |
-| `root_skipped` | `{path, mount, fstype, klass, reason}` (+`erro` no particionado) | `_raiz_existe`/`_raiz_montada` (`invalid_root`, `not_mounted`), `_condena_montagem` (`no_response`, `broken_mount`), `planejar_raizes` (`not_entered`), `_rodada._grupo_terminou` (`error`) |
+| `root_skipped` | `{path, mount, fstype, klass, reason}` (+`erro` no particionado) | `_raiz_existe`/`_raiz_montada` (`invalid_root`, `not_a_folder`, `not_mounted`), `_condena_montagem` (`no_response`, `broken_mount`), `planejar_raizes` (`not_entered`), `_rodada._grupo_terminou` (`error`) |
 | `root_done` | `{path, found}` | `_rodada`: no particionado, **assim que o disco daquele grupo termina**; no fim, para as que sobraram |
 | `snapshots_skipped` / `snapshots_searched` | `{path, ostree, trees}` | `_plano_extensao` (§20.1) |
 | `copy` | `{path, of, snapshot}` | `_Entrega.entrega` quando o dedup absorve uma cópia (a GUI ignora; o `--json` publica) |

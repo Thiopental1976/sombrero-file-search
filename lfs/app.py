@@ -2871,7 +2871,7 @@ class MainWindow(QMainWindow):
             return
         rec = tab.roots.get(path)
         if rec is None:
-            if ev == "root_skipped" and info.get("reason") in ("invalid_root", "not_mounted"):
+            if ev == "root_skipped" and info.get("reason") in ("invalid_root", "not_a_folder", "not_mounted"):
                 # transparência sobre os LOCAIS: raiz que não existe mostra o
                 # caminho que o usuário digitou, não o rótulo do volume onde ele
                 # estaria ("OptaneCache — pasta não encontrada" não diz nada)

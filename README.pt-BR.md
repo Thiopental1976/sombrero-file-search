@@ -53,7 +53,7 @@ qualquer lugar, aparece em todo lugar de graça:
 | onde | o que você vê |
 |---|---|
 | barra de status da GUI | `⚠ 0 resultado(s) · ⚠ incompleto: sem permissão (×25): diretórios que negaram leitura` — o ícone vira **⚠** quando o resultado pode estar *errado*, não só curto |
-| painel de narrativa da GUI | uma linha por raiz, ao vivo: varrendo / concluída (N achados) / **pulada** com o motivo (montagem morta, pasta não encontrada, disco não montado, não varrida por padrão) |
+| painel de narrativa da GUI | uma linha por raiz, ao vivo: varrendo / concluída (N achados) / **pulada** com o motivo (montagem morta, pasta não encontrada, é um arquivo, disco não montado, não varrida por padrão) |
 | CLI, stderr | `# incomplete: invalid location in /mnt/naoexiste: path does not exist (disk unmounted? typo?)` e, quando é grave, `#        results are INCOMPLETE — this is not 'nothing was found'` |
 | `--json` | `{"warn"\|"error": "incomplete", "reason": "<id>", "where": "<caminho>", "detail": "...", "count": N}` no mesmo fluxo dos resultados |
 | código de saída | **0** achou · **1** nada · **2** o resultado pode estar errado — estilo grep |

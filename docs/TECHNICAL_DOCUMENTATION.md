@@ -1028,7 +1028,7 @@ engines; `search_boolean` closes each root with `root_done`).
 | Event | Payload | Emitter |
 |---|---|---|
 | `root_scanning` | `{path, klass, mountpoint}` | `_live_roots` when the root passes the gate; `_estende_snapshots` for the owner of a pruned tree |
-| `root_skipped` | `{path, mount, fstype, klass, reason}` (+`erro` in partitioned mode) | `_raiz_existe`/`_raiz_montada` (`invalid_root`, `not_mounted`), `_condena_montagem` (`no_response`, `broken_mount`), `planejar_raizes` (`not_entered`), `_rodada._grupo_terminou` (`error`) |
+| `root_skipped` | `{path, mount, fstype, klass, reason}` (+`erro` in partitioned mode) | `_raiz_existe`/`_raiz_montada` (`invalid_root`, `not_a_folder`, `not_mounted`), `_condena_montagem` (`no_response`, `broken_mount`), `planejar_raizes` (`not_entered`), `_rodada._grupo_terminou` (`error`) |
 | `root_done` | `{path, found}` | `_rodada`: in partitioned mode, **as soon as that group's disk finishes**; at the end, for whatever is left |
 | `snapshots_skipped` / `snapshots_searched` | `{path, ostree, trees}` | `_plano_extensao` (§20.1) |
 | `copy` | `{path, of, snapshot}` | `_Entrega.entrega` when dedup absorbs a copy (the GUI ignores it; `--json` publishes it) |
