@@ -2614,7 +2614,7 @@ class MainWindow(QMainWindow):
         if f["paths"]:                       # aba nova nasce sem pastas: não apaga o campo
             self.ed_path.setText(f["paths"])
         self.ck_nrx.setChecked(f["name_regex"]); self.ck_crx.setChecked(f["content_regex"])
-        self.ck_bool.setChecked(f["boolean"]); self.ck_doc.setChecked(f["documents"])
+        self.ck_bool.setChecked(f["boolean"]); self.ck_doc.setChecked(f["documents"] and bool(engine.RGA))
         self.ck_case.setChecked(f["case"]); self.ck_word.setChecked(f["word"])
         self.ck_rec.setChecked(f["recursive"]); self.ck_hid.setChecked(f["hidden"])
         self.ck_git.setChecked(f["gitignore"]); self.ck_ofs.setChecked(f["one_fs"])

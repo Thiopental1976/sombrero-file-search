@@ -1275,10 +1275,11 @@ preenchidos, mas são **vista**, não fonte.
 | `disk_failed` | exceção no worker de `_iter_particionado` | ✔ |
 | `invalid_root` | `_raiz_existe`: não existe ou não é pasta | ✔ |
 | `not_mounted` | `_raiz_montada`: está no `/etc/fstab` e não está montada | ✔ |
-| `permission_denied` | stderr "ermission denied" (`_reap`), `_walk_onerror`, fallback Python | — |
+| `permission_denied` | stderr "ermission denied" (`_reap`), `_walk_onerror`, fallback Python; `_raiz_montada` para a raiz digitada que nega leitura | ✔ **só na raiz digitada** (marca `grave` da entrada, 26/10); abaixo dela: — |
 | `read_error` | demais linhas de stderr por arquivo; erro de leitura no fallback | — |
 | `dead_mount` | `_condena_montagem` (gate); errno 107/116/112/19 no stderr (`_linha_de_montagem_morta`) | ✔ **só na raiz digitada** (marca `grave` da entrada, 22/09); expandida sob `/`: — |
 | `mount_not_entered` | `planejar_raizes`: gvfs/autofs/MTP (`enumerate_default=False`) | — |
+| `documents_unavailable` | `_anota_docs_sem_rga` (`search` com conteúdo, `search_boolean`): `documents` sem `rga` | — |
 | `empty_mountpoint` | vaga de montagem vazia que não é mountpoint (indício) | — |
 | `stat_failed` | o motor listou, o `stat` falhou (H5) | — |
 | `batch_failed` | lote do booleano falhou | — |
@@ -1294,7 +1295,7 @@ preenchidos, mas são **vista**, não fonte.
 - **Exit codes** (estilo grep): **0** achou; **1** nada; **2** grave ou erro de uso
   (tamanho/profundidade inválidos, `--min-size` > `--max-size`, expressão booleana
   inválida, falhas do `--index`); **130** Ctrl-C (`_main_protegido`). Negação de
-  permissão **não** muda o código.
+  permissão **não** muda o código, exceto na pasta digitada (nada foi olhado → 2).
 - **GUI:** `on_done` → `_funil_para_barra` (✔/⚠/■, até 3 linhas + `(+N more)`). Os
   motivos que o painel já desenha para a raiz (`_MOTIVOS_NO_PAINEL`: snapshots_*,
   dead_mount, invalid_root, not_mounted, mount_not_entered) saem da barra, mas

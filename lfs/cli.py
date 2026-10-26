@@ -148,9 +148,7 @@ def main():
     )
     info = engine.engine_info()
     print(f"# engine: rg={info['ripgrep']} fd={info['fd']} rga={info['rga']}", file=sys.stderr)
-    if args.docs and not engine.RGA:
-        print("# warning: --docs requested but 'rga' is missing; search will fall back to rg (no PDF/docx extraction)",
-              file=sys.stderr)
+    # --docs sem rga: o motor anota documents_unavailable no funil (Fable §2.7)
     sep = "\0" if args.print0 else "\n"
     n = [0]
     stats: dict = {}

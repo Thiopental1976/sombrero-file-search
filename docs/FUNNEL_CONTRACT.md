@@ -29,10 +29,11 @@ do **not** change the code: they are shown as warnings.
 | `invalid_root` | invalid location | **yes** | the folder asked for does not exist, or is not a folder |
 | `not_mounted` | disk not mounted | **yes** | the folder asked for is in `/etc/fstab` and the disk is not mounted |
 | `dead_mount` | mount not responding | **yes, if it is the folder you TYPED**; no, if it was found underneath another root (e.g. a NAS under `/`) | a network/FUSE mount that did not answer the probe (3 s) — `detail` carries `no_response` or `broken_mount` |
-| `permission_denied` | permission denied | no | folders or files that denied reading (`count` = how many) |
+| `permission_denied` | permission denied | **yes, if it is the folder you TYPED** (nothing was looked at); no, for folders or files underneath | folders or files that denied reading (`count` = how many) |
 | `read_error` | read error | no | files that were listed but could not be read |
 | `stat_failed` | file vanished | no | the engine listed it, but it was gone before the `stat` |
 | `mount_not_entered` | mount not entered | no | gvfs/autofs/MTP are not enumerated by default; search them by their own path |
+| `documents_unavailable` | documents not read | no | documents mode was asked for but `rga` is missing: the files were searched as plain text, so text inside PDF/docx/epub was not read |
 | `empty_mountpoint` | empty mount point | no | an empty mount slot (a hint that a disk is missing) |
 | `batch_failed` | batch failed | no | one boolean batch failed; the others went on |
 | `truncated` | truncated | no | the result cap was reached (`max_results`) |

@@ -552,6 +552,7 @@ MOTIVO_TEXTO = {
     "read_error":        "read error",
     "interrupted":       "interrupted",
     "mount_not_entered": "mount not entered",
+    "documents_unavailable": "documents not read",
 }
 
 # `reason` do evento root_skipped -> frase (o painel da GUI traduz por t())
@@ -3675,6 +3676,16 @@ def _estende_snapshots(q, roots, classes, counts, parou, cancel, stats, on_event
                                "completo": not cortou})
 
 
+def _anota_docs_sem_rga(q, stats):
+    """26/10/2026 (Fable §2.7): `documents` sem rga virava rg puro em silêncio
+    no motor — só a CLI avisava, e a GUI (busca salva marca a caixa mesmo
+    desabilitada) terminava com ✔. Uma nota por busca, no funil, que todo
+    canal enxerga. Não-grave: o texto plano foi buscado de verdade."""
+    if q.documents and not RGA:
+        anota_incompleto(stats, "documents_unavailable",
+                         detalhe="rga is missing: PDF, docx, epub and the like were searched as plain text, not read")
+
+
 def search(q: Query, on_result: Callable[[Match], None],
            cancel: Callable[[], bool] = lambda: False,
            on_progress: Callable[[int], None] = lambda n: None,
@@ -3695,6 +3706,8 @@ def search(q: Query, on_result: Callable[[Match], None],
     por resultado absorvido pelo dedup (ver _Entrega).
     Padrão no-op: chamadores e testes antigos seguem intactos."""
     t0 = time.time()
+    if q.content:
+        _anota_docs_sem_rga(q, stats)
     classes = {}
     mortas: list = []
     plano, expandidas, forca_one_fs = planejar_raizes(q.paths, q.one_file_system,

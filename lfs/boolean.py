@@ -637,6 +637,7 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
     # de rede (até 3 s por NAS morto) e de o painel já ter pintado "varrendo…"
     # para raízes que nunca seriam varridas. Validar primeiro não custa nada.
     ast = parse(expr)
+    engine._anota_docs_sem_rga(q, stats)
     # F9a §2.2 — gate de descida: monta de rede morta é pulada (aviso em stats),
     # nunca congela. Mesmo mecanismo do engine.search().
     mortas: list = []

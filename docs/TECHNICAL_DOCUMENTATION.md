@@ -1280,10 +1280,11 @@ populated, but they are a **view**, not the source.
 | `disk_failed` | exception in an `_iter_particionado` worker | ✔ |
 | `invalid_root` | `_raiz_existe`: does not exist or is not a folder | ✔ |
 | `not_mounted` | `_raiz_montada`: it is in `/etc/fstab` and is not mounted | ✔ |
-| `permission_denied` | stderr "ermission denied" (`_reap`), `_walk_onerror`, Python fallback | — |
+| `permission_denied` | stderr "ermission denied" (`_reap`), `_walk_onerror`, Python fallback; `_raiz_montada` for a typed root that denies reading | ✔ **only on the typed root** (entry's `grave` flag, 2026-10-26); underneath: — |
 | `read_error` | any other per-file stderr line; a read error in the fallback | — |
 | `dead_mount` | `_condena_montagem` (gate); errno 107/116/112/19 in stderr (`_linha_de_montagem_morta`) | ✔ **only on the typed root** (sets the entry's `grave` flag, 2026-09-22); expanded under `/`: — |
 | `mount_not_entered` | `planejar_raizes`: gvfs/autofs/MTP (`enumerate_default=False`) | — |
+| `documents_unavailable` | `_anota_docs_sem_rga` (`search` with content, `search_boolean`): `documents` without `rga` | — |
 | `empty_mountpoint` | an empty mount slot that is not a mountpoint (a hint) | — |
 | `stat_failed` | the engine listed it, `stat` failed (H5) | — |
 | `batch_failed` | a boolean batch failed | — |
@@ -1299,7 +1300,7 @@ populated, but they are a **view**, not the source.
 - **Exit codes** (grep style): **0** found something; **1** nothing; **2** fatal or a
   usage error (invalid size/depth, `--min-size` > `--max-size`, invalid boolean
   expression, `--index` failures); **130** Ctrl-C (`_main_protegido`). Permission denial
-  does **not** change the code.
+  does **not** change the code, except on the folder you typed (nothing was looked at → 2).
 - **GUI:** `on_done` → `_funil_para_barra` (✔/⚠/■, up to 3 lines + `(+N more)`). Reasons
   the panel already draws for the root (`_MOTIVOS_NO_PAINEL`: snapshots_*, dead_mount,
   invalid_root, not_mounted, mount_not_entered) are dropped from the bar, but `grave` is

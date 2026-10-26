@@ -29,10 +29,11 @@ código: aparecem como aviso.
 | `invalid_root` | invalid location | **sim** | a pasta pedida não existe ou não é pasta |
 | `not_mounted` | disk not mounted | **sim** | a pasta pedida está no `/etc/fstab` e o disco não está montado |
 | `dead_mount` | mount not responding | **sim, se é a pasta DIGITADA**; não, se foi achada por baixo de outra (ex.: NAS sob `/`) | montagem de rede/FUSE que não respondeu à sonda (3 s) — `detail` traz `no_response` ou `broken_mount` |
-| `permission_denied` | permission denied | não | pastas ou arquivos que negaram leitura (`count` = quantos) |
+| `permission_denied` | permission denied | **sim, se for a pasta que você DIGITOU** (nada foi olhado); não, para pastas ou arquivos abaixo dela | pastas ou arquivos que negaram leitura (`count` = quantos) |
 | `read_error` | read error | não | arquivos listados que não puderam ser lidos |
 | `stat_failed` | file vanished | não | o motor listou, mas o arquivo sumiu antes do `stat` |
 | `mount_not_entered` | mount not entered | não | gvfs/autofs/MTP não são enumerados por padrão; busque pelo caminho deles |
+| `documents_unavailable` | documents not read | não | modo documentos pedido sem o `rga`: os arquivos foram buscados como texto puro, o texto de dentro de PDF/docx/epub não foi lido |
 | `empty_mountpoint` | empty mount point | não | vaga de montagem vazia (indício de disco ausente) |
 | `batch_failed` | batch failed | não | um lote do booleano falhou; os demais seguiram |
 | `truncated` | truncated | não | bateu no teto de resultados (`max_results`) |

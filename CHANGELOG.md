@@ -38,6 +38,13 @@ Detailed rationale and measurements live in the commit messages and in
   `sfs … -l | xargs cp` lost the other names. It now adds a note such as
   "2 more path(s) to files already listed (hardlink…) not shown; --json lists
   them". The results themselves are unchanged.
+- **Document search without `rga` says so everywhere.** Without `ripgrep-all`
+  a *documents* search runs as a plain text search, so text inside PDF, docx
+  or epub is not read. Only the command line said it; in the window, a saved
+  search could tick the greyed-out *documents* box and finish with a green
+  check. The search now reports "documents not read" in the summary, in the
+  command line and in `--json` (reason `documents_unavailable`, a warning),
+  and a saved search no longer ticks the box when `rga` is missing.
 
 ## [1.4.1] — 2026-10-26
 

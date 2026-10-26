@@ -180,6 +180,8 @@ _PT = {
     "path does not exist (disk unmounted? typo?)": "caminho não existe (disco desmontado? nome errado?)",
     "is a file, not a folder — searches take folders": "é um arquivo, não uma pasta — a busca recebe pastas",
     "the folder itself denied reading": "a própria pasta negou a leitura",
+    "documents not read": "documentos não lidos",
+    "rga is missing: PDF, docx, epub and the like were searched as plain text, not read": "falta o rga: PDF, docx, epub e afins foram buscados como texto puro, sem leitura",
     "the document could not be read: {causa}": "não foi possível ler o documento: {causa}",
     # 09/09/2026 (decisão do Rodrigo): vivo primeiro, podadas só se faltar —
     # os textos vivem em engine._TEXTO_PODA; ostree é só outro texto, mesma mecânica
