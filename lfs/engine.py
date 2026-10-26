@@ -2389,7 +2389,7 @@ def _raiz_montada(root, stats, on_event=lambda ev, info: None) -> bool:
 # toda consulta — estenderia às implantações mesmo com /etc/os-release achado.
 # A unidade de decisão é o que o usuário pediu.
 
-def _arvores_podadas(roots, q_paths, excluidos=()):
+def _arvores_podadas(roots, q_paths, excluidos=(), fundas=None):
     """Árvores podadas hospedadas pelas raízes vivas, uma vez cada (por caminho
     real — "/ostree" é symlink de "/sysroot/ostree"), com o dono da nota.
 
@@ -2404,7 +2404,9 @@ def _arvores_podadas(roots, q_paths, excluidos=()):
     Fora: árvore cuja montagem mais específica não é raiz viva nem a montagem
     de uma (disco que o gate não entrou, ou --one-fs do usuário — não cruza
     montagem para estender o que a busca viva não cruzou) e árvore sob uma
-    montagem morta/condenada."""
+    montagem morta/condenada.
+    `fundas` (raiz -> [(padrao, caminho)], de _arvores_fundas): as árvores
+    abaixo do 1º nível, que o glob de _achados_snapshot não alcança."""
     disks = _mod_disks()
     def montagem(p):
         if disks is None:
@@ -2419,7 +2421,7 @@ def _arvores_podadas(roots, q_paths, excluidos=()):
     for r in roots:
         if not _pula_snapshot([r], True):        # raiz DENTRO de um snapshot: a
             continue                             # poda não está em vigor nela
-        for padrao, p in _achados_snapshot(r):
+        for padrao, p in _achados_snapshot(r) + (fundas or {}).get(r, []):
             rp = os.path.realpath(p)
             if rp in vistos:
                 continue
@@ -2443,6 +2445,151 @@ def _arvores_podadas(roots, q_paths, excluidos=()):
             out.append({"arvore": rp, "padrao": padrao, "dono": dono,
                         "digitada": digitada,
                         "fallback": padrao not in EXCLUSOES_SEM_FALLBACK})
+    return out
+
+
+# 26/10/2026 (Fable §2.2): _achados_snapshot só olha o 1º nível de cada raiz
+# (um glob, sem caminhada). A poda dos motores vale em qualquer profundidade,
+# então /dados/sub/.snapshots era podada e nunca estendida: "0 resultados",
+# exit 1, sem nota — e nem --snapshots alcançava. Achar essas árvores custa
+# uma caminhada só de metadados; ela roda apenas quando a extensão importa
+# (a raiz digitada deu zero no vivo, ou --snapshots), e nunca desce numa
+# árvore podada. Com resultado vivo, a árvore funda segue sem nota: é o
+# preço de não dobrar a caminhada de toda busca.
+_ULTIMO_COMP_PODA = sorted({m.split("/")[-1] for m in EXCLUSOES_SNAPSHOT})
+# primeiro componente oculto de um padrão (.snapshots, .zfs): sem --hidden a
+# caminhada pula as pastas ocultas, como a busca viva — menos estas
+_OCULTOS_DE_PODA = sorted({m.split("/")[0] for m in EXCLUSOES_SNAPSHOT
+                           if m.startswith(".")})
+
+
+def _padrao_no_fim(path):
+    """O padrão de EXCLUSOES_SNAPSHOT que casa os ÚLTIMOS componentes de
+    `path` (a pasta É a raiz de uma árvore podada), ou None."""
+    comps = _componentes(path)
+    casa = fnmatch.fnmatch if plat.IS_WIN else fnmatch.fnmatchcase
+    for m in EXCLUSOES_SNAPSHOT:
+        mp = m.split("/")
+        if len(comps) >= len(mp) and all(casa(c, x) for c, x in zip(comps[-len(mp):], mp)):
+            return m
+    return None
+
+
+def _arvores_fundas(roots, q, one_fs=False, cancel=lambda: False):
+    """raiz -> [(padrao, caminho)] das árvores podadas em qualquer profundidade
+    sob cada raiz. fd quando há (só pastas, sem descer nas podadas); senão
+    os.walk com a mesma poda. Pasta oculta no caminho só conta com --hidden:
+    a busca viva não entrou nela. Cancelar devolve o que já se achou."""
+    out = {}
+    ignora_ocultos = None
+    if FD and not q.include_hidden and not plat.IS_WIN:
+        # --hidden só para enxergar .snapshots/.zfs; o resto do que é oculto
+        # fica de fora por este arquivo (as --exclude, que vencem, impedem
+        # descer nas árvores achadas)
+        try:
+            fd_, ignora_ocultos = tempfile.mkstemp(prefix="sfs_ocultos_", suffix=".ignore")
+            with os.fdopen(fd_, "w") as f:
+                f.write(".*\n" + "".join(f"!{c}\n" for c in _OCULTOS_DE_PODA))
+        except OSError:
+            ignora_ocultos = None
+    try:
+        return _arvores_fundas_(roots, q, one_fs, cancel, ignora_ocultos)
+    finally:
+        if ignora_ocultos:
+            try:
+                os.unlink(ignora_ocultos)
+            except OSError:
+                pass
+
+
+def _arvores_fundas_(roots, q, one_fs, cancel, ignora_ocultos):
+    out = {}
+    for r in roots:
+        if cancel():
+            break
+        achadas = []
+        if FD:
+            rx = "^(?:" + "|".join(re.escape(c).replace(r"\*", ".*")
+                                   for c in _ULTIMO_COMP_PODA) + ")$"
+            cmd = [FD, "--absolute-path", "--type", "d", "--hidden", "--print0"]
+            if not q.respect_gitignore:
+                cmd.append("--no-ignore")
+            if plat.IS_WIN:
+                cmd.append("--ignore-case")
+            elif not q.include_hidden and ignora_ocultos:
+                cmd += ["--ignore-file", ignora_ocultos]
+            if one_fs or q.one_file_system:
+                cmd.append("--one-file-system")
+            if not q.recursive:
+                cmd += ["--max-depth", "1"]
+            elif q.max_depth is not None:
+                cmd += ["--max-depth", str(q.max_depth)]
+            for m in EXCLUSOES_SNAPSHOT:
+                cmd += ["--exclude", f"**/{m}/*"]       # acha a árvore, não desce nela
+            cmd += _excludes_fd(replace(q, paths=[r]))
+            cmd += ["--", rx, r]
+            with tempfile.TemporaryFile() as saida:
+                try:
+                    proc = subprocess.Popen(cmd, stdout=saida, stderr=subprocess.DEVNULL,
+                                            **plat.popen_flags())
+                except OSError:
+                    continue
+                while True:
+                    try:
+                        proc.wait(timeout=0.2)
+                        break
+                    except subprocess.TimeoutExpired:
+                        if cancel():
+                            proc.kill()
+                            proc.wait()
+                            break
+                saida.seek(0)
+                achadas = [b.decode("utf-8", "surrogateescape").rstrip(_SEPS)
+                           for b in saida.read().split(b"\0") if b]
+        else:
+            try:
+                dev = os.stat(r).st_dev if (one_fs or q.one_file_system) else None
+            except OSError:
+                dev = None
+            base = _nivel(r)
+            for dp, dns, _fns in os.walk(r):
+                if cancel():
+                    break
+                fica = []
+                for d in dns:
+                    c = os.path.join(dp, d)
+                    if c in q.excluded_paths:
+                        continue
+                    if _padrao_no_fim(c):
+                        achadas.append(c)               # acha a árvore, não desce nela
+                        continue
+                    if (not q.include_hidden and _oculto(dp, d)
+                            and d not in _OCULTOS_DE_PODA):
+                        continue
+                    if dev is not None:
+                        try:
+                            if os.stat(c).st_dev != dev:
+                                continue
+                        except OSError:
+                            continue
+                    fica.append(d)
+                if not q.recursive or (q.max_depth is not None
+                                       and _nivel(dp) - base + 1 >= q.max_depth):
+                    fica = []
+                dns[:] = fica
+        lst = []
+        for p in achadas:
+            padrao = _padrao_no_fim(p)
+            if padrao is None:
+                continue
+            if not q.include_hidden:
+                n = len(padrao.split("/"))
+                meio = _componentes(os.path.relpath(p, r))[:-n]
+                if any(c.startswith(".") for c in meio):
+                    continue
+            lst.append((padrao, p))
+        if lst:
+            out[r] = lst
     return out
 
 
@@ -2569,7 +2716,8 @@ class _Entrega:
         return True
 
 
-def _plano_extensao(q, roots, counts, parou, stats, on_event, excluidos=()):
+def _plano_extensao(q, roots, counts, parou, stats, on_event, excluidos=(),
+                    one_fs=False, cancel=lambda: False):
     """Depois da rodada viva: decide, por raiz DIGITADA, quais árvores podadas
     entram na extensão, e escreve a nota de cada dono no funil E no painel
     (H6: a CLI só enxerga o funil). Devolve a lista de árvores a estender
@@ -2577,13 +2725,21 @@ def _plano_extensao(q, roots, counts, parou, stats, on_event, excluidos=()):
 
     `parou` (teto ou cancelamento na rodada viva): não estende nada — o teto
     já foi anunciado como 'truncated', e cancelar é cancelar."""
-    arvores = _arvores_podadas(roots, q.paths, excluidos)
-    if not arvores:
-        return []
     achados = {}                         # raiz digitada -> achados vivos
+    digitada_de = {}
     for r in roots:
         d = _raiz_mais_especifica(os.path.abspath(os.path.expanduser(r)), q.paths) or r
+        digitada_de[r] = d
         achados[d] = achados.get(d, 0) + counts.get(r, 0)
+    fundas = None
+    if not parou:                        # árvores fundas: só onde a extensão importa
+        alvo = [r for r in roots if _pula_snapshot([r], True)
+                and (not q.skip_snapshots or achados.get(digitada_de[r], 0) == 0)]
+        if alvo:
+            fundas = _arvores_fundas(alvo, q, one_fs, cancel)
+    arvores = _arvores_podadas(roots, q.paths, excluidos, fundas)
+    if not arvores:
+        return []
     estender = []
     por_dono = {}
     for a in arvores:
@@ -3487,7 +3643,8 @@ def _estende_snapshots(q, roots, classes, counts, parou, cancel, stats, on_event
     dono e fechando a narrativa dele ao fim. Chamado por search() e por
     search_boolean(): uma mecânica, dois motores."""
     plano = _plano_extensao(q, roots, counts, parou or cancel(), stats, on_event,
-                            excluidos=q.excluded_paths)
+                            excluidos=q.excluded_paths, one_fs=forca_one_fs,
+                            cancel=cancel)
     if not plano:
         return
     q2 = _query_extensao(q, plano, forca_one_fs)

@@ -1174,6 +1174,14 @@ descending into folders); `test_dupes_in_files_matches_walk` guarantees the same
   **including on mounts below it** (via `user_mounts()`), derived from
   `EXCLUSOES_SNAPSHOT`. `tem_snapshot` is the `bool` of that. (On the TrueNAS NAS of
   2026-09-22: `.zfs/snapshot` exposed over SMB, skipped and annotated.)
+- `_arvores_fundas(roots, q)` (2026-10-26): `_achados_snapshot` is a glob at the
+  first level only; trees deeper down (`/data/sub/.snapshots`) are found by one
+  directory-only walk (`fd --type d`, or `os.walk`), which never enters a pruned tree
+  and skips hidden folders like the live walk (`.snapshots`/`.zfs` excepted). It runs
+  **only** where extending matters: the typed root had zero live results, or
+  `--snapshots`. With live results a deep tree stays out without a note — the price of
+  not walking twice on every search (measured: +0.2 s on a zero-result name search of
+  the home folder).
 - `_pula_snapshot(paths, base)`: a root pointing **inside** a snapshot turns pruning off
   **only within its own group** (F11 bug3).
 

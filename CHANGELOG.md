@@ -17,6 +17,14 @@ Detailed rationale and measurements live in the commit messages and in
   exit 2, `"error"` in `--json` (the reason is still `permission_denied`), and
   the disk line says "permission denied". A subfolder without permission is
   still a warning and the search goes on.
+- **Snapshots deeper in the folder are found when nothing else is.** Sombrero
+  skips snapshot trees (Timeshift, snapper, ZFS, Samba) and searches them only
+  when the live folders give nothing, or with `--snapshots`. It only looked
+  for those trees right at the top of the search location, so a
+  `.snapshots` two folders down was skipped and never searched: "0 files",
+  exit 1, no note, and `--snapshots` did not reach it either. They are now
+  found at any depth, with one extra walk over folders only, and only when it
+  matters (no live results, or `--snapshots`).
 
 ## [1.4.1] — 2026-10-26
 

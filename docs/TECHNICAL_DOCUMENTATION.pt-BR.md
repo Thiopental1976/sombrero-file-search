@@ -1170,6 +1170,14 @@ em pastas); `test_dupes_in_files_matches_walk` garante o mesmo resultado.
   **inclusive em montagens abaixo dela** (via `user_mounts()`), derivado de
   `EXCLUSOES_SNAPSHOT`. `tem_snapshot` é o `bool` disso. (No NAS TrueNAS de
   22/09: `.zfs/snapshot` exposto pelo SMB, pulado e anotado.)
+- `_arvores_fundas(roots, q)` (26/10/2026): `_achados_snapshot` é um glob só no
+  1º nível; árvores mais fundas (`/dados/sub/.snapshots`) são achadas por uma
+  caminhada só de pastas (`fd --type d`, ou `os.walk`), que nunca entra numa árvore
+  podada e pula pastas ocultas como a caminhada viva (menos `.snapshots`/`.zfs`).
+  Roda **só** onde a extensão importa: a raiz digitada deu zero no vivo, ou
+  `--snapshots`. Com resultado vivo a árvore funda fica de fora sem nota — o preço de
+  não caminhar duas vezes em toda busca (medido: +0,2 s numa busca de nome sem
+  resultado na home).
 - `_pula_snapshot(paths, base)`: raiz que aponta **para dentro** de um snapshot
   desliga a poda **só no grupo dela** (F11 bug3).
 
