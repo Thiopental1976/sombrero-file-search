@@ -25,6 +25,12 @@ Detailed rationale and measurements live in the commit messages and in
   exit 1, no note, and `--snapshots` did not reach it either. They are now
   found at any depth, with one extra walk over folders only, and only when it
   matters (no live results, or `--snapshots`).
+- **A name filter no longer brings hidden files into a content search.** With
+  *Name* and *Content* both filled in, hidden files whose name matched (a
+  `.env`, a `.netrc`) came back even with hidden files off, and hidden folders
+  whose name matched were searched. ripgrep lets a name pattern override its
+  hidden filter. The name-only search and the fallback engine never did this;
+  now content, boolean and document searches agree with them.
 
 ## [1.4.1] — 2026-10-26
 

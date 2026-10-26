@@ -2077,6 +2077,14 @@ def rg_flags_comuns(q: Query, matching: bool = True):
             cmd.append("--glob-case-insensitive")   # B2: glob insensível como o fd
         for p in q.name_patterns:
             cmd += ["--glob", p]
+        if not q.include_hidden:
+            # 26/10/2026 (Fable §2.5): no rg um --glob que casa o caminho é
+            # whitelist e VENCE o filtro de ocultos — `-n rotina -c x` trazia
+            # .oculto_rotina.txt e entrava em .rotina_dir/, que o fd (-n
+            # sozinho) e o fallback deixam de fora. '!.*' sem barra casa só o
+            # nome, nunca a raiz digitada (medido: raiz em ~/.cfg segue
+            # buscada). Depois dos globs de nome: o último que casa vence.
+            cmd += ["--glob", "!.*"]
     if q.skip_snapshots:                            # depois dos globs de nome
         for g in _globs_snapshot():
             cmd += ["--glob", "!" + g]
