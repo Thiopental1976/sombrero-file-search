@@ -197,8 +197,16 @@ def main():
                    "is_dir": m.is_dir, "nmatch": m.nmatch,
                    "lines": [[ln, txt] for ln, txt in m.lines],
                    "snapshot": m.snapshot, "copies": list(m.copies)})
+    # 26/10/2026 (Fable §2.6): a saída de texto não tinha canal nenhum para a
+    # cópia colapsada — `-l | xargs cp` perdia o segundo caminho de um hardlink
+    # sem aviso. A decisão de 09/09 (mesmo arquivo = uma linha) fica; a nota no
+    # stderr conta o que foi dobrado e aponta o --json, que lista cada caminho.
+    dobradas = {"vivo": 0, "snapshot": 0}
     def on_copy(ev, info):
-        if ev == "copy" and args.json:
+        if ev != "copy":
+            return
+        dobradas["snapshot" if info.get("snapshot") else "vivo"] += 1
+        if args.json:
             emit_json({"copy": info.get("path"), "of": info.get("of"),
                        "snapshot": info.get("snapshot")})
     def out_text(m):
@@ -288,6 +296,13 @@ def main():
     if denied:
         print(f"# warning: {denied} directories without permission — partial results",
               file=sys.stderr)
+    if not args.json and dobradas["vivo"]:
+        print(f"# note: {dobradas['vivo']} more path(s) to files already listed "
+              "(hardlink: same file, another name) not shown; --json lists them",
+              file=sys.stderr)
+    if not args.json and dobradas["snapshot"]:
+        print(f"# note: {dobradas['snapshot']} identical copy(ies) in snapshots folded "
+              "into the files listed; --json lists them", file=sys.stderr)
     pruned = stats.get("pruned_mounts") or []
     if pruned:            # F12: nota, não perda — não há arquivo de usuário em /proc
         print(f"# note: {len(pruned)} kernel filesystem(s) not searched: "

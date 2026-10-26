@@ -31,6 +31,13 @@ Detailed rationale and measurements live in the commit messages and in
   whose name matched were searched. ripgrep lets a name pattern override its
   hidden filter. The name-only search and the fallback engine never did this;
   now content, boolean and document searches agree with them.
+- **The command line says when it folded a file's other names.** A file with
+  several hardlinks is one result (the same file under another name), and so
+  is an identical copy in a snapshot. The window shows "+N copies", `--json`
+  lists each path, but the plain text output dropped them without a word, so
+  `sfs … -l | xargs cp` lost the other names. It now adds a note such as
+  "2 more path(s) to files already listed (hardlink…) not shown; --json lists
+  them". The results themselves are unchanged.
 
 ## [1.4.1] — 2026-10-26
 
