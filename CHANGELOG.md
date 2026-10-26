@@ -16,6 +16,11 @@ Detailed rationale and measurements live in the commit messages and in
   folder", and the command line says "is a file, not a folder — searches take
   folders". For scripts nothing changes: the `--json` reason is still
   `invalid_root` and the exit code is still 2.
+- **Your `.ripgreprc` no longer changes Sombrero's results.** ripgrep reads the
+  file named by `RIPGREP_CONFIG_PATH` on every run (and `rga` passes it on), so
+  a line such as `--glob=!*.txt` there silently hid files from content,
+  boolean and document searches, with no warning. Sombrero now runs ripgrep
+  and `rga` with `--no-config`. Name searches (fd) were never affected.
 
 ## [1.4.0] — 2026-10-25
 

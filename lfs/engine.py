@@ -1978,8 +1978,13 @@ def rg_flags_comuns(q: Query, matching: bool = True):
     ORDEM IMPORTA: no rg o ÚLTIMO glob que casa vence, então os negativos de
     snapshot têm de vir DEPOIS dos globs de nome — senão um padrão como '*shot*'
     reabre a árvore que a gente acabou de excluir.
+
+    `--no-config` (26/10/2026, Fable §2.3): o rg lê o RIPGREP_CONFIG_PATH do
+    usuário em toda chamada (e o rga repassa ao rg); um `--glob=!*.txt` ali
+    somava-se a estas flags e dava "0 resultados" calado. Medido: vale em
+    qualquer posição, no rg e no rga.
     """
-    cmd = []
+    cmd = ["--no-config"]
     if not q.respect_gitignore:
         cmd.append("--no-ignore")
     if q.include_hidden:
