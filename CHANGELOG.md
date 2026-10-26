@@ -8,6 +8,12 @@ Detailed rationale and measurements live in the commit messages and in
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-10-26
+
+Three fixes, each one a case where Sombrero said less than the truth about a
+search. Two of them came from a full review of the search code with synthetic
+tests.
+
 ### Fixed
 
 - **A file typed as the search location is called a file.** Searches take
