@@ -145,7 +145,30 @@ def _mono() -> QFont:
     f = QFontDatabase.systemFont(QFontDatabase.FixedFont)
     if engine.plat.IS_WIN:
         f.setFamilies(["Consolas", "Cascadia Mono", f.family()])
+    else:
+        f.setFamilies([f.family(), *EMOJI_FAMILIES])
     return f
+
+
+# Emoji em nome de arquivo (27/10/2026, Fable A1). O Qt 6.11 não desenha a
+# Noto Color Emoji COLRv1 do Fedora/Bazzite: `aniversário 🎉.jpg` aparecia como
+# `aniversário .jpg`, nome na tela diferente do real. E o Qt só aceita fonte
+# COLORIDA para emoji — medido: a Noto Emoji monocromática desenha 0 pixels.
+# A Twemoji (COLRv0) desenha; o AppImage traz a Twemoji Mozilla embutida
+# (load_bundled_emoji_font), então nenhuma distro fica sem. No Windows nada
+# disso: a Segoe UI Emoji já entra sozinha, e listar uma fonte nossa antes
+# dela trocaria a do sistema pela nossa.
+EMOJI_FAMILIES = () if engine.plat.IS_WIN else ("Twemoji", "Twemoji Mozilla")
+EMOJI_FONT_FILE = "TwemojiMozilla.ttf"
+
+
+def load_bundled_emoji_font() -> bool:
+    """Registra a Twemoji Mozilla que o AppImage põe em assets/. Fora do AppImage
+    o arquivo não existe e vale a do sistema (se houver). False se não carregou."""
+    caminho = os.path.join(ASSETS, EMOJI_FONT_FILE)
+    if engine.plat.IS_WIN or not os.path.exists(caminho):
+        return False
+    return QFontDatabase.addApplicationFont(caminho) >= 0
 
 
 def _esc(s: str) -> str:
@@ -642,7 +665,7 @@ THEMES = {
 }
 
 _STYLE_TMPL = """
-* {{ font-family: "Inter", "Segoe UI", "Ubuntu", "Noto Sans", sans-serif; font-size: 13px; }}
+* {{ font-family: "Inter", "Segoe UI", "Ubuntu", "Noto Sans", {emoji}sans-serif; font-size: 13px; }}
 QMainWindow, QWidget#central {{ background: {bg0}; }}
 QLabel {{ color: {txt}; background: transparent; }}
 QLabel#title {{ font-size: 17px; font-weight: 700; color: {txt}; }}
@@ -779,7 +802,8 @@ def _dot_icon(color: str, d: int = 12) -> QIcon:
 
 
 def build_style(pal: dict) -> str:
-    return _STYLE_TMPL.format(**pal)
+    emoji = "".join(f'"{f}", ' for f in EMOJI_FAMILIES)
+    return _STYLE_TMPL.format(emoji=emoji, **pal)
 
 
 class ElideLabel(QLabel):
@@ -2473,6 +2497,13 @@ class MainWindow(QMainWindow):
         self.preview.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.preview.setFont(_mono())
         self.preview.setPlaceholderText(t("Select a result to see the snippet…"))
+        # 27/10/2026 (Fable A2): o parágrafo pegava a direção do 1º caractere
+        # forte — linha que começa em árabe/hebraico punha o número da linha à
+        # direita e invertido (`السطر :1`). Parágrafo LTR: o número fica à
+        # esquerda e o trecho RTL segue bidirecional dentro da linha.
+        opt = self.preview.document().defaultTextOption()
+        opt.setTextDirection(Qt.LeftToRight)
+        self.preview.document().setDefaultTextOption(opt)
         self.pv_stack.addWidget(self.preview)
 
         # página 1: mídia (imagem / vídeo / áudio) + transporte
@@ -4476,6 +4507,7 @@ def main():
     _migrate_old_config()
     _liga_registro_de_queda()
     app = QApplication(sys.argv)
+    load_bundled_emoji_font()
     app.setApplicationName("Sombrero File Search")
     app.setApplicationDisplayName("Sombrero File Search")
     # Amarra a janela ao .desktop instalado: sem isto o WM usa o WM_CLASS

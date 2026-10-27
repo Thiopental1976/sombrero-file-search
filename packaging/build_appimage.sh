@@ -52,6 +52,14 @@ FDURL="https://github.com/sharkdp/fd/releases/download/$FDV/fd-$FDV-x86_64-unkno
 RGAV="v0.10.10"  # manter em sincronia com install.sh e build_deb.sh
 RGAURL="https://github.com/phiresky/ripgrep-all/releases/download/$RGAV/ripgrep_all-$RGAV-x86_64-unknown-linux-musl.tar.gz"
 RGASHA="a969c25b182ac84aa672518313b5f741091decf7d93d03a020bcfe517b9ff4e8"
+# Twemoji Mozilla (COLRv0, ~1,5 MB), 27/10/2026: o Qt 6.11 não desenha a Noto
+# Color Emoji COLRv1 de distros novas, e só aceita fonte COLORIDA para emoji
+# (a Noto Emoji monocromática dá 0 pixels) — o emoji do nome sumia na janela.
+# Código Apache-2.0, desenhos CC-BY 4.0 (Twitter): a licença vai junto.
+EMOJIV="v0.7.0"
+EMOJIURL="https://github.com/mozilla/twemoji-colr/releases/download/$EMOJIV/Twemoji.Mozilla.ttf"
+EMOJILIC="https://raw.githubusercontent.com/mozilla/twemoji-colr/$EMOJIV/LICENSE.md"
+EMOJISHA="6d90152ee0d29e82fe2a87793af5aa4b7ad13e6538360889e141e81ed299ee8e"
 
 say() { printf '\033[1;36m%s\033[0m\n' "$*"; }
 ok()  { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -74,6 +82,8 @@ fetch "$PYURL" "$CACHE/python-standalone.tar.gz"
 fetch "$RGURL" "$CACHE/ripgrep-$RGV.tar.gz"
 fetch "$FDURL" "$CACHE/fd-$FDV.tar.gz"
 fetch "$RGAURL" "$CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz"
+fetch "$EMOJIURL" "$CACHE/TwemojiMozilla-$EMOJIV.ttf"
+fetch "$EMOJILIC" "$CACHE/TwemojiMozilla-$EMOJIV-LICENSE.md"
 # pdftotext estático: compilado uma vez por versão da poppler e guardado no cache
 POPPLER_V="$(sed -n 's/^POPPLER_V="\(.*\)"$/\1/p' "$SRC/packaging/build_pdftotext_static.sh")"
 PDFT="$CACHE/pdftotext-poppler-$POPPLER_V"
@@ -86,6 +96,8 @@ else
 fi
 echo "$RGASHA  $CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz" | sha256sum -c --quiet - \
   || { rm -f "$CACHE/rga-$RGAV-x86_64-unknown-linux-musl.tar.gz"; echo "sha256 do rga não confere" >&2; exit 1; }
+echo "$EMOJISHA  $CACHE/TwemojiMozilla-$EMOJIV.ttf" | sha256sum -c --quiet - \
+  || { rm -f "$CACHE/TwemojiMozilla-$EMOJIV.ttf"; echo "sha256 da Twemoji Mozilla não confere" >&2; exit 1; }
 
 # --------------------------------------------------------------- AppDir
 appdir="$(mktemp -d)/$APP.AppDir"
@@ -172,6 +184,8 @@ if ldd "$appdir/usr/bin/pdftotext" 2>&1 | grep -q '=>'; then
 fi
 ok "pdftotext $("$appdir/usr/bin/pdftotext" -v 2>&1 | head -1 | sed 's/pdftotext version //')"
 install -m 644 "$PDFT/poppler-COPYING" "$appdir/usr/lib/$APP/licenses/poppler-COPYING"
+install -m 644 "$CACHE/TwemojiMozilla-$EMOJIV.ttf" "$appdir/usr/lib/$APP/assets/TwemojiMozilla.ttf"
+install -m 644 "$CACHE/TwemojiMozilla-$EMOJIV-LICENSE.md" "$appdir/usr/lib/$APP/licenses/TwemojiMozilla-LICENSE.md"
 cat > "$appdir/usr/lib/$APP/licenses/README" <<EOF
 usr/bin/rga and usr/bin/rga-preproc are unmodified release binaries of
 ripgrep-all $RGAV (AGPL-3.0-or-later, license text alongside).
@@ -184,6 +198,12 @@ musl, FreeType, fontconfig, expat, libpng, zlib, bzip2 and brotli (Alpine
 3.20 packages). Build recipe: packaging/build_pdftotext_static.sh in the
 Sombrero source. Poppler source of this exact version:
 https://poppler.freedesktop.org/poppler-$POPPLER_V.tar.xz
+
+assets/TwemojiMozilla.ttf is the unmodified Twemoji Mozilla $EMOJIV font
+(https://github.com/mozilla/twemoji-colr). Font code: Apache-2.0, Mozilla
+Foundation. Emoji graphics: Copyright Twitter, Inc and other contributors,
+CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Full text in
+TwemojiMozilla-LICENSE.md.
 EOF
 
 # AppRun: o ponto de entrada. Duas responsabilidades além de chamar o Python —

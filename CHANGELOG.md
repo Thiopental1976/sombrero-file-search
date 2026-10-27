@@ -50,6 +50,15 @@ Detailed rationale and measurements live in the commit messages and in
 
 ### Fixed
 
+- **Emoji in file names shows up in the window.** On newer distributions
+  (Fedora 44, Bazzite) the system emoji font was not drawn, so
+  `birthday 🎉.jpg` was listed as `birthday .jpg`, a name that differed from
+  the real one. The window now uses Twemoji when the system has it, and the
+  AppImage brings its own (Twemoji Mozilla, 1.5 MB), so emoji shows on any
+  distribution. Searching, copying and exporting already used the real name.
+- **Preview of right-to-left text keeps the line number on the left.** A line
+  starting in Arabic, Hebrew or Persian showed its number on the right and
+  reversed (`:2`).
 - **Windows: accented names survive PowerShell.** When PowerShell captured
   the output of `sfs.exe` (`$r = sfs …`, `| ForEach-Object`), every accented
   path came back mangled: `relatório.txt` arrived as `relat├│rio.txt`, so
