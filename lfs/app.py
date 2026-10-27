@@ -20,10 +20,11 @@ from urllib.parse import quote
 
 from PySide6.QtCore import (Qt, QThread, Signal, QAbstractTableModel, QModelIndex,
                             QUrl, QTimer, QSortFilterProxyModel, QRect, QSize,
-                            QByteArray, QMimeData, QEvent, QObject)
+                            QByteArray, QMimeData, QEvent, QObject, QPointF)
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QFontDatabase, QGuiApplication,
                            QIcon, QImageReader, QPixmap, QKeySequence, QShortcut,
-                           QTextCharFormat, QTextCursor, QTextDocument)
+                           QTextCharFormat, QTextCursor, QTextDocument, QTextLayout,
+                           QPainter, QPalette)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QCheckBox, QLabel, QTableView, QPlainTextEdit,
@@ -861,6 +862,7 @@ class ElideLabel(QLabel):
     def __init__(self, text: str = "", parent=None):
         super().__init__("", parent)
         self._full = ""
+        self._hl = None                     # (termos, case_sensitive, fundo, texto)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.setText(text)
 
@@ -879,6 +881,48 @@ class ElideLabel(QLabel):
         w = max(0, self.width() - 2)
         super().setText(self.fontMetrics().elidedText(self._full, Qt.ElideMiddle, w)
                         if w else self._full)
+
+    def set_highlight(self, terms, cs: bool, bg: str, fg: str):
+        """Realce âmbar dos termos no texto JÁ cortado (27/10/2026: decisão A5 —
+        o caminho no topo da prévia mantém o realce de quando era a 1ª linha do
+        texto). Termo que cair dentro do "…" fica sem realce."""
+        terms = [x for x in (terms or []) if x]
+        self._hl = (terms, cs, QColor(bg), QColor(fg)) if terms else None
+        self.update()
+
+    def _faixas(self, txt: str) -> list:
+        terms, cs = self._hl[0], self._hl[1]
+        alvo = txt if cs else txt.lower()
+        if len(alvo) != len(txt):           # lower() mudou o tamanho: busca exata
+            alvo, cs = txt, True
+        out = []
+        for term in terms:
+            t_ = term if cs else term.lower()
+            i = alvo.find(t_)
+            while i >= 0:
+                out.append((i, len(t_)))
+                i = alvo.find(t_, i + len(t_))
+        return out
+
+    def paintEvent(self, ev):
+        txt = super().text()
+        faixas = self._faixas(txt) if self._hl and txt else []
+        if not faixas:
+            return super().paintEvent(ev)
+        fmt = QTextCharFormat()
+        fmt.setBackground(self._hl[2]); fmt.setForeground(self._hl[3])
+        sels = []
+        for ini, n in faixas:
+            r = QTextLayout.FormatRange()
+            r.start, r.length, r.format = ini, n, fmt
+            sels.append(r)
+        lay = QTextLayout(txt, self.font())
+        lay.beginLayout(); ln = lay.createLine(); ln.setLineWidth(1e6); lay.endLayout()
+        cr = self.contentsRect()
+        p = QPainter(self)
+        p.setPen(self.palette().color(QPalette.WindowText))
+        lay.draw(p, QPointF(cr.left(), cr.top() + (cr.height() - ln.height()) / 2), sels)
+        p.end()
 
 
 def _badge(name: str, present: bool, pal: dict) -> QLabel:
@@ -3888,11 +3932,13 @@ class MainWindow(QMainWindow):
     def _apply_highlight(self):
         """B7: fundo âmbar sobre as ocorrências dos termos positivos no preview."""
         terms = getattr(self, "_hl_terms", None)
+        pal = THEMES[self.theme]
+        self.lbl_pvpath.set_highlight(terms, getattr(self, "_hl_cs", False),
+                                      pal["amber"], pal["on_accent"])
         if not terms:
             self.preview.setExtraSelections([])
             self._pv_matches = []                 # F10a #3: nada a navegar com F3
             return
-        pal = THEMES[self.theme]
         fmt = QTextCharFormat()
         fmt.setBackground(QColor(pal["amber"]))
         fmt.setForeground(QColor(pal["on_accent"]))
