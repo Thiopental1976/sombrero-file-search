@@ -7,10 +7,52 @@
 # Distribuído na esperança de ser útil, mas SEM QUALQUER GARANTIA.
 """Sombrero File Search — CLI (same core as the GUI, for scripts/daemons)."""
 from __future__ import annotations
-import argparse, json, os, shutil, subprocess, sys, time
+import argparse, codecs, json, os, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine, version, componentes
 from engine import Query
+
+
+# Saída capturada no Windows (27/10/2026). O console decodifica o pipe pelo
+# código de página dele (cp850 num Windows pt-BR); o Python escrevia caminhos
+# em UTF-8 e avisos em cp1252, e `$r = sfs … -l` devolvia `relat├│rio.txt` —
+# Test-Path False, script quebrado em todo nome acentuado. Agora a saída
+# REDIRECIONADA sai no código de página do console. No terminal nada muda (o
+# Python escreve direto no console), nem no Linux (lá tudo é UTF-8).
+_ASCII = {"\u2014": "-", "\u2013": "-", "\u2026": "...", "\u00b7": ".",
+          "\u2192": "->", "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"'}
+
+
+def _troca_ascii(err):
+    """Avisos (stderr): símbolo fora do código de página vira o parente ASCII
+    (`—` -> `-`), não `?`. NUNCA usado em caminho — ver _codifica_caminho."""
+    trecho = err.object[err.start:err.end]
+    return "".join(_ASCII.get(c, "?") for c in trecho), err.end
+
+
+codecs.register_error("sfs-console", _troca_ascii)
+
+
+def _codifica_caminho(s: str, cp) -> bytes:
+    """Bytes de uma linha de stdout. cp None: os bytes originais (Linux, ou
+    terminal no Windows). Com cp, letra fora do código de página vira `?` —
+    caractere proibido em nome do Windows, então a linha quebrada nunca aponta
+    para OUTRO arquivo (transliterar `—` em `-` poderia; com `rm` no fim do
+    pipe isso apaga o arquivo errado). Para esses nomes, o caminho é o --json."""
+    return s.encode(cp, "replace") if cp else os.fsencode(s)
+
+
+def _json_bytes(obj, so_ascii: bool) -> bytes:
+    """Uma linha NDJSON. so_ascii (Windows): `\\u00f3` no lugar de `ó` — ASCII
+    puro sobrevive a qualquer código de página, e todo parser lê igual."""
+    return json.dumps(obj, ensure_ascii=so_ascii).encode("utf-8", "surrogatepass") + b"\n"
+
+
+def _e_terminal(stream) -> bool:
+    try:
+        return stream is None or stream.isatty()
+    except (AttributeError, ValueError):
+        return False
 
 
 # A GPL pede que o programa saiba declarar licença e ausência de garantia. Fica
@@ -41,6 +83,12 @@ def main():
     # "unclosed quote". A GUI segue o locale; a CLI, não.
     import i18n
     i18n.set_lang("en")
+    cp = engine.plat.console_codepage()
+    cp_out = None if _e_terminal(sys.stdout) else cp
+    if cp_out:
+        sys.stdout.reconfigure(encoding=cp_out, errors="sfs-console")   # o --version
+    if cp and not _e_terminal(sys.stderr):
+        sys.stderr.reconfigure(encoding=cp, errors="sfs-console")
     ap = argparse.ArgumentParser(description="Broad file search (name + content) over ripgrep/fd.")
     ap.add_argument("path", nargs="+", help="folder(s) to search in")
     ap.add_argument("-V", "--version", action=_PrintNotice, nargs=0,
@@ -180,11 +228,11 @@ def main():
     def parar():
         return pipe["fechado"]
     def emit(s):
-        _escreve(os.fsencode(s))
+        _escreve(_codifica_caminho(s, cp_out))
     def emit_json(obj):
         # surrogatepass: nomes não-UTF-8 sobrevivem como WTF-8; o json escapa \n
         # DENTRO da string, então um nome com quebra de linha nunca racha o NDJSON.
-        _escreve(json.dumps(obj, ensure_ascii=False).encode("utf-8", "surrogatepass") + b"\n")
+        _escreve(_json_bytes(obj, engine.plat.IS_WIN))
     def out_json(m):
         n[0] += 1
         # 09/09/2026: `snapshot` = árvore podada de origem (null = árvore viva);

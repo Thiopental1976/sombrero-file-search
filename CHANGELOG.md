@@ -33,6 +33,17 @@ Detailed rationale and measurements live in the commit messages and in
 
 ### Fixed
 
+- **Windows: accented names survive PowerShell.** When PowerShell captured
+  the output of `sfs.exe` (`$r = sfs …`, `| ForEach-Object`), every accented
+  path came back mangled: `relatório.txt` arrived as `relat├│rio.txt`, so
+  `Test-Path` said False and the script failed. Warnings lost their symbols
+  the same way (`·` became `À`). PowerShell reads a captured program in the
+  console's code page (850 on a Portuguese Windows), and Sombrero was writing
+  UTF-8. Now captured output uses the console's code page. A letter that does
+  not exist in it becomes `?` in a path, never a look-alike that could name
+  another file. `--json` on Windows is plain ASCII (`ó` for `ó`), so every
+  name survives any code page and any JSON reader. Output in the terminal, and
+  everything on Linux, is unchanged.
 - **A folder you cannot read is no longer "nothing found".** Typing a folder
   that denies reading gave "1 directories without permission — partial
   results" and exit 1, as if the search had looked and found nothing. Nothing

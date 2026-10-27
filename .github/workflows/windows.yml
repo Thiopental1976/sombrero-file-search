@@ -100,6 +100,22 @@ jobs:
           if (@($out | Where-Object { $_ -like "*.txt" }).Count -ne 2) { throw "conteúdo: esperava 2" }
           $out = & $sfs $d -c pulmonar -D -l; $out
           if (-not ($out | Where-Object { $_ -like "*relatorio.docx" })) { throw "docx: o leitor embutido não respondeu" }
+          # saída CAPTURADA no código de página do console (27/10/2026): no pt-BR o
+          # PowerShell lê o pipe em cp850 e `relatório` voltava `relat├│rio` (Test-Path False)
+          $nome = "relat$([char]0xF3)rio S$([char]0xE3)o Jos$([char]0xE9).txt"
+          "x" | Set-Content -LiteralPath (Join-Path $d $nome)
+          $antes = [Console]::OutputEncoding
+          foreach ($cp in 850, 65001) {
+            [Console]::OutputEncoding = [Text.Encoding]::GetEncoding($cp)
+            $out = @(& $sfs $d -n "relat" -l | Where-Object { $_ })
+            $out
+            if ($out.Count -ne 2) { throw "cp${cp}: esperava 2 caminhos (txt + docx), veio $($out.Count)" }
+            $out | ForEach-Object { if (-not (Test-Path -LiteralPath $_)) { throw "cp${cp}: caminho capturado não existe: $_" } }
+            $js = @(& $sfs $d -n "relat" --json | ConvertFrom-Json | Where-Object { $_.path })
+            if ($js.Count -ne 2) { throw "cp${cp}: --json esperava 2" }
+            $js | ForEach-Object { if (-not (Test-Path -LiteralPath $_.path)) { throw "cp${cp}: --json caminho não existe: $($_.path)" } }
+          }
+          [Console]::OutputEncoding = $antes
           # a janela monta de verdade (o console diz o erro que o SombreroFileSearch.exe não teria onde dizer)
           & $sfs --gui-selftest
           if ($LASTEXITCODE -ne 0) { throw "gui-selftest falhou ($LASTEXITCODE)" }

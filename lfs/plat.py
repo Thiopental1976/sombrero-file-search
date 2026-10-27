@@ -63,6 +63,25 @@ def background_mode() -> bool:
         return False
 
 
+# ------------------------------------------------- saída capturada (console)
+def console_codepage() -> Optional[str]:
+    """Windows: o codec com que o CONSOLE decodifica o que um programa escreve
+    num pipe. O PowerShell (`$r = sfs …`, `| ForEach-Object`) e o `for /f` do
+    cmd leem a saída capturada por [Console]::OutputEncoding, que é este código
+    de página — cp850 num Windows pt-BR, 65001 se o usuário escolheu UTF-8.
+    O Python, sem PYTHONUTF8, escreveria cp1252 (ANSI) ou UTF-8: 27/10/2026 na
+    VM, `relatório.txt` voltava como `relat├│rio.txt` e Test-Path dava False.
+    None no Linux (lá tudo é UTF-8) e em processo sem console."""
+    if not IS_WIN:
+        return None
+    try:
+        import codecs, ctypes
+        cp = ctypes.windll.kernel32.GetConsoleOutputCP()
+        return codecs.lookup("cp%d" % cp).name if cp else None
+    except Exception:
+        return None
+
+
 # ------------------------------------------------------------ pastas do usuário
 APP_DIR_NAME_WIN = "Sombrero File Search"
 APP_DIR_NAME_XDG = "sombrero-file-search"
