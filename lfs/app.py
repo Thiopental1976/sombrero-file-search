@@ -686,6 +686,18 @@ QLineEdit, QSpinBox, QPlainTextEdit {{
     background: {bg1}; color: {txt}; border: 1px solid {border};
     border-radius: 9px; padding: 7px 10px; selection-background-color: {accent_dim}; }}
 QLineEdit:focus, QSpinBox:focus {{ border: 1px solid {accent}; }}
+/* 27/10/2026: setinhas do QSpinBox ("Last"). Com a borda arredondada no QSS o
+   estilo nativo desenhava os botões soltos, como caixinhas vazias. */
+QSpinBox {{ padding-right: 18px; }}
+QSpinBox::up-button, QSpinBox::down-button {{ subcontrol-origin: border; width: 16px;
+    background: transparent; border: 0; }}
+QSpinBox::up-button {{ subcontrol-position: top right; margin: 3px 3px 0 0; }}
+QSpinBox::down-button {{ subcontrol-position: bottom right; margin: 0 3px 3px 0; }}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background: {bg3}; border-radius: 4px; }}
+QSpinBox::up-arrow {{ image: url("{seta_cima}"); width: 8px; height: 8px; }}
+QSpinBox::down-arrow {{ image: url("{seta_baixo}"); width: 8px; height: 8px; }}
+QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off,
+QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off {{ image: none; }}
 QLineEdit#primaryfield {{ font-size: 14px; padding: 9px 12px; }}
 QPlainTextEdit {{ padding: 8px 10px; }}
 
@@ -706,7 +718,9 @@ QCheckBox {{ color: {muted}; background: {bg1}; border: 1px solid {border};
 QCheckBox:hover {{ border-color: {border2}; color: {txt}; }}
 QCheckBox:checked {{ color: {on_accent}; background: {accent}; border-color: {accent}; font-weight: 600; }}
 QCheckBox:disabled {{ color: {muted}; background: {bg0}; border-color: {border}; }}
-QCheckBox::indicator {{ width: 0; height: 0; }}
+/* 27/10/2026: só width/height 0 não bastava — o estilo ainda desenhava a marca
+   de "ligado" (um risquinho antes do texto). Sem borda, fundo nem imagem. */
+QCheckBox::indicator {{ width: 0; height: 0; margin: 0; border: 0; background: transparent; image: none; }}
 
 QTableView {{ background: {bg1}; color: {txt}; border: 1px solid {border};
     border-radius: 12px; gridline-color: {bg2};
@@ -809,9 +823,33 @@ def _dot_icon(color: str, d: int = 12) -> QIcon:
     return QIcon(pm)
 
 
+def _setas_spinbox(pal: dict) -> tuple:
+    """SVGs das setinhas do QSpinBox na cor do tema. QSS só aceita imagem por
+    caminho; gravamos no cache (um par por cor) e devolvemos os caminhos com "/",
+    que é o que o url() do Qt entende também no Windows."""
+    cor = pal["muted"]
+    pasta = os.path.join(engine.plat.cache_dir(), "qss")
+    out = []
+    for nome, pts in (("cima", "1,6 5,2 9,6"), ("baixo", "1,2 5,6 9,2")):
+        p = os.path.join(pasta, f"seta_{nome}_{cor.lstrip('#')}.svg")
+        if not os.path.exists(p):
+            try:
+                os.makedirs(pasta, exist_ok=True)
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="8" '
+                            f'viewBox="0 0 10 8"><polyline points="{pts}" fill="none" '
+                            f'stroke="{cor}" stroke-width="1.6" stroke-linecap="round" '
+                            'stroke-linejoin="round"/></svg>')
+            except OSError:
+                return "", ""                  # sem cache gravável: fica sem seta
+        out.append(p.replace(os.sep, "/"))
+    return tuple(out)
+
+
 def build_style(pal: dict) -> str:
     emoji = "".join(f'"{f}", ' for f in EMOJI_FAMILIES)
-    return _STYLE_TMPL.format(emoji=emoji, **pal)
+    cima, baixo = _setas_spinbox(pal)
+    return _STYLE_TMPL.format(emoji=emoji, seta_cima=cima, seta_baixo=baixo, **pal)
 
 
 class ElideLabel(QLabel):
@@ -1317,6 +1355,9 @@ class SearchTab(QWidget):
         # (C:\Windows\servicing\LCU\Package_for_RollupFix~…) quebrava depois do
         # "C:" e a coluna Pasta mostrava só "C:..."
         self.table.setWordWrap(False)
+        # 27/10/2026: corte no MEIO — o fim do nome (extensão, número do episódio)
+        # e o fim da pasta são o que distingue um resultado do outro.
+        self.table.setTextElideMode(Qt.ElideMiddle)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(28)
         hh = self.table.horizontalHeader()
@@ -2340,7 +2381,7 @@ class MainWindow(QMainWindow):
         r3.addWidget(_pair(t("Size ≥"), self.ed_minsz))
         self.sp_days = QSpinBox(); self.sp_days.setRange(0, 3650)
         self.sp_days.setSpecialValueText("—"); self.sp_days.setSuffix(" d")
-        self.sp_days.setFixedWidth(70)
+        self.sp_days.setFixedWidth(84)           # 27/10: +14 px p/ as setinhas
         r3.addWidget(_pair(t("Last"), self.sp_days))
         sp.addWidget(bar)
 
@@ -2512,7 +2553,15 @@ class MainWindow(QMainWindow):
         opt = self.preview.document().defaultTextOption()
         opt.setTextDirection(Qt.LeftToRight)
         self.preview.document().setDefaultTextOption(opt)
-        self.pv_stack.addWidget(self.preview)
+        # 27/10/2026: o caminho saiu da 1ª linha do texto (NoWrap cortava o fim,
+        # justo o nome do arquivo) para um rótulo próprio com corte no MEIO e o
+        # caminho inteiro no tooltip. Só exibição: copiar/exportar usam m.path.
+        pg0 = QWidget()
+        p0 = QVBoxLayout(pg0); p0.setContentsMargins(0, 0, 0, 0); p0.setSpacing(4)
+        self.lbl_pvpath = ElideLabel(""); self.lbl_pvpath.setObjectName("medianame")
+        self.lbl_pvpath.hide()
+        p0.addWidget(self.lbl_pvpath); p0.addWidget(self.preview, 1)
+        self.pv_stack.addWidget(pg0)
 
         # página 1: mídia (imagem / vídeo / áudio) + transporte
         panel = QWidget()
@@ -2891,7 +2940,7 @@ class MainWindow(QMainWindow):
             tab.model.clear()
             tab.status_text = t("Ready.")
             self.tabs.setTabText(0, t("New search"))
-            self._stop_media(); self.preview.clear(); self.pv_stack.setCurrentIndex(0)
+            self._stop_media(); self.preview.clear(); self._pv_path(); self.pv_stack.setCurrentIndex(0)
             self._on_tab_changed(0)
             return
         self.tabs.removeTab(i)
@@ -3114,7 +3163,7 @@ class MainWindow(QMainWindow):
         self.pv_stack.setCurrentIndex(0)
         tab.table.setSortingEnabled(False)        # B14: ordem de chegada durante a busca
         tab.proxy.sort(-1)
-        tab.model.clear(); self.preview.clear()
+        tab.model.clear(); self.preview.clear(); self._pv_path()
         self.preview.setExtraSelections([])
         self.btn_search.setEnabled(False); self.btn_cancel.setEnabled(True)
         boolexpr = self.ed_content.text().strip() if self.ck_bool.isChecked() else ""
@@ -3808,7 +3857,7 @@ class MainWindow(QMainWindow):
             return
         m = self._match_at_proxy(cur.row()) if cur.isValid() else None
         if not m:
-            self._stop_media(); self.pv_stack.setCurrentIndex(0); self.preview.clear()
+            self._stop_media(); self.pv_stack.setCurrentIndex(0); self.preview.clear(); self._pv_path()
             return
         kind = media_kind(m.path)
         # vídeo/áudio só como mídia se o QtMultimedia existir; imagem sempre
@@ -3818,15 +3867,23 @@ class MainWindow(QMainWindow):
             self._stop_media()
             self.pv_stack.setCurrentIndex(0)
             if m.lines:
-                out = [engine.nome_exibivel(m.path), "─" * 72]
+                self._pv_path(m.path)
+                out = []
                 for ln, txt in m.lines[:200]:
                     loc = f"{ln:>6}: " if ln else "        "
                     out.append(loc + txt)
                 self.preview.setPlainText("\n".join(out))
             else:
                 head = self._peek(m.path)
-                self.preview.setPlainText(engine.nome_exibivel(m.path) + "\n" + "─" * 72 + "\n" + head)
+                self._pv_path(m.path)
+                self.preview.setPlainText(head)
             self._apply_highlight()               # B7: realce dos termos positivos
+
+    def _pv_path(self, path: str = ""):
+        """Caminho no topo da prévia de texto; vazio esconde o rótulo."""
+        nome = engine.nome_exibivel(path) if path else ""
+        self.lbl_pvpath.setText(nome); self.lbl_pvpath.setToolTip(nome)
+        self.lbl_pvpath.setVisible(bool(nome))
 
     def _apply_highlight(self):
         """B7: fundo âmbar sobre as ocorrências dos termos positivos no preview."""

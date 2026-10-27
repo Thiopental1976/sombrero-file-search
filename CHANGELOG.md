@@ -50,6 +50,15 @@ Detailed rationale and measurements live in the commit messages and in
 
 ### Fixed
 
+- **Long names are cut in the middle, not at the end.** In the File and Folder
+  columns and in the path above the preview, a long name used to lose its end —
+  exactly the part that tells `report - part 01.txt` from `report - part 02.txt`.
+  The cut is now in the middle (`report trim… part 02.txt`), and the path above
+  the preview has its own line with the full path in the tooltip. Display only:
+  copy, export and "open terminal here" still use the real path.
+- **Small visual fixes.** The "Last" days field has proper up/down arrows
+  instead of empty boxes, and a checked option chip no longer shows a stray mark
+  before its text.
 - **Emoji in file names shows up in the window.** On newer distributions
   (Fedora 44, Bazzite) the system emoji font was not drawn, so
   `birthday 🎉.jpg` was listed as `birthday .jpg`, a name that differed from
