@@ -56,6 +56,15 @@ Detailed rationale and measurements live in the commit messages and in
   the real one. The window now uses Twemoji when the system has it, and the
   AppImage brings its own (Twemoji Mozilla, 1.5 MB), so emoji shows on any
   distribution. Searching, copying and exporting already used the real name.
+- **Control characters in file names are shown by name.** Linux allows
+  almost any character in a name, including TAB, ESC and DEL. The window
+  showed DEL and ESC as an empty box and TAB as a wide space, without saying
+  so. Now they appear as ⟦TAB⟧, ⟦DEL⟧, ⟦ESC⟧, in italics with a note, the
+  same way as the invisible direction marks. Only the screen changes:
+  searching, copying and exporting use the real name, and a path pasted into
+  the terminal keeps the real character.
+- **A disk with a right-to-left name keeps its time in place.** An Arabic or
+  Hebrew folder name pulled the "0s" after it into the name.
 - **Preview of right-to-left text keeps the line number on the left.** A line
   starting in Arabic, Hebrew or Persian showed its number on the right and
   reversed (`:2`).

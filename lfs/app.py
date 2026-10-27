@@ -257,6 +257,12 @@ def nota_invisivel() -> str:
              "reverses the text direction and is used to disguise file extensions)")
 
 
+def nota_controle() -> str:
+    """Tooltip de nome com caractere de controle (TAB, DEL…), 27/10/2026."""
+    return t("(the name contains a control character, shown as ⟦…⟧ — e.g. TAB or DEL; "
+             "copying and exporting keep the real name)")
+
+
 def notas_do_nome(path: str) -> str:
     """As notas que um nome merece no tooltip ('' se nenhuma)."""
     notas = []
@@ -264,12 +270,14 @@ def notas_do_nome(path: str) -> str:
         notas.append(nota_nome_antigo())
     if engine.tem_invisivel(path):
         notas.append(nota_invisivel())
+    if engine.tem_controle(path):
+        notas.append(nota_controle())
     return "\n".join(notas)
 
 
 def nome_marcado(path: str) -> bool:
     """Itálico na tela: nome em codificação antiga OU com invisível (22/09/2026)."""
-    return engine.tem_bytes_crus(path) or engine.tem_invisivel(path)
+    return engine.tem_bytes_crus(path) or engine.tem_invisivel(path) or engine.tem_controle(path)
 
 
 def _marca_nome_antigo(item, path: str):
@@ -3361,7 +3369,10 @@ class MainWindow(QMainWindow):
             tag = self._KLASS_TAG.get(r["klass"])
             if tag is None:
                 tag = t("network") if r["klass"] == "network" else ""
-            name = _esc(r["name"])
+            # 27/10/2026 (Fable A3): nome RTL puxava o "0s" seguinte para dentro
+            # do trecho árabe ("0 مجلد s"). LRM (U+200E) dos dois lados fecha o
+            # trecho; medido: o isolador FSI…PDI o Qt 6.11 não respeita aqui.
+            name = "\u200e" + _esc(r["name"]) + "\u200e"
             badge = (f'<span style="color:{pal["muted"]}">[{_esc(tag)}]</span> '
                      if tag else "")
             barra = pct = ""

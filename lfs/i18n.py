@@ -146,6 +146,10 @@ _PT = {
     "reverses the text direction and is used to disguise file extensions)":
         "(o nome contém um caractere invisível, mostrado como ⟦…⟧ — ex.: o RLO "
         "inverte a direção do texto e é usado para disfarçar extensões de arquivo)",
+    "(the name contains a control character, shown as ⟦…⟧ — e.g. TAB or DEL; "
+    "copying and exporting keep the real name)":
+        "(o nome contém um caractere de controle, mostrado como ⟦…⟧ — ex.: TAB ou DEL; "
+        "copiar e exportar mantêm o nome real)",
     "Network (not included in All disks)": "Rede (fora de “Todos os discos”)",
 
     # status line

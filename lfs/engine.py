@@ -1135,6 +1135,22 @@ def tem_invisivel(s: str) -> bool:
     return any(ord(c) in _INVISIVEIS for c in s)
 
 
+# ------------------------------------- caracteres de CONTROLE no nome (27/10/2026)
+# No Linux um nome aceita qualquer byte menos "/" e NUL: TAB, ESC, DEL (o
+# "Alt+127" de quem digita códigos)... O Qt desenhava um quadradinho genérico
+# (`a▯b`) e o TAB um espaço largo sem aviso (Fable A6). Agora mostram o nome
+# (⟦DEL⟧, ⟦TAB⟧), como os invisíveis de 22/09 — só na TELA. Diferente deles, a
+# busca NÃO os ignora: não são truque de disfarce, e ninguém os digita por acaso.
+_C0 = ("NUL SOH STX ETX EOT ENQ ACK BEL BS TAB LF VT FF CR SO SI "
+       "DLE DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US").split()
+_MARCA_CONTROLE = {cp: "\u27e6" + nome + "\u27e7" for cp, nome in enumerate(_C0)}
+_MARCA_CONTROLE[0x7F] = "\u27e6DEL\u27e7"
+
+
+def tem_controle(s: str) -> bool:
+    return any(ord(c) < 0x20 or ord(c) == 0x7F for c in s)
+
+
 def sem_invisiveis(s: str) -> str:
     """O nome como a BUSCA o compara: sem os invisíveis (ninguém digita um)."""
     return s.translate(_TIRA_INVISIVEIS)
@@ -1158,7 +1174,10 @@ def nome_exibivel(s: str) -> str:
     if tem_bytes_crus(s):
         s = texto_legivel(os.fsencode(s))
     # invisível perigoso vira marcador visível (⟦RLO⟧…) no lugar exato, 22/09/2026
-    return s.translate(_MARCA_INVISIVEIS) if tem_invisivel(s) else s
+    if tem_invisivel(s):
+        s = s.translate(_MARCA_INVISIVEIS)
+    # e o caractere de controle também (⟦TAB⟧, ⟦DEL⟧…), 27/10/2026
+    return s.translate(_MARCA_CONTROLE) if tem_controle(s) else s
 
 
 def caminho_para_shell(p: str) -> str:
@@ -1167,7 +1186,7 @@ def caminho_para_shell(p: str) -> str:
     colar "laudo_mdico.txt" abria nada. Nome com byte não-UTF-8 sai em quoting
     ANSI-C do bash/zsh — $'/x/laudo_m\\xe9dico.txt' —, com os caracteres UTF-8
     legíveis como estão. Caminho normal sai INTACTO (nada muda para 99% dos casos)."""
-    if not tem_bytes_crus(p) and not tem_invisivel(p):
+    if not tem_bytes_crus(p) and not tem_invisivel(p) and not tem_controle(p):
         return p
     out = []
     for c in p:
