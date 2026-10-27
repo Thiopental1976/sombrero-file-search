@@ -113,6 +113,13 @@ _PT = {
     # preview / media
     "Select a result to see the snippet…":
         "Selecione um resultado para ver o trecho…",
+    # 27/10/2026: painel de pré-visualização (lateral / rodapé), ligar/desligar
+    "Preview": "Pré-visualização",
+    "Show or hide the preview pane (Alt+P).\n"
+    "Drag the divider to resize it; drag it shut to hide.":
+        "Mostra ou oculta o painel de pré-visualização (Alt+P).\n"
+        "Arraste a divisória para redimensionar; arraste até fechar para ocultar.",
+    "Hide the preview pane (Alt+P)": "Ocultar o painel de pré-visualização (Alt+P)",
     "Previous media": "Mídia anterior",
     "Play / pause": "Reproduzir / pausar",
     "Next media": "Próxima mídia",

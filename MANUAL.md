@@ -90,12 +90,21 @@ stops (search is live — the table grows as it runs).
 
 ### Results and preview
 The table lists *File · Folder · Size · Modified · Matches*. Click a column header
-to sort. The preview panel shows:
+to sort. The preview pane shows:
 
-- **Images** — a thumbnail.
+- **Images** — a thumbnail, fitted to the pane (portrait uses the height).
 - **Audio/video** — a player with transport (⏮ ▶/⏸ ⏭), a position slider and
   navigation between the media in the result set.
 - **Text/code** — the matching lines, with the snippet **highlighted**.
+
+The pane sits to the **right** of the list, which keeps the full window height;
+in a **tall** window (portrait monitor, or half a screen) it moves to the bottom
+by itself. Drag the divider to size it (on an ultrawide it can take half the
+screen); the size is remembered separately for each position. The **Preview**
+button (or `Alt+P`, the pane's `×`, or dragging the divider shut) turns the pane
+off for those who only want the list — off, nothing is read from disk for it.
+The disk list has a divider too: pull it to see more lines at once; by default
+it scrolls within 7.
 
 ### Search tabs *(F5)*
 Each tab is an independent search: its own form and its own results. Switching
@@ -110,6 +119,7 @@ another search's form in front of you.
 | `Ctrl+F` | jump to the **results filter** box |
 | `Ctrl+L` | jump to the **paths** field (and select it) |
 | `F3` / `Shift+F3` | next / previous match **inside the preview** |
+| `Alt+P` | show / hide the preview pane |
 | `Ctrl+R` | repeat the tab's search |
 | `Ctrl+N` | new tab |
 | `Ctrl+W` | close tab (the last one doesn't quit — it just empties) |

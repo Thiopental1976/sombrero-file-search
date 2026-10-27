@@ -88,12 +88,21 @@ interrompe (a busca é ao vivo — a tabela cresce enquanto roda).
 
 ### Resultados e preview
 A tabela lista *Arquivo · Pasta · Tamanho · Modificado · Trechos*. Clique numa
-coluna para ordenar. O painel de preview mostra:
+coluna para ordenar. O painel de pré-visualização mostra:
 
-- **Imagens** — miniatura.
+- **Imagens** — miniatura, ajustada ao painel (retrato aproveita a altura).
 - **Áudio/vídeo** — player com transporte (⏮ ▶/⏸ ⏭), barra de posição e navegação
   entre as mídias dos resultados.
 - **Texto/código** — as linhas casadas, com o trecho **destacado**.
+
+O painel fica à **direita** da lista, que assim tem a altura inteira da janela;
+numa janela **em pé** (monitor em retrato, ou meia tela) ele vai para o rodapé
+sozinho. Arraste a divisória para dimensioná-lo (num ultrawide pode tomar metade
+da tela); a largura é lembrada separadamente para cada posição. O botão
+**Pré-visualização** (ou `Alt+P`, ou o `×` do painel, ou arrastar a divisória
+até fechar) desliga o painel para quem só quer a lista — desligado, nada é lido
+do disco para ele. A lista de discos também tem divisória: puxe para ver mais
+linhas de uma vez; o padrão é rolar em 7.
 
 ### Abas de busca *(F5)*
 Cada aba é uma busca independente: seu próprio formulário e seus próprios resultados.
@@ -108,6 +117,7 @@ uma busca com o formulário de outra na frente.
 | `Ctrl+F` | vai para a caixa de **filtro dos resultados** |
 | `Ctrl+L` | vai para o campo de **pastas** (e o seleciona) |
 | `F3` / `Shift+F3` | próximo / anterior match **dentro do preview** |
+| `Alt+P` | liga / desliga o painel de pré-visualização |
 | `Ctrl+R` | repete a busca da aba |
 | `Ctrl+N` | nova aba |
 | `Ctrl+W` | fecha a aba (a última não fecha o programa — ela se esvazia) |

@@ -10,6 +10,23 @@ Detailed rationale and measurements live in the commit messages and in
 
 ### Added
 
+- **Preview pane on the right, and it can be turned off.** The preview used to
+  sit under the result list and take its height: with a photo or a video the
+  list was left with a few rows. It now sits to the right, so the list keeps the
+  whole window height and a portrait photo or phone video fills the tall pane.
+  Drag the divider to size it — there is no low ceiling, on an ultrawide it can
+  take half the screen; the list never shrinks below 420 px. In a tall window
+  (portrait monitor, half a screen) the pane moves back to the bottom by itself,
+  decided by the window's own proportions with a dead band so it does not flip
+  while you resize near square; each position remembers its own size. The
+  **Preview** button next to the tabs, `Alt+P`, the pane's `×` or dragging the
+  divider shut turn it off — off, nothing is read from disk for it. Images are
+  re-read at the pane's size when it grows, so they stay sharp.
+- **The disk list has a divider.** It still scrolls within 7 lines by default;
+  pull the divider to see more disks at once. The choice is remembered, it never
+  grows past the content, and it gives way before the result list drops below
+  5 rows.
+
 - **A missing program is named, with how to get it.** Some searches need
   programs outside Sombrero: `pdftotext` for PDFs, `rga` for documents, `fd`
   and `ripgrep` for speed. When one was missing, it looked like Sombrero had

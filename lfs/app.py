@@ -695,7 +695,16 @@ QHeaderView::section {{ background: {bg2}; color: {muted}; border: 0;
     padding: 7px 8px; font-weight: 600; }}
 QTableCornerButton::section {{ background: {bg2}; border: 0; }}
 
-QSplitter::handle {{ background: transparent; height: 8px; }}
+/* 27/10/2026: duas divisórias arrastáveis (discos↕resultados e resultados↔pré-
+   visualização). Handle transparente em repouso; ao passar o mouse/arrastar ganha
+   cor, senão ninguém descobre que dá para arrastar. */
+QSplitter::handle {{ background: transparent; border-radius: 3px; }}
+QSplitter::handle:vertical {{ height: 8px; }}
+QSplitter::handle:horizontal {{ width: 8px; }}
+QSplitter::handle:hover, QSplitter::handle:pressed {{ background: {border2}; }}
+/* botão de alternar a pré-visualização (canto das abas): marcado = painel aberto */
+QToolButton:checked {{ background: {accent_dim}; border-color: {accent}; color: {txt}; }}
+QFrame#pvpanel {{ background: transparent; border: 0; }}
 
 /* abas (Buscar | Duplicatas e as abas de busca): sem regra, brancas no escuro */
 QTabWidget::pane {{ border: 0; border-top: 1px solid {border}; }}
@@ -771,6 +780,35 @@ def _dot_icon(color: str, d: int = 12) -> QIcon:
 
 def build_style(pal: dict) -> str:
     return _STYLE_TMPL.format(**pal)
+
+
+class ElideLabel(QLabel):
+    """QLabel que corta o texto no MEIO com "…" quando não cabe (27/10/2026). O
+    nome da mídia mora no painel de pré-visualização à direita, que pode ter 250 px:
+    um QLabel comum nunca encolhe abaixo do texto e empurrava a largura mínima do
+    painel inteiro (a divisória travava). Ignored na horizontal = o rótulo aceita
+    qualquer largura; o texto completo fica no tooltip."""
+    def __init__(self, text: str = "", parent=None):
+        super().__init__("", parent)
+        self._full = ""
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setText(text)
+
+    def setText(self, s: str):
+        self._full = s or ""
+        self._elide()
+
+    def text(self) -> str:
+        return self._full
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._elide()
+
+    def _elide(self):
+        w = max(0, self.width() - 2)
+        super().setText(self.fontMetrics().elidedText(self._full, Qt.ElideMiddle, w)
+                        if w else self._full)
 
 
 def _badge(name: str, present: bool, pal: dict) -> QLabel:
@@ -2038,6 +2076,8 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Alt+Return"), self, self.properties)
         QShortcut(QKeySequence(Qt.Key_F3), self, lambda: self._preview_match(+1))
         QShortcut(QKeySequence("Shift+F3"), self, lambda: self._preview_match(-1))
+        # 27/10/2026: Alt+P liga/desliga o painel de pré-visualização (Explorer)
+        QShortcut(QKeySequence("Alt+P"), self, lambda: self.set_preview_visible(not self._pv_on))
         # F5 — conforto: abas, repetir, exportar, salvar.
         QShortcut(QKeySequence("Ctrl+N"), self, lambda: self.new_tab(focus=True))
         QShortcut(QKeySequence("Ctrl+W"), self, self.close_current_tab)
@@ -2294,34 +2334,89 @@ class MainWindow(QMainWindow):
         self.narr_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         nv.addWidget(self.narr_head); nv.addWidget(self.narr_scroll)
         self.narr.setVisible(False)
-        sp.addWidget(self.narr)
+        self._narr_n = 0                 # linhas (locais) desenhadas na última narrativa
+        self._narr_linha = 0.0           # altura medida de UMA linha do rich-text
 
-        # ---------- resultados / preview ----------
-        split = QSplitter(Qt.Vertical)
+        # ---------- resultados / pré-visualização (27/10/2026: À DIREITA) ----------
+        # Até aqui o trecho ficava no RODAPÉ, num divisor vertical: toda altura que
+        # ele tomava saía das LINHAS de resultado — e com foto/vídeo o painel largo e
+        # baixo era o pior dos mundos (queixa do Rodrigo; a mídia de celular é
+        # retrato). À direita, a lista fica com a altura inteira e o painel alto
+        # aproveita a proporção retrato; paisagem se resolve arrastando a
+        # divisória (no ultrawide 3440 px o painel pode ter metade da tela). A
+        # largura escolhida persiste (cfg["pv_w"]); extra de janela vai todo para
+        # a tabela (stretch 1×0), como os painéis laterais de IDE.
+        #
+        # Monitor em RETRATO (Samsung LF24T35 em pé, 1080x1920) inverte a conta: a
+        # janela é alta e estreita, e aí o rodapé é que sobra. O modo é decidido
+        # pela PROPORÇÃO DA JANELA (resizeEvent → _decide_modo), não pelo QScreen:
+        # no Wayland a janela nem sempre sabe em que monitor está, mas sempre sabe
+        # o próprio tamanho — e a regra cobre também janela estreita (meia tela)
+        # em monitor comum. Histerese p/ não oscilar perto do quadrado; o tamanho
+        # do painel é guardado POR MODO (cfg["pv_w"] / cfg["pv_h"]). O mesmo
+        # QSplitter só troca de orientação: nada é reparentado, o vídeo segue tocando.
+        split = QSplitter(Qt.Horizontal)
+        self._pv_modo = "direita"        # "direita" | "baixo" — _aplica_modo troca
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
         self.tabs.setMovable(True)
         self.tabs.setDocumentMode(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.currentChanged.connect(self._on_tab_changed)
+        canto = QWidget(); cl = QHBoxLayout(canto)
+        cl.setContentsMargins(0, 0, 0, 0); cl.setSpacing(6)
+        # botão de ligar/desligar a pré-visualização: quem só quer a LISTA desliga
+        # (nada é lido do disco para o painel enquanto está desligado) — Alt+P,
+        # o mesmo atalho do painel de visualização do Explorer.
+        self.btn_pv = QToolButton(); self.btn_pv.setCheckable(True)
+        self.btn_pv.setText(t("Preview")); self.btn_pv.setCursor(Qt.PointingHandCursor)
+        self.btn_pv.setToolTip(t("Show or hide the preview pane (Alt+P).\n"
+                                 "Drag the divider to resize it; drag it shut to hide."))
+        self.btn_pv.toggled.connect(self.set_preview_visible)
         mais = QToolButton(); mais.setText("  +  ")
         mais.setToolTip(t("New search tab (Ctrl+N)"))
         mais.setCursor(Qt.PointingHandCursor)
         mais.clicked.connect(lambda: self.new_tab(focus=True))
-        self.tabs.setCornerWidget(mais, Qt.TopRightCorner)
+        cl.addWidget(self.btn_pv); cl.addWidget(mais)
+        self.tabs.setCornerWidget(canto, Qt.TopRightCorner)
         self.new_tab()
         split.addWidget(self.tabs)
-
         split.addWidget(self._build_preview())
-        split.setStretchFactor(0, 3); split.setStretchFactor(1, 2)
-        split.setSizes([470, 240])
-        # Tela baixa: o trecho cede primeiro, a tabela nunca fica sem linhas.
+        split.setStretchFactor(0, 1); split.setStretchFactor(1, 0)
+        # Janela estreita: o painel cede (e recolhe) antes de a tabela ficar
+        # inútil; arrastá-lo até fechar equivale a desligar (_on_pv_moved).
         split.setCollapsible(0, False); split.setCollapsible(1, True)
-        self._pv_min = 3 * self.preview.fontMetrics().lineSpacing() + 16
-        self.pv_stack.setMinimumHeight(self._pv_min)
+        # a divisória PARA no piso da tabela: por mais que se puxe o painel, a lista
+        # não fica inútil (o painel é recolhível, então a janela mínima de 620 px
+        # continua válida: 420 + margens cabem)
+        self.tabs.setMinimumWidth(self.RES_LARG_MIN)
         self.split_res = split
+        split.splitterMoved.connect(self._on_pv_moved)
         split.installEventFilter(self)
-        sp.addWidget(split, 1)
+        # mínimos úteis do painel: à direita, o que a barra de transporte precisa
+        # (⏮ ▶ ⏭ + barra + tempo + som), nunca menos que 240 px; embaixo, ~3
+        # linhas de trecho + cabeçalho (regra de 22/10), nunca menos que a mídia
+        self._pv_min_w = max(240, self.pv_panel.minimumSizeHint().width())
+        self._pv_min_h = max(3 * self.preview.fontMetrics().lineSpacing() + 40,
+                             self.pv_panel.minimumSizeHint().height())
+        self._pv_on = bool(self.cfg.get("preview_on", True))
+        self.btn_pv.blockSignals(True); self.btn_pv.setChecked(self._pv_on)
+        self.btn_pv.blockSignals(False)
+        self.pv_panel.setVisible(self._pv_on)
+
+        # ---------- discos ↕ resultados (27/10/2026: divisória arrastável) ----------
+        # A lista de locais rola em NARR_LINHAS linhas por padrão (06/10, Rodrigo);
+        # quem tem dezenas de discos e quer ver mais arrasta — o nº de linhas
+        # escolhido persiste (cfg["narr_lines"]). Teto = o conteúdo (nunca sobra
+        # vazio) e nunca abaixo de RES_LINHAS_MIN linhas de tabela (_ajusta_narrativa).
+        self.split_narr = QSplitter(Qt.Vertical)
+        self.split_narr.addWidget(self.narr)
+        self.split_narr.addWidget(split)
+        self.split_narr.setStretchFactor(0, 0); self.split_narr.setStretchFactor(1, 1)
+        self.split_narr.setCollapsible(0, False); self.split_narr.setCollapsible(1, False)
+        self.split_narr.splitterMoved.connect(self._on_narr_moved)
+        self.split_narr.installEventFilter(self)
+        sp.addWidget(self.split_narr, 1)
 
         # ---------- fila de cópia (visível só quando há operação) ----------
         self.copy_bar = QFrame(); self.copy_bar.setObjectName("toolbar")
@@ -2358,7 +2453,20 @@ class MainWindow(QMainWindow):
 
     # ---- preview (texto ↔ mídia)
     def _build_preview(self) -> QWidget:
+        # 27/10/2026: painel lateral = cabeçalho fino (título + "×" p/ ocultar) sobre
+        # a pilha texto↔mídia. O "×" é o mesmo do fechar-aba: o usuário já o conhece.
+        self.pv_panel = QFrame(); self.pv_panel.setObjectName("pvpanel")
+        pl = QVBoxLayout(self.pv_panel); pl.setContentsMargins(0, 0, 0, 0); pl.setSpacing(4)
+        cab = QHBoxLayout(); cab.setContentsMargins(4, 0, 0, 0); cab.setSpacing(6)
+        lb = QLabel(t("Preview")); lb.setObjectName("section")
+        x = QToolButton(); x.setObjectName("tabclose"); x.setText("×")
+        x.setToolTip(t("Hide the preview pane (Alt+P)")); x.setCursor(Qt.PointingHandCursor)
+        x.setAutoRaise(True)
+        x.clicked.connect(lambda: self.set_preview_visible(False))
+        cab.addWidget(lb); cab.addStretch(1); cab.addWidget(x)
+        pl.addLayout(cab)
         self.pv_stack = QStackedWidget()
+        pl.addWidget(self.pv_stack, 1)
 
         # página 0: trecho de texto
         self.preview = QPlainTextEdit(); self.preview.setReadOnly(True)
@@ -2397,10 +2505,18 @@ class MainWindow(QMainWindow):
             self.audio_out = None
         sv.addWidget(self.media_view)
         pv.addWidget(stage, 1)
+        # a imagem segue o tamanho do PALCO (divisória arrastada, janela
+        # redimensionada): retrato aproveita a altura, paisagem a largura
+        self.media_view.installEventFilter(self)
+        self._img_timer = QTimer(self); self._img_timer.setSingleShot(True)
+        self._img_timer.setInterval(150); self._img_timer.timeout.connect(self._load_image)
 
-        # barra de transporte
+        # barra de transporte — DUAS linhas (27/10/2026): nome em cima, controles
+        # embaixo. Numa só linha os controles + nome exigiam ~600 px e o painel
+        # lateral tem 250–450; o nome é ElideLabel (corta com "…", não empurra).
         bar = QFrame(); bar.setObjectName("mediabar")
-        bl = QHBoxLayout(bar); bl.setContentsMargins(10, 7, 10, 7); bl.setSpacing(9)
+        bv = QVBoxLayout(bar); bv.setContentsMargins(10, 7, 10, 7); bv.setSpacing(4)
+        bl = QHBoxLayout(); bl.setContentsMargins(0, 0, 0, 0); bl.setSpacing(9)
         self.btn_prev = QToolButton(); self.btn_prev.setObjectName("transport")
         self.btn_prev.setText("⏮"); self.btn_prev.setToolTip(t("Previous media"))
         self.btn_prev.clicked.connect(lambda: self._nav_media(-1))
@@ -2414,8 +2530,7 @@ class MainWindow(QMainWindow):
         self.btn_vol.setText("♪✕" if self.muted else "♪")
         self.btn_vol.setToolTip(t("Muted (default for privacy) — click to enable sound"))
         self.btn_vol.clicked.connect(self._toggle_mute)
-        self.lbl_media = QLabel(""); self.lbl_media.setObjectName("medianame")
-        self.lbl_media.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_media = ElideLabel(""); self.lbl_media.setObjectName("medianame")
         self.sld_pos = QSlider(Qt.Horizontal)
         self.sld_pos.setRange(0, 0)
         self.sld_pos.sliderMoved.connect(self._seek)
@@ -2425,15 +2540,189 @@ class MainWindow(QMainWindow):
         self._scrubbing = False
         for w in (self.btn_prev, self.btn_play, self.btn_next):
             bl.addWidget(w)
-        bl.addWidget(self.lbl_media)
         bl.addWidget(self.sld_pos, 1)
         bl.addWidget(self.lbl_time)
         bl.addWidget(self.btn_vol)
+        bv.addWidget(self.lbl_media)
+        bv.addLayout(bl)
         pv.addWidget(bar)
         self.media_bar = bar
 
         self.pv_stack.addWidget(panel)
-        return self.pv_stack
+        return self.pv_panel
+
+    # ---- 27/10/2026: painel lateral — ligar/desligar, largura, divisória dos discos
+    PV_W_PADRAO = 440        # largura inicial do painel à direita (≈ 38 % de 1160)
+    PV_H_PADRAO = 240        # altura inicial do painel embaixo (a de sempre)
+    RES_LARG_MIN = 420       # piso da tabela à direita: abaixo disso o painel recolhe
+    # Histerese do modo: largura/altura < MODO_BAIXO → painel embaixo (janela em pé:
+    # retrato 1080x1920 dá 0,56; meia tela de 1080p dá 0,92); > MODO_DIREITA →
+    # à direita (1366x768 dá 1,78; 1024x705, 1,45). Entre os dois, fica como está
+    # — redimensionar na borda do quadrado não pode ficar trocando de lugar.
+    MODO_BAIXO = 1.0
+    MODO_DIREITA = 1.2
+
+    def _decide_modo(self, w: int, h: int) -> str:
+        r = w / h if h > 0 else 9.9
+        if r < self.MODO_BAIXO:
+            return "baixo"
+        if r > self.MODO_DIREITA:
+            return "direita"
+        return self._pv_modo
+
+    def _aplica_modo(self, modo: str):
+        """Troca a orientação do divisor resultados/painel. É o MESMO splitter com
+        os MESMOS filhos — só a orientação muda — então nada é reparentado e a
+        mídia em reprodução não para. O tamanho do painel no modo novo vem da
+        preferência daquele modo (_reparte_resultados com forcar=True)."""
+        if modo == self._pv_modo:
+            return
+        self._pv_modo = modo
+        self.split_res.setOrientation(Qt.Horizontal if modo == "direita" else Qt.Vertical)
+        QTimer.singleShot(0, lambda: self._reparte_resultados(forcar=True))
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        if getattr(self, "split_res", None) is not None:
+            self._aplica_modo(self._decide_modo(self.width(), self.height()))
+
+    def _pv_min(self) -> int:
+        return self._pv_min_w if self._pv_modo == "direita" else self._pv_min_h
+
+    def _res_min(self) -> int:
+        """Piso da tabela no eixo do modo: largura à direita; embaixo, a altura de
+        RES_LINHAS_MIN linhas mais o que a aba tem além da tabela."""
+        return self.RES_LARG_MIN if self._pv_modo == "direita" else self._res_min_px()
+
+    def set_preview_visible(self, on: bool):
+        """Liga/desliga o painel de pré-visualização (botão no canto das abas, "×"
+        do painel, Alt+P, ou divisória arrastada até fechar). Desligado, NADA é
+        lido do disco para ele (on_select sai cedo) — é o modo "só a lista".
+        Persistido em cfg["preview_on"]."""
+        on = bool(on)
+        self._pv_on = on
+        if self.btn_pv.isChecked() != on:
+            self.btn_pv.blockSignals(True); self.btn_pv.setChecked(on)
+            self.btn_pv.blockSignals(False)
+        if on:
+            self.pv_panel.setVisible(True)
+            QTimer.singleShot(0, lambda: self._reparte_resultados(forcar=True))
+            if getattr(self, "tabs", None) is not None and self.tab is not None:
+                self.on_select(self.table.currentIndex(), QModelIndex())
+        else:
+            self._stop_media()
+            self.pv_panel.setVisible(False)
+        if self.cfg.get("preview_on", True) != on:
+            self.cfg["preview_on"] = on
+            save_cfg(self.cfg)
+
+    def _pv_chave(self) -> str:
+        return "pv_w" if self._pv_modo == "direita" else "pv_h"
+
+    def _pv_pref(self) -> int:
+        """Tamanho do painel que o usuário escolheu NESTE modo (cfg pv_w / pv_h)
+        ou o padrão. Sem teto: no ultrawide o painel pode ter metade da tela; o
+        que limita é o piso da tabela (_res_min), aplicado em _reparte_resultados."""
+        padrao = self.PV_W_PADRAO if self._pv_modo == "direita" else self.PV_H_PADRAO
+        try:
+            v = int(self.cfg.get(self._pv_chave(), padrao))
+        except (TypeError, ValueError):
+            v = padrao
+        return max(self._pv_min(), v)
+
+    def _on_pv_moved(self, pos, index):
+        """Arrasto da divisória resultados↔painel: persiste o tamanho no modo
+        atual; arrastar até fechar (0 px) é o gesto natural de "não quero isso"
+        → desliga."""
+        sizes = self.split_res.sizes()
+        if len(sizes) != 2:
+            return
+        if sizes[1] == 0:
+            self.set_preview_visible(False)
+            return
+        if self.cfg.get(self._pv_chave()) != sizes[1]:
+            self.cfg[self._pv_chave()] = sizes[1]
+            save_cfg(self.cfg)
+        if self.pv_stack.currentIndex() == 1:
+            self._on_media_resized()
+
+    def _on_narr_moved(self, pos, index):
+        """Arrasto da divisória discos↕resultados: guarda o nº de LINHAS visíveis
+        (robusto a fonte/tema), não px. Igual ao padrão → apaga a chave."""
+        if not self._narr_linha:
+            return
+        n = int(round((self.narr_scroll.height() - 2) / self._narr_linha))
+        n = max(1, min(n, self._narr_n))
+        if n == self.NARR_LINHAS:
+            self.cfg.pop("narr_lines", None)
+        else:
+            self.cfg["narr_lines"] = n
+        save_cfg(self.cfg)
+        self._ajusta_narrativa()
+
+    def _narr_extra(self) -> int:
+        """Altura do quadro da narrativa ALÉM da área rolável: margens do layout,
+        espaçamento, cabeçalho e a borda de 1 px do QSS em cima e embaixo."""
+        nv = self.narr.layout()
+        m = nv.contentsMargins()
+        return (m.top() + m.bottom() + nv.spacing()
+                + self.narr_head.sizeHint().height() + 2)
+
+    def _res_min_px(self) -> int:
+        """Altura mínima do bloco de resultados: tudo que não é linha da tabela
+        (barra de abas, filtro, cabeçalho) + RES_LINHAS_MIN linhas."""
+        table = getattr(self.tabs.currentWidget(), "table", None)
+        if table is None:
+            return 0
+        rh = table.verticalHeader().defaultSectionSize()
+        sobra = max(0, self.tabs.height() - table.viewport().height())
+        return sobra + self.RES_LINHAS_MIN * rh
+
+    def _ajusta_narrativa(self):
+        """Dá à narrativa a altura certa dentro da divisória: por padrão
+        min(n, NARR_LINHAS) linhas; se o usuário arrastou, o nº de linhas que ele
+        escolheu. Limites: ≥ 1 linha, ≤ o conteúdo (nunca sobra vazio) e nunca
+        roubar da tabela as RES_LINHAS_MIN linhas (tela baixa). Só mexe na
+        divisória quando o alvo muda — o heartbeat redesenha a cada 0,5 s e não
+        pode ficar brigando com o arrasto."""
+        n, linha = self._narr_n, self._narr_linha
+        if not n or not linha or not self.narr.isVisible():
+            return
+        extra = self._narr_extra()
+        piso = int(round(linha)) + 2 + extra
+        cheio = int(round(linha * n)) + 2 + extra
+        quer_n = self.cfg.get("narr_lines", self.NARR_LINHAS)
+        try:
+            quer_n = max(1, int(quer_n))
+        except (TypeError, ValueError):
+            quer_n = self.NARR_LINHAS
+        alvo = int(round(linha * min(n, quer_n))) + 2 + extra
+        self.narr.setMinimumHeight(piso)
+        self.narr.setMaximumHeight(cheio)
+        sizes = self.split_narr.sizes()
+        total = sum(sizes)
+        if len(sizes) != 2 or total <= 0:
+            return
+        teto = max(piso, min(cheio, total - self._res_min_px()))
+        alvo = max(piso, min(alvo, teto))
+        if sizes[0] != alvo:
+            self.split_narr.setSizes([alvo, total - alvo])
+
+    def _on_media_resized(self):
+        """Palco da mídia mudou de tamanho (divisória, janela): reescala a imagem
+        já decodificada na hora e, se o palco CRESCEU além do que foi decodificado
+        (a leitura é feita já reduzida — B12), relê o arquivo em 150 ms, uma vez
+        só por arrasto, para não ficar borrado."""
+        if self.pv_stack.currentIndex() != 1 or self.media_view.currentWidget() is not self.img_label:
+            return
+        self._rescale_image()
+        pm = getattr(self, "_orig_pixmap", None)
+        orig = getattr(self, "_img_orig", None)
+        if pm and not pm.isNull() and orig and orig.isValid():
+            area = self.media_view.size()
+            if (pm.width() < orig.width() or pm.height() < orig.height()) and \
+                    (area.width() - 4 > pm.width() and area.height() - 4 > pm.height()):
+                self._img_timer.start()
 
     # ---- tema
     def apply_theme(self, name: str):
@@ -3085,9 +3374,11 @@ class MainWindow(QMainWindow):
         larg = max(self.narr_scroll.viewport().width(), 200)
         total = self.narr_body.heightForWidth(larg)
         linha = (total / len(lines)) if total > 0 else self.narr_body.fontMetrics().lineSpacing() + 2
-        alto = int(round(linha * min(len(lines), self.NARR_LINHAS))) + 2
-        self.narr_scroll.setFixedHeight(alto)
+        # 27/10/2026: a altura deixou de ser fixa — vai pela divisória discos↕
+        # resultados (_ajusta_narrativa), que respeita o nº de linhas escolhido
+        self._narr_n, self._narr_linha = len(lines), linha
         self.narr.setVisible(True)
+        self._ajusta_narrativa()
 
     def _launch(self, tab, q, boolexpr):
         tab.pending = None
@@ -3124,8 +3415,13 @@ class MainWindow(QMainWindow):
         ed.selectAll()
 
     def eventFilter(self, obj, ev):
-        if obj is getattr(self, "split_res", None) and ev.type() == QEvent.Resize:
-            QTimer.singleShot(0, self._reparte_resultados)
+        if ev.type() == QEvent.Resize:
+            if obj is getattr(self, "split_res", None):
+                QTimer.singleShot(0, self._reparte_resultados)
+            elif obj is getattr(self, "split_narr", None):
+                QTimer.singleShot(0, self._ajusta_narrativa)
+            elif obj is getattr(self, "media_view", None):
+                self._on_media_resized()
         # F10a #3: ↑/↓ no campo de nome caminham pelo histórico do F5.
         if obj is self.ed_name and ev.type() == QEvent.KeyPress:
             k = ev.key()
@@ -3135,33 +3431,33 @@ class MainWindow(QMainWindow):
                 self._history_step(-1); return True
         return super().eventFilter(obj, ev)
 
-    def _reparte_resultados(self):
-        """22/10/2026 (VM Windows 1024x768): numa tela de 768 px de altura o painel
-        do trecho ficava com o espaço e a tabela com ZERO linhas — medido igual no
-        Linux a 1366x705. Agora, ao redimensionar, a tabela garante RES_LINHAS_MIN
-        linhas; o trecho encolhe até ~3 linhas e, abaixo disso, recolhe (a
-        divisória continua arrastável). Quando volta a caber, o trecho reaparece.
-        Só age no redimensionamento: o arraste do usuário é respeitado."""
+    def _reparte_resultados(self, forcar: bool = False):
+        """22/10/2026 (VM Windows 1024x768): o trecho no rodapé deixava a tabela com
+        ZERO linhas em tela baixa; a regra nasceu vertical. 27/10/2026: vale nos
+        dois modos, no eixo do modo — à direita o painel disputa LARGURA (piso da
+        tabela RES_LARG_MIN), embaixo disputa ALTURA (piso RES_LINHAS_MIN linhas).
+        Ao redimensionar, a tabela garante o piso; o painel encolhe até o mínimo
+        dele e, abaixo disso, recolhe; quando volta a caber, reaparece no tamanho
+        preferido daquele modo, e cresce de volta até ele se tinha sido encolhido.
+        Só age no redimensionamento (e na troca de modo/religar, com forcar=True):
+        o arrasto do usuário é respeitado — ele muda a preferência."""
         split = self.split_res
         sizes = split.sizes()
         total = sum(sizes)
-        table = getattr(self.tabs.currentWidget(), "table", None)
-        if len(sizes) != 2 or total <= 0 or table is None:
+        if len(sizes) != 2 or total <= 0 or not self._pv_on:
             return
-        tabs_px, pv_px = sizes
-        rh = table.verticalHeader().defaultSectionSize()
-        quer = (tabs_px - table.viewport().height()) + self.RES_LINHAS_MIN * rh
-        if pv_px == 0:                            # recolhido: volta quando couber
-            if total >= quer + 2 * self._pv_min:
-                pv_px = max(self._pv_min, min(total * 2 // 5, total - quer))
-                split.setSizes([total - pv_px, pv_px])
+        pv_px = sizes[1]
+        quer = self._res_min()
+        pref = self._pv_pref()
+        # recolhido: só volta quando o tamanho preferido couber INTEIRO (histerese —
+        # senão abre com 1 px a mais e fecha com 1 px a menos)
+        if pv_px == 0 and not forcar and total < quer + pref:
             return
-        if tabs_px >= quer:
-            return
-        pv_px = total - quer
-        if pv_px < self._pv_min:
-            pv_px = 0
-        split.setSizes([total - pv_px, pv_px])
+        alvo = min(pref, max(0, total - quer))
+        if alvo < self._pv_min():
+            alvo = 0
+        if alvo != pv_px:
+            split.setSizes([total - alvo, alvo])
 
     def _history_step(self, direction: int):
         """+1 = mais antigo (↑), -1 = mais novo (↓). A posição -1 é o rascunho que
@@ -3180,7 +3476,7 @@ class MainWindow(QMainWindow):
         """F3 / Shift+F3: pula para a próxima/anterior ocorrência destacada DENTRO
         do preview (rola e seleciona). Opera sobre as posições que o realce já
         calculou — nada de re-buscar. Sem matches (ou preview de mídia), não faz nada."""
-        if self.pv_stack.currentIndex() != 0 or not self._pv_matches:
+        if not self._pv_on or self.pv_stack.currentIndex() != 0 or not self._pv_matches:
             return
         # referência = início do match atual (não o fim da seleção), p/ Shift+F3
         # sair de fato do match corrente em vez de re-selecioná-lo.
@@ -3466,6 +3762,8 @@ class MainWindow(QMainWindow):
 
     # ---- preview
     def on_select(self, cur, prev):
+        if not getattr(self, "_pv_on", True):     # painel desligado: não lê nada do disco
+            return
         m = self._match_at_proxy(cur.row()) if cur.isValid() else None
         if not m:
             self._stop_media(); self.pv_stack.setCurrentIndex(0); self.preview.clear()
@@ -3584,6 +3882,7 @@ class MainWindow(QMainWindow):
         reader = QImageReader(path)
         reader.setAutoTransform(True)
         orig = reader.size()               # lê o cabeçalho, não o raster inteiro
+        self._img_orig = orig              # p/ saber se vale reler quando o palco cresce
         area = self.media_view.size()
         tw, th = max(1, area.width() - 4), max(1, area.height() - 4)
         if orig.isValid() and (orig.width() > tw or orig.height() > th):
@@ -3661,11 +3960,8 @@ class MainWindow(QMainWindow):
         if self.player is not None:
             self.player.setPosition(self.sld_pos.value())
 
-    def resizeEvent(self, ev):
-        super().resizeEvent(ev)
-        if getattr(self, "pv_stack", None) and self.pv_stack.currentIndex() == 1 \
-                and self.media_view.currentWidget() is self.img_label:
-            self._rescale_image()
+    # (27/10/2026: o resizeEvent que reescalava a imagem saiu — o palco da mídia
+    # agora avisa por eventFilter, o que cobre também o arrasto da divisória.)
 
     _PEEK_BYTES = 256 * 1024
 

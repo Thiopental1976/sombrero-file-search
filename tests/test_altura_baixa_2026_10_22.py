@@ -11,6 +11,11 @@ O que se viu na VM, e se mediu igual no Linux (offscreen):
 O que este teste garante:
   1. o trecho NUNCA segura espaço enquanto a tabela está abaixo do piso: ou a
      tabela tem RES_LINHAS_MIN linhas, ou o trecho está recolhido;
+     27/10/2026: o painel foi para a LATERAL DIREITA em janela paisagem (e volta
+     para o rodapé em janela em pé, decidido pela proporção). À direita ele não
+     custa linha nenhuma — o que se garante é que ligar/desligar o painel não
+     muda o nº de linhas da tabela, e que a tabela mantém RES_LARG_MIN de
+     largura. Embaixo (janela em pé) vale a regra original;
   2. quando a janela volta a crescer, o trecho reaparece;
   3. cada aba de busca tem o "×" do tema (QToolButton#tabclose), e ele fecha
      a aba certa;
@@ -79,15 +84,34 @@ for (lw, lh, piso) in [(1024, 705, 4), (1366, 705, 5)]:
     w._render_narrative(_t)
     w.resize(lw, lh); assenta()
     linhas, sizes = estado()
+    ok(w._pv_modo == "direita", f"{lw}x{lh}: janela paisagem → painel à direita ({w._pv_modo})")
+    # 27/10/2026: à direita o painel não disputa altura — desligá-lo não dá altura
+    # ao bloco de resultados (mede-se o bloco, não as linhas: a barra de rolagem
+    # horizontal, que aparece quando a tabela fica mais estreita, come ~11 px)
+    alt_com = w.tabs.height()
+    w.set_preview_visible(False); assenta()
+    alt_sem = w.tabs.height()
+    w.set_preview_visible(True); assenta()
+    ok(alt_sem == alt_com, f"{lw}x{lh}: painel ligado ou desligado, o bloco de resultados tem a mesma altura ({alt_com} px)")
+    ok(sizes[0] >= w.RES_LARG_MIN or sizes[1] == 0,
+       f"{lw}x{lh}: tabela {sizes[0]} px de largura, painel {sizes[1]} px — o painel cede antes")
+    ok(linhas >= piso, f"{lw}x{lh}: tabela com pelo menos {piso} linhas ({linhas})")
+
+# janela EM PÉ (monitor retrato, ou meia tela): o painel volta ao rodapé e aí
+# vale a regra de 22/10 — ou a tabela tem RES_LINHAS_MIN linhas, ou o trecho recolhe
+for (lw, lh) in [(700, 760), (1000, 1800)]:
+    w._render_narrative(_t)
+    w.resize(lw, lh); assenta()
+    linhas, sizes = estado()
+    ok(w._pv_modo == "baixo", f"{lw}x{lh}: janela em pé → painel embaixo ({w._pv_modo})")
     ok(linhas >= w.RES_LINHAS_MIN or sizes[1] == 0,
        f"{lw}x{lh}: tabela {linhas} linha(s), trecho {sizes[1]} px — o trecho cede antes")
-    ok(linhas >= piso, f"{lw}x{lh}: tabela com pelo menos {piso} linhas ({linhas})")
 
 # ---------------------------------------------------------------- 2. volta a crescer
 w.narr.setVisible(False)
 w.resize(1920, 1040); assenta()
 linhas, sizes = estado()
-ok(sizes[1] > 0, f"janela alta de novo: o trecho reaparece ({sizes[1]} px)")
+ok(w._pv_modo == "direita" and sizes[1] > 0, f"janela larga de novo: o painel volta à direita ({sizes[1]} px)")
 ok(linhas >= w.RES_LINHAS_MIN, f"janela alta: tabela com {linhas} linhas")
 
 # ---------------------------------------------------------------- 3. o "×" do tema
