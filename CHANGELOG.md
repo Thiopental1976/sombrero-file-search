@@ -50,6 +50,10 @@ Detailed rationale and measurements live in the commit messages and in
 
 ### Fixed
 
+- **The window opens where you left it.** Position and size were never saved:
+  every start put the window back in the corner at the default size. They are
+  now remembered on close; if that spot is on a monitor that is no longer there,
+  the window is brought back onto the screen.
 - **The preview no longer disappears for good in a mid-size window.** Once the
   pane folded away for lack of room it only came back when its *preferred* size
   fit again — and that size is the one you last dragged, so after using the

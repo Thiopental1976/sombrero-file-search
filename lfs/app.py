@@ -2156,6 +2156,15 @@ class MainWindow(QMainWindow):
         self._tick.setInterval(500)
         self._tick.timeout.connect(self._heartbeat)
         self.cfg = load_cfg()
+        # 28/10/2026 (Rodrigo percebeu abrindo e fechando várias vezes): a janela
+        # nascia sempre no canto, no tamanho padrão — agora volta onde estava. O
+        # _fit_to_screen do 1º show ainda resgata se aquele monitor não existir mais.
+        _g = self.cfg.get("window_geometry")
+        if _g:
+            try:
+                self.restoreGeometry(QByteArray.fromBase64(_g.encode("ascii")))
+            except Exception:
+                pass
         self.copy_q = CopyQueue()                 # F7: fila de cópia (um worker)
         self._jobs: list = []                     # F10b #5: espelho da fila p/ persistir
         # A6: worker persistente — criado UMA vez, vive toda a sessão, dorme na
@@ -3701,6 +3710,11 @@ class MainWindow(QMainWindow):
         esperamos a thread SAIR de fato antes de aceitar o fechamento. Bombeamos
         eventos p/ a UI não congelar; após um teto generoso (o cancelamento já é
         checado a cada bloco/linha, então some em ~1s), forçamos como último recurso."""
+        try:
+            self.cfg["window_geometry"] = bytes(self.saveGeometry().toBase64()).decode("ascii")
+            save_cfg(self.cfg)
+        except Exception:
+            pass
         self._encerra_threads()
         super().closeEvent(ev)
 
