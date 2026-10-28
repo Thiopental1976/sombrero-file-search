@@ -50,6 +50,15 @@ Detailed rationale and measurements live in the commit messages and in
 
 ### Fixed
 
+- **The preview no longer disappears for good in a mid-size window.** Once the
+  pane folded away for lack of room it only came back when its *preferred* size
+  fit again — and that size is the one you last dragged, so after using the
+  window wide on an ultrawide (1573 px) the preview never returned in a normal
+  window. It now comes back as soon as its minimum fits, with a small margin so
+  it does not flicker. A near-square window (between 1.0 and 1.2) no longer
+  stays stuck with the pane at the bottom, where the disk list eats the height:
+  there the width decides — 900 px or more puts the pane beside the list. The
+  pane on the right never takes more than 55 % of the room.
 - **Long names are cut in the middle, not at the end.** In the File and Folder
   columns and in the path above the preview, a long name used to lose its end —
   exactly the part that tells `report - part 01.txt` from `report - part 02.txt`.

@@ -2687,20 +2687,31 @@ class MainWindow(QMainWindow):
     PV_W_PADRAO = 440        # largura inicial do painel à direita (≈ 38 % de 1160)
     PV_H_PADRAO = 240        # altura inicial do painel embaixo (a de sempre)
     RES_LARG_MIN = 420       # piso da tabela à direita: abaixo disso o painel recolhe
+    PV_HISTERESE = 40        # folga (px) sobre o mínimo do painel para ele reaparecer
     # Histerese do modo: largura/altura < MODO_BAIXO → painel embaixo (janela em pé:
     # retrato 1080x1920 dá 0,56; meia tela de 1080p dá 0,92); > MODO_DIREITA →
     # à direita (1366x768 dá 1,78; 1024x705, 1,45). Entre os dois, fica como está
     # — redimensionar na borda do quadrado não pode ficar trocando de lugar.
     MODO_BAIXO = 1.0
     MODO_DIREITA = 1.2
+    # 28/10/2026 (Rodrigo, janela 1108×1024 = 1,08 no ultrawide): na faixa entre os
+    # dois a janela mantinha o modo em que nasceu e podia ficar presa em "baixo",
+    # onde a narrativa dos discos come a altura e a prévia sobra minúscula. Na faixa
+    # quase quadrada quem decide é a LARGURA: com espaço para a tabela e um painel
+    # decente lado a lado (LARG_LADO_A_LADO), à direita; janela estreita (700×760)
+    # continua embaixo. ±40 px de histerese em volta do limiar.
+    LARG_LADO_A_LADO = 900
+    PV_FRACAO_MAX = 0.55     # o painel à direita nunca passa de 55 % (o pv_w do ultrawide
+                             # numa janela menor deixava a tabela no piso de 420 px)
 
     def _decide_modo(self, w: int, h: int) -> str:
         r = w / h if h > 0 else 9.9
-        if r < self.MODO_BAIXO:
+        if r < self.MODO_BAIXO * 0.85:           # em pé de verdade (retrato, meia tela)
             return "baixo"
         if r > self.MODO_DIREITA:
             return "direita"
-        return self._pv_modo
+        folga = 40 if self._pv_modo == "direita" else -40
+        return "direita" if w >= self.LARG_LADO_A_LADO - folga else "baixo"
 
     def _aplica_modo(self, modo: str):
         """Troca a orientação do divisor resultados/painel. É o MESMO splitter com
@@ -3584,11 +3595,15 @@ class MainWindow(QMainWindow):
         pv_px = sizes[1]
         quer = self._res_min()
         pref = self._pv_pref()
-        # recolhido: só volta quando o tamanho preferido couber INTEIRO (histerese —
-        # senão abre com 1 px a mais e fecha com 1 px a menos)
-        if pv_px == 0 and not forcar and total < quer + pref:
+        # recolhido: só volta com folga de PV_HISTERESE sobre o mínimo do painel
+        # (senão abre com 1 px a mais e fecha com 1 px a menos). 28/10/2026: a regra
+        # era "o preferido couber INTEIRO" — com pv_w=1573 gravado no ultrawide, numa
+        # janela de 1108 px a prévia recolhia e NUNCA mais voltava (Rodrigo achou).
+        if pv_px == 0 and not forcar and total - quer < self._pv_min() + self.PV_HISTERESE:
             return
         alvo = min(pref, max(0, total - quer))
+        if self._pv_modo == "direita":
+            alvo = min(alvo, max(self._pv_min(), int(total * self.PV_FRACAO_MAX)))
         if alvo < self._pv_min():
             alvo = 0
         if alvo != pv_px:
