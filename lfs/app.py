@@ -2713,12 +2713,24 @@ class MainWindow(QMainWindow):
     PV_FRACAO_MAX = 0.55     # o painel à direita nunca passa de 55 % (o pv_w do ultrawide
                              # numa janela menor deixava a tabela no piso de 420 px)
 
-    def _decide_modo(self, w: int, h: int) -> str:
+    def _decide_modo(self, w: int, h: int, sobra=None) -> str:
         r = w / h if h > 0 else 9.9
         if r < self.MODO_BAIXO * 0.85:           # em pé de verdade (retrato, meia tela)
             return "baixo"
         if r > self.MODO_DIREITA:
             return "direita"
+        # 29/10/2026 (Rodrigo: "a prévia sempre com boa área, para todos os usuários,
+        # em qualquer janela e monitor"): na faixa quase quadrada, se num dos lados o
+        # painel nem cabe (recolheria a 0 px) e no outro cabe, vai para onde cabe —
+        # 900×880 punha a prévia embaixo, sem altura, e ela sumia. Cabendo nos dois
+        # (ou em nenhum), a largura decide como antes.
+        if sobra is not None:
+            ow, oh = sobra                       # o que a janela tem além do divisor
+            folga = self.PV_HISTERESE
+            cabe_dir = (w - ow) - self.RES_LARG_MIN >= self._pv_min_w + folga
+            cabe_baixo = (h - oh) - self._res_min_px() >= self._pv_min_h + folga
+            if cabe_dir != cabe_baixo:
+                return "direita" if cabe_dir else "baixo"
         folga = 40 if self._pv_modo == "direita" else -40
         return "direita" if w >= self.LARG_LADO_A_LADO - folga else "baixo"
 
@@ -2736,7 +2748,20 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         if getattr(self, "split_res", None) is not None:
-            self._aplica_modo(self._decide_modo(self.width(), self.height()))
+            self._aplica_modo(self._decide_modo(self.width(), self.height(), self._sobra_geo))
+
+    _sobra_geo = None   # (w, h) que a janela tem ALÉM do divisor: cabeçalho, formulário, narrativa
+
+    def _reavalia_modo(self):
+        """29/10/2026: mede, com o layout já assentado, o que a janela tem além do
+        divisor resultados/painel e refaz a escolha do lado. Chamado quando o
+        divisor muda de tamanho (janela, narrativa crescendo/encolhendo) — no
+        resizeEvent o divisor ainda tem o tamanho de antes."""
+        sr = self.split_res
+        if sr.width() <= 0 or sr.height() <= 0:
+            return
+        self._sobra_geo = (self.width() - sr.width(), self.height() - sr.height())
+        self._aplica_modo(self._decide_modo(self.width(), self.height(), self._sobra_geo))
 
     def _pv_min(self) -> int:
         return self._pv_min_w if self._pv_modo == "direita" else self._pv_min_h
@@ -3572,6 +3597,7 @@ class MainWindow(QMainWindow):
     def eventFilter(self, obj, ev):
         if ev.type() == QEvent.Resize:
             if obj is getattr(self, "split_res", None):
+                QTimer.singleShot(0, self._reavalia_modo)
                 QTimer.singleShot(0, self._reparte_resultados)
             elif obj is getattr(self, "split_narr", None):
                 QTimer.singleShot(0, self._ajusta_narrativa)

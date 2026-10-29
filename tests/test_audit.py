@@ -3212,6 +3212,12 @@ def test_narrativa_rola_e_mostra_problemas_primeiro():
             "import app as A\n"
             "from PySide6.QtWidgets import QApplication\n"
             "qa = QApplication([]); w = A.MainWindow(); w.show(); qa.processEvents()\n"
+            # 29/10/2026: tamanho FIXO. A tela offscreen (800x800) dava uma janela
+            # 776x752, quase quadrada e estreita, que desde b1bfe8d põe a prévia
+            # EMBAIXO — e aí a altura não cabe 2 linhas de disco + 5 de tabela (a
+            # tabela tem prioridade, como em qualquer janela baixa). O contrato aqui
+            # é a narrativa, não o modo: confere-se nos DOIS modos com altura útil.
+            "w.resize(1160, 800); qa.processEvents()\n"
             "tab = w.tab\n"
             "def poe(ok, err):\n"
             "    tab.root_order[:] = []; tab.roots.clear()\n"
@@ -3230,7 +3236,13 @@ def test_narrativa_rola_e_mostra_problemas_primeiro():
             "assert 'morto0' in txt.split('<br>')[0], 'erro não veio primeiro'\n"
             "assert '29' in head, head\n"
             "h2, corpo2, _, _ = poe(2, 0)\n"
-            "assert abs(h2 - corpo2) <= 4, ('2 locais: a lista devia encolher', h2, corpo2)\n"
+            "assert abs(h2 - corpo2) <= 4, ('2 locais: a lista devia encolher', h2, corpo2)\n"            "assert w._pv_modo == 'direita', w._pv_modo\n"
+            "w.resize(760, 1000); qa.processEvents()\n"
+            "assert w._pv_modo == 'baixo', w._pv_modo\n"
+            "h, corpo, _, _ = poe(13, 29)\n"
+            "assert corpo > h, 'embaixo: com 42 locais a lista tinha de ROLAR'\n"
+            "h2, corpo2, _, _ = poe(2, 0)\n"
+            "assert abs(h2 - corpo2) <= 4, ('embaixo, 2 locais: a lista devia encolher', h2, corpo2)\n"
             "w._encerra_threads(); print('OK')\n") % os.path.join(RAIZ, "lfs")
         env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
         env[ENV_CACHE] = os.path.join(tmp, "cache")

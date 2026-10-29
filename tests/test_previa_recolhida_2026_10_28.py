@@ -8,7 +8,9 @@ ultrawide. Em qualquer janela menor que ~2000 px ela nunca mais aparecia.
 
 Contratos:
   1. com pv_w enorme, encolher até recolher e voltar a 1108 px → prévia visível;
-  2. a histerese continua: 1 px acima do ponto de recolher não reabre.
+  2. a histerese continua: 1 px acima do ponto de recolher não reabre;
+  3. (29/10) quase quadrada: o painel vai para o lado em que cabe — nunca some
+     numa janela que tem espaço para ele de um dos lados.
 
 Rode (com o python que tem PySide6):
     python3 tests/test_previa_recolhida_2026_10_28.py
@@ -77,6 +79,14 @@ if w._pv_modo == "direita":
     w._reparte_resultados(); gira(0.05)
     ok(w.split_res.sizes()[1] > 0, "folga de +60 px reabre (%s)" % w.split_res.sizes())
 w.RES_LARG_MIN = A.MainWindow.RES_LARG_MIN
+# 29/10/2026 (Rodrigo: "a prévia sempre com boa área, em qualquer janela e monitor"):
+# na faixa quase quadrada o painel vai para o lado em que CABE. 900×880 e 776×752
+# punham a prévia embaixo, sem altura, e ela sumia (0 px).
+w.cfg.pop("pv_w", None)
+for lw, lh in [(900, 880), (776, 752), (860, 900), (1000, 1000)]:
+    w.resize(lw, lh); gira(0.4)
+    s = w.split_res.sizes()
+    ok(s[1] >= w._pv_min(), "%dx%d: prévia com área (%s, modo %s)" % (lw, lh, s, w._pv_modo))
 w.resize(600, 1100); gira(0.4)             # retrato de verdade: vai para baixo
 ok(w._pv_modo == "baixo", "janela em pé (0,55): prévia embaixo")
 w.close()

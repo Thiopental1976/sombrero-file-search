@@ -61,8 +61,10 @@ Detailed rationale and measurements live in the commit messages and in
   window. It now comes back as soon as its minimum fits, with a small margin so
   it does not flicker. A near-square window (between 1.0 and 1.2) no longer
   stays stuck with the pane at the bottom, where the disk list eats the height:
-  there the width decides — 900 px or more puts the pane beside the list. The
-  pane on the right never takes more than 55 % of the room.
+  there the pane goes to the side where it actually fits (a 900×880 window used
+  to put it at the bottom with no height left, and it vanished); when it fits on
+  both sides, 900 px of width or more puts it beside the list. The pane on the
+  right never takes more than 55 % of the room.
 - **Long names are cut in the middle, not at the end.** In the File and Folder
   columns and in the path above the preview, a long name used to lose its end —
   exactly the part that tells `report - part 01.txt` from `report - part 02.txt`.
