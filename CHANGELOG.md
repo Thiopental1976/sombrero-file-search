@@ -8,6 +8,15 @@ Detailed rationale and measurements live in the commit messages and in
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-10-29
+
+Several searches can now run at once without waiting for each other: each disk
+moves on to the next search the moment it finishes the previous one. The
+preview moved beside the results and follows the shape of the window. A
+missing helper program is named, with how to get it, and the AppImage reads
+PDFs on any distribution. Plus a round of fixes where names, emoji, right-to-left
+text or an unreadable folder were shown wrong or reported as "nothing found".
+
 ### Added
 
 - **Several searches at once, each disk moving on by itself.** A second search
