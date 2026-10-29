@@ -87,6 +87,22 @@ for lw, lh in [(900, 880), (776, 752), (860, 900), (1000, 1000)]:
     w.resize(lw, lh); gira(0.4)
     s = w.split_res.sizes()
     ok(s[1] >= w._pv_min(), "%dx%d: prévia com área (%s, modo %s)" % (lw, lh, s, w._pv_modo))
+# 29/10/2026: o caso da 2ª captura dele (sfs_geom_1108x1024_previa_minuscula_baixo):
+# a janela vinha do modo "baixo" e a narrativa de 12 discos comia a altura — a
+# imagem ficava com ~50 px. Parte de "baixo", abre os 12 discos e volta a 1108×1024.
+w.resize(600, 1100); gira(0.4)
+ok(w._pv_modo == "baixo", "preparação: começa embaixo (%s)" % w._pv_modo)
+_t = w.tab
+_t.root_order[:] = []; _t.roots.clear()
+for i in range(12):
+    p = "/d%d" % i; _t.root_order.append(p)
+    _t.roots[p] = dict(state="done", klass="hdd", name="Disco%d" % i, found=i, reason="", snap=None)
+_t.t0 = time.time(); w._render_narrative(_t); gira(0.2)
+w.resize(1108, 1024); gira(0.5)
+s = w.split_res.sizes()
+ok(w._pv_modo == "direita", "1108×1024 vindo de 'baixo' com 12 discos: prévia À DIREITA (%s)" % w._pv_modo)
+ok(s[1] >= w._pv_min() and w.split_res.height() > 300,
+   "1108×1024 com 12 discos: prévia com área útil (%s, altura %d)" % (s, w.split_res.height()))
 w.resize(600, 1100); gira(0.4)             # retrato de verdade: vai para baixo
 ok(w._pv_modo == "baixo", "janela em pé (0,55): prévia embaixo")
 w.close()
