@@ -109,6 +109,12 @@ Cada aba é uma busca independente: seu próprio formulário e seus próprios re
 Trocar de aba devolve o formulário **daquela** busca — você nunca olha resultados de
 uma busca com o formulário de outra na frente.
 
+**Várias buscas ao mesmo tempo.** Dispare uma busca, abra uma aba nova (`Ctrl+N`) e dispare
+outra. Cada disco atende uma busca por vez, na ordem em que foram disparadas, e passa para a
+seguinte **assim que termina a anterior** — o disco rápido não espera o lento. Enquanto um
+disco está ocupado, a linha dele na narrativa fica âmbar e diz por qual busca está esperando e
+a posição na fila. Cancelar uma busca que espera tira ela da fila.
+
 | atalho | ação |
 |---|---|
 | `Enter` | dispara a busca (de qualquer campo de busca) |

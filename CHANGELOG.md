@@ -10,6 +10,16 @@ Detailed rationale and measurements live in the commit messages and in
 
 ### Added
 
+- **Several searches at once, each disk moving on by itself.** A second search
+  used to wait for the first one to finish on every disk, so a fast SSD sat idle
+  while a slow USB disk was still being read. Now each physical disk serves one
+  search at a time, first come first served, and enters the next search the
+  moment it leaves the previous one. Disks that a volume group spans are taken
+  together, without deadlock. A waiting disk is shown in amber in the narrative,
+  with the search it waits for and its place in line; the status bar counts the
+  disks waiting. Cancelling a waiting search leaves the line at once. Measured
+  with 3 searches over 12 disks: searches 2 and 3 finished in about 72 s, while
+  the first one took 230 s.
 - **Preview pane on the right, and it can be turned off.** The preview used to
   sit under the result list and take its height: with a photo or a video the
   list was left with a few rows. It now sits to the right, so the list keeps the

@@ -59,11 +59,22 @@
 <section class="demo" aria-label="Demonstração">
   <div class="wrap">
     <figure>
-      <video class="demo-video" autoplay muted loop playsinline width="1280" height="800" poster="../assets/demo_poster.jpg" aria-label="Busca por nome, depois por conteúdo dentro de arquivos PDF e ODT, depois com uma expressão booleana, depois em três discos ao mesmo tempo, com uma barra de andamento para cada um">
-        <source src="../assets/demo.mp4" type="video/mp4">
-        <img src="../assets/demo.gif" width="960" height="600" alt="Busca por nome, depois por conteúdo dentro de arquivos PDF e ODT, depois com uma expressão booleana">
-      </video>
-      <figcaption>Nome → conteúdo <strong>dentro de documentos</strong> (PDF/ODT) → expressão booleana → <strong>três discos ao mesmo tempo</strong>, com uma barra de andamento para cada um. Ao vivo, sem índice.</figcaption>
+      <div class="demo-pair">
+        <div class="demo-item demo-wide">
+          <video class="demo-video" autoplay muted loop playsinline width="1280" height="800" poster="../assets/demo_wide_poster.jpg" aria-label="Três buscas seguidas em quatro discos: cada disco passa para a busca seguinte assim que termina a anterior; depois a prévia, à direita, mostra uma radiografia, uma foto e um vídeo tocando">
+            <source src="../assets/demo_wide.mp4" type="video/mp4">
+            <img src="../assets/demo.gif" width="960" height="600" alt="Três buscas seguidas em quatro discos: cada disco passa para a busca seguinte assim que termina a anterior; depois a prévia, à direita, mostra uma radiografia, uma foto e um vídeo tocando">
+          </video>
+          <span class="demo-label">Janela larga: prévia à direita</span>
+        </div>
+        <div class="demo-item demo-tall">
+          <video class="demo-video" autoplay muted loop playsinline width="720" height="1280" poster="../assets/demo_tall_poster.jpg" aria-label="As mesmas três buscas numa janela alta: a prévia vai para baixo dos resultados e mantém uma área grande para imagens e vídeo">
+            <source src="../assets/demo_tall.mp4" type="video/mp4">
+          </video>
+          <span class="demo-label">Janela alta: prévia embaixo</span>
+        </div>
+      </div>
+      <figcaption>Três buscas seguidas em <strong>quatro discos</strong>. O disco ainda ocupado mostra por quem está esperando; cada disco passa para a <strong>busca seguinte assim que termina a anterior</strong>, sem esperar os outros. Depois, a prévia: radiografia, fotos, um vídeo tocando. Ao vivo, sem índice. <a href="../assets/demo_credits.txt">Imagens: domínio público</a>.</figcaption>
     </figure>
   </div>
 </section>
@@ -121,8 +132,8 @@
       <div class="feat"><span class="tag">Nome + conteúdo</span><p>Glob ou regex, texto simples ou regex, com destaque na prévia.</p></div>
       <div class="feat"><span class="tag">Booleana</span><p><code>(nota OR laudo) AND paciente NOT rascunho</code>, com parênteses e frases entre aspas.</p></div>
       <div class="feat"><span class="tag">Dentro de documentos</span><p>PDF, docx, odt, epub e zip, pelo ripgrep-all embutido. Sem precisar de pandoc.</p></div>
-      <div class="feat"><span class="tag">Prévia de mídia</span><p>Miniaturas e player de áudio e vídeo direto nos resultados.</p></div>
-      <div class="feat"><span class="tag">Abas e exportação</span><p>Abas de busca, buscas salvas, histórico, exportação CSV/JSON, tema claro e escuro.</p></div>
+      <div class="feat"><span class="tag">Prévia de mídia</span><p>Imagens e player de áudio e vídeo ao lado dos resultados: à direita numa janela larga, embaixo numa janela alta.</p></div>
+      <div class="feat"><span class="tag">Buscas em sequência</span><p>Uma busca por aba. Cada disco passa para a busca seguinte assim que termina a anterior. Buscas salvas, histórico, exportação CSV/JSON.</p></div>
       <div class="feat"><span class="tag">Cópia segura</span><p>Nunca move nem apaga. Confere espaço livre, limites do FAT32 e nomes proibidos antes de gravar.</p></div>
       <div class="feat"><span class="tag">Duplicatas</span><p>Acha grupos idênticos byte a byte e nunca apaga. Qual cópia sai é decisão sua.</p></div>
       <div class="feat"><span class="tag">CLI equivalente</span><p>O mesmo motor. <code>--print0</code> para pipelines, <code>--json</code> para scripts, <code>--nice-io</code> para o cron.</p></div>

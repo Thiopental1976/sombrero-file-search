@@ -111,6 +111,12 @@ Each tab is an independent search: its own form and its own results. Switching
 tabs restores **that** search's form — you never look at one search's results with
 another search's form in front of you.
 
+**Several searches at once.** Start a search, open a new tab (`Ctrl+N`) and start another.
+Each disk serves one search at a time, in the order they were started, and moves on to
+the next search **the moment it finishes the previous one** — a fast disk does not wait for a
+slow one. While a disk is busy, its line in the narrative turns amber and says which search it
+is waiting for and its place in line. Cancelling a waiting search takes it out of the line.
+
 | shortcut | action |
 |---|---|
 | `Enter` | run the search (from any search field) |

@@ -58,11 +58,22 @@
 <section class="demo" aria-label="Demo">
   <div class="wrap">
     <figure>
-      <video class="demo-video" autoplay muted loop playsinline width="1280" height="800" poster="assets/demo_poster.jpg" aria-label="Searching by name, then by content inside PDF and ODT files, then with a boolean expression, then across three disks at once with a progress bar for each">
-        <source src="assets/demo.mp4" type="video/mp4">
-        <img src="assets/demo.gif" width="960" height="600" alt="Searching by name, then by content inside PDF and ODT files, then with a boolean expression">
-      </video>
-      <figcaption>Name → content <strong>inside documents</strong> (PDF/ODT) → boolean expression → <strong>three disks at once</strong>, with a progress bar for each. Live, no index.</figcaption>
+      <div class="demo-pair">
+        <div class="demo-item demo-wide">
+          <video class="demo-video" autoplay muted loop playsinline width="1280" height="800" poster="assets/demo_wide_poster.jpg" aria-label="Three searches in a row across four disks: each disk moves on to the next search as soon as it finishes the previous one; then the preview, on the right, shows an X-ray, a photo and a video playing">
+            <source src="assets/demo_wide.mp4" type="video/mp4">
+            <img src="assets/demo.gif" width="960" height="600" alt="Three searches in a row across four disks: each disk moves on to the next search as soon as it finishes the previous one; then the preview, on the right, shows an X-ray, a photo and a video playing">
+          </video>
+          <span class="demo-label">Wide window: preview on the right</span>
+        </div>
+        <div class="demo-item demo-tall">
+          <video class="demo-video" autoplay muted loop playsinline width="720" height="1280" poster="assets/demo_tall_poster.jpg" aria-label="The same three searches in a tall window: the preview moves below the results and keeps a large area for images and video">
+            <source src="assets/demo_tall.mp4" type="video/mp4">
+          </video>
+          <span class="demo-label">Tall window: preview below</span>
+        </div>
+      </div>
+      <figcaption>Three searches in a row over <strong>four disks</strong>. A disk that is still busy shows who it is waiting for; each disk moves on to the <strong>next search the moment it finishes the previous one</strong>, without waiting for the others. Then the preview: X-ray, photos, a video playing. Live, no index. <a href="assets/demo_credits.txt">Images: public domain</a>.</figcaption>
     </figure>
   </div>
 </section>
@@ -119,8 +130,8 @@
       <div class="feat"><span class="tag">Name + content</span><p>Glob or regex, plain text or regex, highlighted in the preview.</p></div>
       <div class="feat"><span class="tag">Boolean</span><p><code>(note OR report) AND patient NOT draft</code>, with parentheses and quoted phrases.</p></div>
       <div class="feat"><span class="tag">Inside documents</span><p>PDF, docx, odt, epub and zip, through a bundled ripgrep-all. No pandoc needed.</p></div>
-      <div class="feat"><span class="tag">Media preview</span><p>Thumbnails and an audio/video player right in the results.</p></div>
-      <div class="feat"><span class="tag">Tabs &amp; export</span><p>Search tabs, saved searches, history, CSV/JSON export, light and dark theme.</p></div>
+      <div class="feat"><span class="tag">Media preview</span><p>Images and an audio/video player beside the results: on the right in a wide window, below in a tall one.</p></div>
+      <div class="feat"><span class="tag">Searches in a row</span><p>One search per tab. Each disk moves on to the next search the moment it finishes the previous one. Saved searches, history, CSV/JSON export.</p></div>
       <div class="feat"><span class="tag">Safe copy</span><p>Never moves or deletes. Checks free space, FAT32 limits and illegal names before writing.</p></div>
       <div class="feat"><span class="tag">Duplicates</span><p>Finds byte-identical groups and never deletes. Which copy goes is your call.</p></div>
       <div class="feat"><span class="tag">Matching CLI</span><p>Same engine. <code>--print0</code> for pipelines, <code>--json</code> for scripts, <code>--nice-io</code> for cron.</p></div>

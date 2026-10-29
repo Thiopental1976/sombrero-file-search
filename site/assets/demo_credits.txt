@@ -1,0 +1,69 @@
+Sombrero File Search — demo videos (demo_wide.mp4, demo_tall.mp4)
+
+The reports in the videos are fictitious text generated for the demo.
+Every image and the video clip shown in the preview are in the public domain
+(CC0, expired copyright, or works of the U.S. federal government), from
+Wikimedia Commons:
+
+bald_eagle.jpg                     Public domain  U.S. Fish and Wildlife Service - Midwest Region
+   https://commons.wikimedia.org/wiki/File:Bald_Eagle_(17709349330).jpg
+bald_eagle_portrait.jpg            Public domain  U.S. Fish and Wildlife Service Headquarters
+   https://commons.wikimedia.org/wiki/File:Bald_eagle_(5585350604).jpg
+bison_calf.jpg                     Public domain  Yellowstone National Park from Yellowstone NP, USA
+   https://commons.wikimedia.org/wiki/File:Bison_calf_(7545258858).jpg
+bison_herd.jpg                     Public domain  Yellowstone National Park from Yellowstone NP, USA
+   https://commons.wikimedia.org/wiki/File:Bison_herd_(7545258246).jpg
+chest_lateral_normal.jpg           CC0            Mikael Häggström
+   https://commons.wikimedia.org/wiki/File:Normal_lateral_chest_radiograph_(X-ray).jpg
+chest_pa_influenza.jpg             CC0            Mikael Häggström, M.D. Author info - Reusing images- Conflicts of interest:  None
+   
+chest_pa_kerley_b_lines.jpg        CC0            Mikael Häggström
+   https://commons.wikimedia.org/wiki/File:Chest_radiograph_of_a_lung_with_Kerley_B_lines.jpg
+chest_pa_normal.jpg                CC0            Mikael Häggström
+   https://commons.wikimedia.org/wiki/File:Normal_posteroanterior_(PA)_chest_radiograph_(X-ray).jpg
+coyote.jpg                         Public domain  USFWS Pacific Southwest Region from Sacramento, US
+   https://commons.wikimedia.org/wiki/File:Coyote_at_the_Sacramento_National_Wildlife_Refuge._Credit_John_Heil_USFWS_(51174787003).jpg
+foot_dorsoplantar.jpg              CC0            Mikael Häggström, M.D. Author info - Reusing images- Conflicts of interest:  None
+   
+foot_oblique.jpg                   CC0            Mikael Häggström, M.D. Author info - Reusing images- Conflicts of interest:  None
+   
+gallatin_overlook.jpg              Public domain  Yellowstone National Park from Yellowstone NP, USA
+   https://commons.wikimedia.org/wiki/File:Looking_south_over_Yellowstone_from_Gallatin_National_Forest_(14924610824).jpg
+green_sea_turtle.jpg               Public domain  National Marine Sanctuaries
+   https://commons.wikimedia.org/wiki/File:Green_Sea_Turtle_(27140739319).jpg
+grizzly_bear_tall.jpg              Public domain  GrandTetonNPS
+   https://commons.wikimedia.org/wiki/File:Grizzly_Bear_(42125179432).jpg
+hand_1895_roentgen.jpg             Public domain  Wilhelm Röntgen
+   https://commons.wikimedia.org/wiki/File:First_medical_X-ray_by_Wilhelm_R%C3%B6ntgen_of_his_wife_Anna_Bertha_Ludwig%27s_hand_-_18951222.jpg
+hayden_valley_winter.jpg           Public domain  NPS Photo
+   https://commons.wikimedia.org/wiki/File:Yellowstone_River_and_Hayden_Valley_in_winter,_Yellowstone_National_Park_(99984dbf-722b-4c4d-8fdb-4cbbda01eba8).jpg
+head_ct_angiography.jpg            CC0            Mikael Häggström
+   https://commons.wikimedia.org/wiki/File:CT_angiography_of_the_head_without_and_with_bone_removal.jpg
+head_ct_coronal.jpg                CC0            Mikael Häggström
+   https://commons.wikimedia.org/wiki/File:CT_scan_of_a_pacchionian_body_-_coronal_plane.jpg
+hip_prosthesis.jpg                 CC0            Mikael Häggström, from source image by Nevit Dilmen
+   https://commons.wikimedia.org/wiki/File:Acetabular_inclination_of_hip_prosthesis.jpg
+jaguar.jpg                         Public domain  USFWS Southwest
+   https://commons.wikimedia.org/wiki/File:Male_Jaguar%E2%80%93Photo_Courtesy_of_UA-USFWS_(14930823946).jpg
+mattamuskeet_sunset.jpg            Public domain  USFWS Headquarters
+   https://commons.wikimedia.org/wiki/File:Usfws-sunset-over-impoundment-mattamuskeet-national-wildlife-refuge_(55249203368).jpg
+Mikael Häggström, M.D.Consent note: Written informed consent was obtained from the individual, including online publication. https://commons.wikimedia.org/wiki/File:Chest_radiograph_in_influensa_and_H_influenzae,_posteroanterior.jpg 
+   
+Mikael Häggström, M.D.           https://commons.wikimedia.org/wiki/File:X-ray_of_normal_right_foot_by_dorsoplantar_projection.jpg 
+   
+Mikael Häggström, M.D.           https://commons.wikimedia.org/wiki/File:X-ray_of_normal_right_foot_by_oblique_projection.jpg 
+   
+red_fox.jpg                        Public domain  USFWSAlaska
+   https://commons.wikimedia.org/wiki/File:Red_Fox_(30010583180).jpg
+red_fox_tall.jpg                   Public domain  U.S. Fish and Wildlife Service - Midwest Region
+   https://commons.wikimedia.org/wiki/File:Red_fox_(52869982404).jpg
+roaring_mountain.jpg               Public domain  Ansel Adams
+   https://commons.wikimedia.org/wiki/File:Yellowstone-Roaring_Mountain_Aat10.jpg
+yellowstone_lake.jpg               Public domain  NPS Photo
+   https://commons.wikimedia.org/wiki/File:Yellowstone_Lake,_Yellowstone_National_Park_(caeea8f9-8b84-4a1d-811e-ed358a1e8211).jpg
+yellowstone_lower_falls.jpg        Public domain  NPS Photo
+   https://commons.wikimedia.org/wiki/File:Lower_Falls,_Yellowstone_National_Park_(b35d539c-a23c-45c3-9bb5-cd21d1b1bae2).jpg
+yellowstone_lower_falls_wide.jpg   Public domain  NPS Photo
+   https://commons.wikimedia.org/wiki/File:Lower_Falls,_Yellowstone_National_Park_(6e25e7ee-b3ce-47dc-b3a8-cd569c6661f9).jpg
+ear_spring_geyser.mp4              Public domain  YellowstoneNPS
+   https://commons.wikimedia.org/wiki/File:Ear_Spring_activity_post-eruption_(2)_(44707092114).webm
