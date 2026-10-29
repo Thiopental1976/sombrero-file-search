@@ -449,6 +449,11 @@ _PT = {
     "network": "rede",
     "unreachable": "inacessível",
     "scanning…": "varrendo…",
+    # 29/10/2026: fila por disco (lfs/vez.py)
+    "another search": "outra busca",
+    "waiting for the “{who}” search ({pos} in line, {sec})":
+        "esperando a busca “{who}” ({pos}º da fila, {sec})",
+    "{n} disk(s) waiting for “{who}”": "{n} disco(s) esperando “{who}”",
     # 24/10/2026: barra de progresso por disco
     "stopped": "parado",
     "first pass here": "primeira passagem aqui",

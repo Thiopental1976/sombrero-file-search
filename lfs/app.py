@@ -394,6 +394,7 @@ class SearchWorker(QThread):
         super().__init__()
         self.q = q
         self.boolexpr = boolexpr
+        self.dono = ""                       # nome da busca na vez do disco (lfs/vez.py)
         self._cancel = False
         self._buf: list[Match] = []
         self._last = 0.0
@@ -423,11 +424,13 @@ class SearchWorker(QThread):
                 tot, dt = boolean.search_boolean(self.q, self.boolexpr, on_result,
                                                  lambda: self._cancel, on_prog, on_phase,
                                                  stats=self.stats,      # N2: conta inacessíveis
-                                                 on_event=lambda ev, info: self.root_event.emit(ev, info))
+                                                 on_event=lambda ev, info: self.root_event.emit(ev, info),
+                                                 dono=self.dono)
             else:
                 tot, dt = engine.search(self.q, on_result, lambda: self._cancel, on_prog,
                                         stats=self.stats,
-                                        on_event=lambda ev, info: self.root_event.emit(ev, info))
+                                        on_event=lambda ev, info: self.root_event.emit(ev, info),
+                                        dono=self.dono)
         except boolean.BooleanError as e:
             self._flush(force=True)
             self.error.emit(humane.human_error(e))
@@ -639,7 +642,10 @@ def _migrate_old_config():
         except OSError:
             pass
 
-def load_cfg() -> dict:
+_CFG_BASE: dict = {}       # o config como a janela o leu (base do merge do save_cfg)
+
+
+def _le_cfg_disco() -> dict:
     try:
         import json
         with open(os.path.expanduser(CONFIG)) as f:
@@ -647,13 +653,39 @@ def load_cfg() -> dict:
     except Exception:
         return {}
 
+
+def load_cfg() -> dict:
+    import copy
+    global _CFG_BASE
+    d = _le_cfg_disco()
+    _CFG_BASE = copy.deepcopy(d)
+    return d
+
+
 def save_cfg(d: dict):
+    """29/10/2026 (Rodrigo): a janela aberta regravava o config INTEIRO com o
+    que tinha na memória e apagava o que outro processo tinha posto lá (a
+    `flash_ativa` sumiu assim). Agora é merge de 3 vias com o disco: a chave que
+    a janela não mexeu desde que leu fica com o valor do disco (inclusive chave
+    nova de fora); a que a janela mudou ou apagou, vale a da janela."""
+    import copy, json
+    global _CFG_BASE
     try:
-        import json
+        disco = _le_cfg_disco()
+        for k in set(disco) | set(d):
+            mexeu = (k in d) != (k in _CFG_BASE) or (k in d and d[k] != _CFG_BASE[k])
+            if mexeu or k not in disco:
+                continue
+            d[k] = copy.deepcopy(disco[k])   # de fora (ou igual): o disco vale
+        for k in [k for k in d if k not in disco and k in _CFG_BASE and d[k] == _CFG_BASE[k]]:
+            del d[k]                          # apagada por fora, intocada aqui
         os.makedirs(os.path.expanduser(CONFIG_DIR), exist_ok=True)
-        with open(os.path.expanduser(CONFIG), "w") as f:
+        tmp = os.path.expanduser(CONFIG) + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(d, f, indent=2)
-    except OSError:
+        os.replace(tmp, os.path.expanduser(CONFIG))   # quem lê no meio não pega meio arquivo
+        _CFG_BASE = copy.deepcopy(d)
+    except (OSError, TypeError, ValueError):
         pass
 
 THEMES = {
@@ -1368,8 +1400,6 @@ class SearchTab(QWidget):
         super().__init__()
         self.win = win
         self.worker: SearchWorker | None = None
-        self.pending: tuple | None = None      # (Query, boolexpr) esperando a vez (SMR)
-        self.serial = False                    # varre disco rotacional? (gate do SMR)
         self.t0 = 0.0
         self.t1 = 0.0                          # fim da busca: o tempo do painel para aí
         self.mode_tag = ""
@@ -1505,7 +1535,6 @@ class SearchTab(QWidget):
     def stop(self):
         """Cancela e ESPERA. Destruir um QThread vivo aborta o processo (mesma
         disciplina do closeEvent) — e fechar a aba leva o worker junto."""
-        self.pending = None
         if self.worker is not None:
             if self.worker.isRunning():
                 self.worker.cancel()
@@ -3050,7 +3079,7 @@ class MainWindow(QMainWindow):
         self.apply_form(tab.form)
         self.status.setText(tab.status_text)
         self.btn_search.setEnabled(not tab.searching)
-        self.btn_cancel.setEnabled(tab.searching or bool(tab.pending))
+        self.btn_cancel.setEnabled(tab.searching)
         self._hl_terms, self._hl_cs = tab.hl_terms, tab.hl_cs
         self._render_narrative(tab)               # F10a #2: painel segue a aba ativa
         self.on_select(tab.table.currentIndex(), QModelIndex())
@@ -3273,28 +3302,12 @@ class MainWindow(QMainWindow):
         if q.documents: modes.append(t("documents"))
         tab.mode_tag = f"  ({' + '.join(modes)})" if modes else ""
         tab.phase_txt = ""                        # opt#4: passo atual (modo booleano)
-        # SMR: duas abas varrendo o MESMO disco rotacional ao mesmo tempo é
-        # exatamente o seek thrash que a serialização interna evita — não
-        # adiantaria serializar dentro de uma busca e deixar duas correrem
-        # soltas. A segunda espera a primeira, e o status diz por quê.
-        if self._must_wait(tab, q):
-            tab.pending = (q, boolexpr)
-            self._set_status(tab, t("Queued — waiting for the other search "
-                                    "(same spinning disk; running both would thrash it)."))
-            return
+        # 29/10/2026 (pedido do Rodrigo, desenho do Fable): a busca parte NA HORA.
+        # Quem espera é o disco: cada HD tem a sua vez (lfs/vez.py), então a 2ª
+        # busca entra em cada disco assim que a 1ª sai dele — nenhum fica ocioso.
+        # O gate antigo (a aba inteira esperava a outra terminar em TODOS os
+        # discos) saiu no mesmo commit, senão seria dupla espera.
         self._launch(tab, q, boolexpr)
-
-    @staticmethod
-    def _serial_paths(q) -> bool:
-        try:
-            return any(disks.path_needs_serial(os.path.abspath(p)) for p in q.paths)
-        except Exception:
-            return False
-
-    def _must_wait(self, tab, q) -> bool:
-        eu = self._serial_paths(q)
-        return any(o is not tab and o.searching and (eu or o.serial)
-                   for o in self._all_tabs())
 
     # ---------------------------------------------------------- F10a #2: narrativa
     # Um painel só, no alto da janela, que conta a história da busca da ABA ATIVA.
@@ -3360,10 +3373,18 @@ class MainWindow(QMainWindow):
             # 09/09/2026 (decisão do Rodrigo): zero no vivo (ou caixa marcada) —
             # a busca foi ESTENDIDA à árvore podada; o rótulo diz que foi
             rec["snap"] = "searched_ostree" if info.get("ostree") else "searched"
+        elif ev == "root_waiting":
+            # 29/10/2026: o disco está com outra busca (lfs/vez.py) — a linha diz
+            # com qual e há quanto tempo; quando a vez chega, root_scanning
+            rec["state"] = "waiting"
+            rec["por"], rec["posicao"] = info.get("por", ""), info.get("posicao", 0)
+            rec["desde"] = info.get("desde") or time.time()
         elif ev == "root_scanning":
             if rec["state"] == "done":            # extensão a snapshots: outra
                 rec["prog"] = None                # passagem, a barra recomeça
                 rec["t_fim"] = None
+            if rec["state"] == "waiting":         # a vez chegou: o relógio do disco
+                rec["t_ini"] = time.time()        # conta a varredura, não a espera
             rec["state"] = "scanning"
             rec["klass"] = info.get("klass", rec["klass"])
         elif ev == "root_skipped":
@@ -3498,7 +3519,7 @@ class MainWindow(QMainWindow):
 
         # problemas primeiro (vistos sem rolar), depois os em varredura, depois os
         # concluídos — cada grupo na ordem original
-        peso = {"skipped": 0, "scanning": 1}
+        peso = {"skipped": 0, "scanning": 1, "waiting": 1.5}
         recs = sorted(recs, key=lambda r: peso.get(r["state"], 2))
         lines = []
         agora = time.time()
@@ -3517,7 +3538,18 @@ class MainWindow(QMainWindow):
             if r["state"] == "skipped" and not booleana:
                 # trilho vazio: o nome fica na mesma coluna dos outros discos
                 barra, pct = self._barra(0, pal["red"], pal["bg3"]), self._pct_col("—", pal)
-            if r["state"] == "skipped":
+            if r["state"] == "waiting":
+                # 29/10/2026: disco com outra busca — âmbar, quem segura e há quanto
+                if not booleana:
+                    barra, pct = self._barra(0, pal["amber"], pal["bg3"]), self._pct_col("—", pal)
+                dot = f'<span style="color:{pal["amber"]}">●</span>'
+                nome = f'{dot} {badge}<span style="color:{pal["txt"]}">{name}</span>'
+                quem = r.get("por") or t("another search")
+                espera = t("waiting for the “{who}” search ({pos} in line, {sec})",
+                           who=quem, pos=r.get("posicao") or 1,
+                           sec=_fmt_elapsed(agora - r.get("desde", agora)))
+                det = f'<span style="color:{pal["amber"]}">— {_esc(espera)}</span>'
+            elif r["state"] == "skipped":
                 dot = f'<span style="color:{pal["red"]}">●</span>'
                 why = _esc(r["reason"])
                 nome = f'{dot} {badge}<span style="color:{pal["red"]}">{name}</span>'
@@ -3561,12 +3593,11 @@ class MainWindow(QMainWindow):
         self._ajusta_narrativa()
 
     def _launch(self, tab, q, boolexpr):
-        tab.pending = None
-        tab.serial = self._serial_paths(q)
         tab.t0, tab.t1 = time.time(), 0.0
         self._reset_narrative(tab)                # F10a #2: nova história começa limpa
         self._set_status(tab, t("Searching…") + tab.mode_tag)
         w = SearchWorker(q, boolexpr)
+        w.dono = searches.title_for(tab.form)    # "esperando a busca «leolulu»" (lfs/vez.py)
         # Cada sinal carrega a ABA a que pertence: uma busca que termina no fundo
         # escreve no modelo e no status DELA, nunca no da aba que está na tela.
         w.batch.connect(tab.model.append)
@@ -3584,7 +3615,7 @@ class MainWindow(QMainWindow):
         """Esc esperto: com busca viva (ou na fila do SMR), cancela; parada,
         limpa o filtro-nos-resultados. Um único Esc faz a coisa óbvia do momento."""
         tab = self.tab
-        if tab.searching or tab.pending:
+        if tab.searching:
             self.cancel_search()
         elif tab.ed_filter.text():
             tab.ed_filter.clear()                 # dispara _on_filter_changed → mostra tudo
@@ -3679,11 +3710,6 @@ class MainWindow(QMainWindow):
 
     def cancel_search(self):
         tab = self.tab
-        if tab.pending:                           # ainda na fila do SMR: nem começou
-            tab.pending = None
-            self._set_status(tab, t("Cancelled before starting."))
-            self.btn_search.setEnabled(True); self.btn_cancel.setEnabled(False)
-            return
         if tab.searching:
             tab.worker.cancel()
             self._set_status(tab, t("Cancelling…"))
@@ -3804,6 +3830,11 @@ class MainWindow(QMainWindow):
         d = self._denied(tab)
         extra = t(" · {d} inaccessible", d=d) if d else ""
         step = f" · {tab.phase_txt}" if tab.phase_txt else ""   # opt#4: passo booleano
+        esperando = [r for r in tab.roots.values() if r["state"] == "waiting"]
+        if esperando:                             # 29/10/2026: fila por disco
+            quem = list(dict.fromkeys(r.get("por") or t("another search") for r in esperando))
+            step += " · " + t("{n} disk(s) waiting for “{who}”", n=len(esperando),
+                              who="”, “".join(quem))
         return t("Searching…{tag}  {n} found · {sec}s{extra}{step}",
                  tag=tab.mode_tag, n=len(tab.model.rows),
                  sec=f"{time.time()-tab.t0:.1f}", extra=extra, step=step)
@@ -3847,16 +3878,6 @@ class MainWindow(QMainWindow):
         self._set_status(tab, t("⚠  Invalid boolean expression: {msg}", msg=msg))
         if tab is self.tab:
             self.btn_search.setEnabled(True); self.btn_cancel.setEnabled(False)
-        self._start_pending()
-
-    def _start_pending(self):
-        """Uma busca acabou: a fila do SMR pode andar."""
-        for tab in self._all_tabs():
-            if tab.pending:
-                q, boolexpr = tab.pending
-                if not self._must_wait(tab, q):
-                    self._launch(tab, q, boolexpr)
-                    return
 
     def on_done(self, tab, tot, dt):
         tab.t1 = time.time()
@@ -3898,7 +3919,6 @@ class MainWindow(QMainWindow):
         if tab is self.tab:                       # F10a #2: congela o painel no estado final
             self._render_narrative(tab)
         self._avisa_componentes(stats)
-        self._start_pending()
 
     def _avisa_componentes(self, stats):
         """26/10/2026 (pedido do Rodrigo): programa ausente no sistema (pdftotext,

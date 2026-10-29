@@ -22,6 +22,10 @@ import os, re, fnmatch, shutil, subprocess, json, stat, sys, time, tempfile
 import base64, codecs, threading
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
+try:
+    from . import vez as _vez
+except Exception:
+    import vez as _vez  # type: ignore
 
 try:                       # pacote (GUI) e flat (cli.py/testes)
     from . import plat
@@ -3486,6 +3490,78 @@ def _funde_stats(dst, src):
 _FILA_MAX = 4096             # contrapressão: o produtor espera se a GUI não drena
 
 
+def _precisa_vez(paths, classes) -> bool:
+    """29/10/2026 (desenho do Fable, fila por disco): entra na vez do disco quem o
+    perfil manda serializar — rotacional, e desconhecido sob /mnt|/media. SSD,
+    rede, gvfs/MTP e "não sei classificar" (classe em texto) ficam soltos."""
+    return any(getattr(classes.get(r), "serialize", False) for r in paths)
+
+
+def _discos_do_grupo(paths) -> frozenset:
+    out = set()
+    for r in paths:
+        try:
+            out |= _vez.discos_de(_chave_de_disco(r))
+        except OSError:
+            pass
+    return frozenset(out)
+
+
+class _Vezes:
+    """As vezes de disco de UMA rodada: toma por grupo, solta por grupo, e no fim
+    solta à força o que um worker preso (read1 que não volta) deixou segurado."""
+
+    def __init__(self, classes, dono, on_event, nome_de=None):
+        self.classes, self.dono, self.on_event = classes, dono, on_event
+        self.nome_de = nome_de or (lambda p: p)
+        self.tickets = []
+
+    def tomar(self, paths, cancel):
+        """Ticket da vez (ou None se o grupo não precisa). Levanta _vez.Cancelado."""
+        if not _precisa_vez(paths, self.classes):
+            return None
+        discos = _discos_do_grupo(paths)
+        if not discos:
+            return None
+        esperou = []
+
+        def on_espera(tk, quem, pos):
+            esperou.append(1)
+            for r in dict.fromkeys(self.nome_de(p) for p in paths):
+                prof = self.classes.get(r)
+                self.on_event("root_waiting", {
+                    "path": r, "klass": getattr(prof, "klass", prof),
+                    "mountpoint": getattr(prof, "mountpoint", None),
+                    "por": quem.dono if quem is not None else "",
+                    "posicao": pos, "desde": tk.t_pedido})
+        tk = _vez.pedir(discos, self.dono, cancel, on_espera)
+        self.tickets.append(tk)
+        if esperou:                          # a vez chegou: a linha volta a "varrendo"
+            for r in dict.fromkeys(self.nome_de(p) for p in paths):
+                prof = self.classes.get(r)
+                self.on_event("root_scanning", {"path": r, "klass": getattr(prof, "klass", prof),
+                                                "mountpoint": getattr(prof, "mountpoint", None)})
+        return tk
+
+    def soltar_tudo(self):
+        for tk in self.tickets:
+            _vez.soltar(tk)                  # idempotente
+
+
+def _sob_vez(vezes, paths, cancel, gerador):
+    """Gerador que só começa a ler o disco quando a vez dele chega, e solta ao
+    terminar (inclusive por close() ou exceção). Cancel na espera = nada."""
+    try:
+        tk = vezes.tomar(paths, cancel) if vezes is not None else None
+    except _vez.Cancelado:
+        return
+    try:
+        yield from gerador()
+    finally:
+        if tk is not None:
+            _vez.soltar(tk)
+
+
 def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None,
                        limite_s: float = 5.0):
     """Roda `fabrica(q_do_grupo, cancel, stats_do_grupo)` em uma thread por grupo
@@ -3593,7 +3669,7 @@ def _iter_particionado(q: Query, cancel, stats, grupos, fabrica, ao_fim=None,
 
 
 def _rodada(q, roots, classes, cancel, stats, on_event, entrega, origem_de=None,
-            dono_de=None, counts=None, eventos_por_grupo=True):
+            dono_de=None, counts=None, eventos_por_grupo=True, dono=""):
     """UMA rodada de varredura sobre `roots` (raízes vivas, ou as árvores
     podadas na extensão), particionada por disco, entregue em streaming pelo
     funil `entrega`. Devolve True se parou antes do fim (teto ou cancel).
@@ -3655,6 +3731,11 @@ def _rodada(q, roots, classes, cancel, stats, on_event, entrega, origem_de=None,
     # fd único de antes. As esperas de I/O soltam o GIL; o ganho é o mesmo.
     paralelo = len(grupos) > 1
     pendentes = set(roots)
+    # 29/10/2026: a vez do disco (lfs/vez.py) — cada grupo espera só o SEU disco
+    # ficar livre de outra busca; na extensão a narrativa fala da raiz dona.
+    vezes = _Vezes(classes, dono, on_event,
+                   (lambda p: dono_de(p) or p) if (origem_de is not None and dono_de is not None)
+                   else None)
     if paralelo:
         def _grupo_terminou(paths, meu=None):
             # o disco acabou: já dá pra fechar a narrativa dos roots dele, sem
@@ -3678,17 +3759,18 @@ def _rodada(q, roots, classes, cancel, stats, on_event, entrega, origem_de=None,
 
         it = _iter_particionado(
             q, cancel, stats, grupos,
-            lambda qq, cc, ss, procs: _fabrica(
+            lambda qq, cc, ss, procs: _sob_vez(vezes, qq.paths, cc, lambda: _fabrica(
                 replace(qq, skip_snapshots=_pula_snapshot(qq.paths, q.skip_snapshots)),
                 cc, ss, procs=procs,
                 jobs=_jobs_para_classe([classes.get(r, "unknown") for r in qq.paths],
-                                       conteudo=bool(q.content))),
+                                       conteudo=bool(q.content)))),
             ao_fim=_grupo_terminou)
     else:
-        it = _fabrica(replace(q, skip_snapshots=_pula_snapshot(roots, q.skip_snapshots)),
-                      cancel, stats,
-                      jobs=_jobs_para_classe([classes.get(r, "unknown") for r in roots],
-                                             conteudo=bool(q.content)))
+        it = _sob_vez(vezes, roots, cancel, lambda: _fabrica(
+            replace(q, skip_snapshots=_pula_snapshot(roots, q.skip_snapshots)),
+            cancel, stats,
+            jobs=_jobs_para_classe([classes.get(r, "unknown") for r in roots],
+                                   conteudo=bool(q.content))))
     parou = False
     try:
         for m in it:
@@ -3714,6 +3796,7 @@ def _rodada(q, roots, classes, cancel, stats, on_event, entrega, origem_de=None,
         fechar = getattr(it, "close", None)
         if fechar is not None:
             fechar()
+        vezes.soltar_tudo()               # worker preso além do teto não segura o disco
     if eventos_por_grupo:
         for r in roots:                   # F11: no modo particionado a maioria já
             if r in pendentes:            # foi anunciada assim que o disco fechou;
@@ -3788,7 +3871,8 @@ def search(q: Query, on_result: Callable[[Match], None],
            cancel: Callable[[], bool] = lambda: False,
            on_progress: Callable[[int], None] = lambda n: None,
            stats: Optional[dict] = None,
-           on_event: Callable[[str, dict], None] = lambda ev, info: None):
+           on_event: Callable[[str, dict], None] = lambda ev, info: None,
+           dono: str = ""):
     """Executa a busca chamando on_result(Match) em streaming.
     Retorna (total_encontrado, segundos). Se `stats` (dict) for passado, recebe
     contadores como stats['denied'] (arquivos inacessíveis vistos no stderr) e
@@ -3828,12 +3912,13 @@ def search(q: Query, on_result: Callable[[Match], None],
     # (varrer junto misturaria vivo e snapshot na ordem de chegada, e o dedup
     # não teria como dar precedência ao vivo).
     parou = _rodada(replace(q, skip_snapshots=True), roots, classes, cancel, stats,
-                    on_event, entrega, dono_de=_dono_vivo, counts=counts)
+                    on_event, entrega, dono_de=_dono_vivo, counts=counts, dono=dono)
     # 09/09/2026: vivo primeiro, podadas só se faltar (ou se pedido). A decisão
     # olha a raiz DIGITADA (q_digitada.paths), não as expandidas.
     _estende_snapshots(replace(q, paths=q_digitada.paths, excluded_paths=q.excluded_paths),
                        roots, classes, counts, parou, cancel, stats, on_event,
-                       entrega, forca_one_fs, _rodada)
+                       entrega, forca_one_fs,
+                       lambda *a, **k: _rodada(*a, dono=dono, **k))
     return entrega.n, time.time() - t0
 
 

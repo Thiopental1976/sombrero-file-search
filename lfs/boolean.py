@@ -625,7 +625,7 @@ def _eval(node, q, cancel, cache, universe_box, restrict=None, pool=None, phase=
 # ------------------------------------------------------------------ API pública
 def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
                    on_progress=lambda n: None, on_phase=None, stats=None,
-                   on_event=lambda ev, info: None):
+                   on_event=lambda ev, info: None, dono: str = ""):
     """Resolve a expressão booleana -> arquivos, então emite Matches com linhas
     dos termos positivos. Retorna (total, segundos).
 
@@ -693,36 +693,61 @@ def search_boolean(q: engine.Query, expr: str, on_result, cancel=lambda: False,
         qq = replace(qq, paths=list(paths))
         grupos = engine._grupos_por_disco(qq.paths)
         phase = fase_da_rodada[0]
+        # 29/10/2026 (fila por disco): a vez é tomada UMA vez por grupo, ao redor
+        # da avaliação inteira — nada dentro (_term_set, _universe_cached, pool do
+        # OR) sabe dela, então as esperas do single-flight (B5) acontecem entre
+        # threads que já estão sob a mesma vez: sem ciclo vez↔Event.
+        vezes = engine._Vezes(classes_, dono, _on_event,
+                              (lambda p: dono_de(p) or p)
+                              if (origem_de is not None and dono_de is not None) else None)
+        nrx = (re.compile(qq.name_patterns[0], 0 if qq.case_sensitive else re.IGNORECASE)
+               if qq.name_is_regex and qq.name_patterns else None)
 
         def _avalia(grupo):
+            try:
+                tk = vezes.tomar(grupo, cancel)
+            except engine._vez.Cancelado:
+                return set(), {}
+            try:
+                return _avalia_sob_vez(grupo, tk is not None)
+            finally:
+                if tk is not None:
+                    engine._vez.soltar(tk)
+
+        def _avalia_sob_vez(grupo, com_vez):
             jobs = engine._jobs_para_classe(
                 [classes_.get(r, "unknown") for r in grupo], conteudo=True)
             qg = replace(qq, paths=list(grupo), rg_threads=jobs)
             cache: dict = {}
             universe_box = [None]
-            workers = _max_workers(qg)       # opt#2: paraleliza OR fora de /mnt
+            # opt#2: paraleliza OR fora de /mnt; disco na vez = um cabeçote, uma varredura
+            workers = 1 if com_vez else _max_workers(qg)
             if workers > 1:
                 with ThreadPoolExecutor(max_workers=workers) as pool:
-                    return _eval(ast, qg, cancel, cache, universe_box, pool=pool, phase=phase, stats=stats)
-            return _eval(ast, qg, cancel, cache, universe_box, phase=phase, stats=stats)
+                    files = _eval(ast, qg, cancel, cache, universe_box, pool=pool, phase=phase, stats=stats)
+            else:
+                files = _eval(ast, qg, cancel, cache, universe_box, phase=phase, stats=stats)
+            # B3: filtro de nome por REGEX (o glob já vai pro rg; regex é pós-filtro no basename)
+            if nrx is not None:
+                files = {f for f in files if nrx.search(os.path.basename(f))}
+            # passada de exibição (P3b, 29/10): linhas dos termos positivos, só nos
+            # arquivos do resultado DESTE disco — dentro da vez dele
+            if not pos or cancel():
+                return files, {}
+            phase.finish_display()           # opt#4: último passo
+            return files, _display_lines(pos, sorted(files), qg, cancel, stats)
 
+        files, lines_by_file = set(), {}
         if len(grupos) > 1:
             # um thread por disco; dentro de cada um, o pool do OR é próprio
             # (sem pool compartilhado não há fome de workers entre grupos)
             with ThreadPoolExecutor(max_workers=len(grupos),
                                     thread_name_prefix="sfs-bool-disco") as pool_g:
-                files = set().union(*pool_g.map(_avalia, grupos))
-        else:
-            files = _avalia(grupos[0]) if grupos else set()
-        # B3: filtro de nome por REGEX (o glob já vai pro rg; regex é pós-filtro no basename)
-        if qq.name_is_regex and qq.name_patterns:
-            nrx = re.compile(qq.name_patterns[0], 0 if qq.case_sensitive else re.IGNORECASE)
-            files = {f for f in files if nrx.search(os.path.basename(f))}
-        # passada de exibição: linhas dos termos positivos, só nos arquivos do resultado
+                for f, ln in pool_g.map(_avalia, grupos):
+                    files |= f; lines_by_file.update(ln)
+        elif grupos:
+            files, lines_by_file = _avalia(grupos[0])
         files_sorted = sorted(files)
-        if pos and not cancel():
-            phase.finish_display()           # opt#4: último passo
-        lines_by_file = _display_lines(pos, files_sorted, qq, cancel, stats) if pos else {}
         for fp in files_sorted:
             if cancel():
                 return True
