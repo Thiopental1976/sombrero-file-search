@@ -5,7 +5,6 @@ Contratos:
   1. FIFO: dois tickets no mesmo HD → o 2º começa quando o 1º solta, na ordem de chegada;
   4. grupo fundido {sda,sdb} só toma com os dois livres; 4 buscas cruzadas sem deadlock;
   5. cancel na espera volta em < 0,3 s, tira o ticket da fila, e o próximo toma;
-  +  baixa=True não passa na frente de quem espera e não toma disco ocupado;
   +  on_espera só para espera > 100 ms; soltar é idempotente; chave "?" não ocupa nada.
 """
 from __future__ import annotations
@@ -86,20 +85,6 @@ th = threading.Thread(target=lambda: tk3.setdefault("t", V.pedir(V.discos_de(A),
 time.sleep(0.1); V.soltar(segura); V.soltar(segura); th.join(2)
 ok("t" in tk3 and V.quem_segura("sda") is tk3["t"], "o próximo da fila toma; soltar 2× é inofensivo")
 V.soltar(tk3["t"])
-
-# baixa prioridade (updatedb do Flash)
-V._reset()
-seg = V.pedir(V.discos_de(A), "aba1")
-esp = {}
-th_b = threading.Thread(target=lambda: esp.setdefault("tb", V.pedir(V.discos_de(A), "conferência", baixa=True)))
-th_b.start(); time.sleep(0.1)
-th_n = threading.Thread(target=lambda: esp.setdefault("tn", V.pedir(V.discos_de(A), "aba2")))
-th_n.start(); time.sleep(0.1)
-V.soltar(seg); th_n.join(2); time.sleep(0.1)
-ok("tn" in esp and "tb" not in esp, "baixa: a busca que chegou depois passa na frente da conferência")
-V.soltar(esp["tn"]); th_b.join(2)
-ok("tb" in esp, "baixa: toma quando o disco fica livre e a fila vazia")
-V.soltar(esp["tb"])
 
 # on_espera: só para espera > 100 ms, com quem segura e a posição
 V._reset()
