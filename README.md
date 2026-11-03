@@ -184,7 +184,14 @@ to search explicitly.
   Precedence `NOT > AND > OR`, parentheses. `AND` narrows the second term to the files the first
   one found; independent `OR` terms run in parallel (`LFS_WORKERS`, default 3).
 - 📄 **Inside documents** — PDF, docx, epub, odt, zip via [ripgrep-all](https://github.com/phiresky/ripgrep-all) (bundled; docx/odt/epub need no pandoc).
-- 🎬 **Media preview** — thumbnails and an audio/video player with transport controls.
+- 🎬 **Media preview** — thumbnails and an audio/video player with transport controls. The pane sits
+  to the right of the results in a wide window and moves below them in a tall one, by itself;
+  `Alt+P` turns it off, and then nothing is read from disk for it.
+- 🚦 **Several searches at once, each disk moving on by itself** — one search per tab; every physical
+  disk serves one search at a time and enters the next one the moment it finishes the previous,
+  so a fast SSD never sits idle behind a slow USB disk. A waiting disk shows, in amber, which search
+  it is waiting for. With 3 searches over 12 disks, searches 2 and 3 finished in about 72 s while
+  the first took 230 s.
 - 🗂️ **Search tabs, saved searches, history, export** to CSV/JSON, light/dark theme.
 - 📁 **Copy files** — never moves or deletes the source; destination pre-flight (free space,
   FAT32 limits, illegal names per filesystem) and **paced writes** to removable and network

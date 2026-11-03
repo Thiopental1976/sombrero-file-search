@@ -187,7 +187,14 @@ buscar explicitamente.
   termo aos arquivos que o primeiro achou; termos `OR` independentes rodam em paralelo
   (`LFS_WORKERS`, padrão 3).
 - 📄 **Dentro de documentos** — PDF, docx, epub, odt, zip via [ripgrep-all](https://github.com/phiresky/ripgrep-all) (embutido; docx/odt/epub sem pandoc).
-- 🎬 **Preview de mídia** — miniaturas e um player de áudio/vídeo com controles de transporte.
+- 🎬 **Preview de mídia** — miniaturas e um player de áudio/vídeo com controles de transporte. O
+  painel fica à direita dos resultados numa janela larga e passa para baixo deles numa janela alta,
+  sozinho; `Alt+P` desliga, e aí nada é lido do disco para ele.
+- 🚦 **Várias buscas ao mesmo tempo, cada disco seguindo sozinho** — uma busca por aba; cada disco
+  físico atende uma busca de cada vez e entra na seguinte assim que termina a anterior, então um SSD
+  rápido nunca fica parado atrás de um disco USB lento. O disco que espera mostra, em âmbar, por qual
+  busca está esperando. Com 3 buscas em 12 discos, a 2ª e a 3ª terminaram em cerca de 72 s, enquanto
+  a 1ª levou 230 s.
 - 🗂️ **Abas de busca, buscas salvas, histórico, exportação** para CSV/JSON, tema claro/escuro.
 - 📁 **Copiar arquivos** — nunca move nem apaga a origem; pré-checagem do destino (espaço livre,
   limites do FAT32, nomes ilegais por sistema de arquivos) e **escrita ritmada** em mídia
