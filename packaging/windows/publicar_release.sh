@@ -38,3 +38,6 @@ if ! grep -q "^## Windows (beta)" <<<"$NOTAS"; then
 Windows 10/11, 64-bit: download \`$(basename "$ZIP")\`, unblock it (Properties → Unblock), extract and run \`SombreroFileSearch.exe\`. No installer, no administrator rights. The Windows build is new and still being tested; Linux is the primary platform. Steps in \`README-Windows.txt\`."
 fi
 echo "anexado a $TAG: $(basename "$ZIP") + README-Windows.txt"
+
+# Somas de conferência: sempre por último, com todos os arquivos já na release.
+packaging/sha256sums.sh "$TAG"
