@@ -171,64 +171,80 @@
   <div class="wrap">
     <div class="eyebrow">Onde ele entra</div>
     <h2>Por que mais um buscador no Linux?</h2>
-    <p>Ferramentas indexadas são ótimas para nomes quando o banco já está atualizado. O Sombrero foi feito para varrer discos ao vivo, entrar no texto de documentos e dizer a verdade quando algo falhou.</p>
+    <p>Cada ferramenta abaixo resolve bem parte do problema. O Sombrero nasceu para juntar o que faltava no mesmo lugar: <strong>sem índice (ao vivo) + dentro de documentos + booleana completa</strong>, somados ao respeito por discos físicos e ao aviso de busca incompleta.</p>
     <div class="tbl cmp-tbl">
       <table>
         <thead>
           <tr>
             <th>Capacidade</th>
             <th class="cmp-col-sfs">Sombrero</th>
-            <th>Indexados (FSearch, Recoll)</th>
-            <th>GUI clássica (Catfish, KFind)</th>
-            <th>CLI (<code>rg</code> / <code>fd</code>)</th>
+            <th>FSearch</th>
+            <th>Recoll</th>
+            <th>Catfish</th>
+            <th>KFind</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td class="what">Sem índice em segundo plano</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Ao vivo por padrão</b></td>
-            <td data-label="Indexados">Usa banco de índice</td>
-            <td data-label="GUI clássica">Depende</td>
-            <td data-label="CLI">Ao vivo</td>
+            <td class="what">Busca sem índice (ao vivo)</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Sim, ao vivo</b></td>
+            <td data-label="FSearch">Não (banco em memória)</td>
+            <td data-label="Recoll">Não (exige índice)</td>
+            <td data-label="Catfish">Parcial (locate + varredura)</td>
+            <td data-label="KFind">Sim (locate opcional)</td>
           </tr>
           <tr>
-            <td class="what">Conteúdo + PDF / docx / odt / epub</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Embutido (<code>rga</code>)</b></td>
-            <td data-label="Indexados">Recoll (indexado)</td>
-            <td data-label="GUI clássica">Texto básico / parcial</td>
-            <td data-label="CLI">Exige <code>rga</code> à parte</td>
+            <td class="what">Texto dentro de arquivos</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Sim</b></td>
+            <td data-label="FSearch">Não documentado</td>
+            <td data-label="Recoll">Sim</td>
+            <td data-label="Catfish">Sim</td>
+            <td data-label="KFind">Sim</td>
           </tr>
           <tr>
-            <td class="what">Expressão booleana (<code>AND</code>/<code>OR</code>/<code>NOT</code>)</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Ao vivo, com parênteses</b></td>
-            <td data-label="Indexados">Sobre o índice</td>
-            <td data-label="GUI clássica">Básica / não</td>
-            <td data-label="CLI">Pipelines manuais</td>
+            <td class="what">Dentro de PDF / docx / odt / epub</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Sim, embutido</b></td>
+            <td data-label="FSearch">Não documentado</td>
+            <td data-label="Recoll">Sim (PDF via ferramenta externa)</td>
+            <td data-label="Catfish">PDF e zip; resto não documentado</td>
+            <td data-label="KFind">ODT/Calligra; PDF/docx não documentado</td>
           </tr>
           <tr>
-            <td class="what">Varredura atenta aos discos (HD / SMR)</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>1 processo por disco físico</b></td>
-            <td data-label="Indexados">Consulta o índice</td>
-            <td data-label="GUI clássica">Varredura única</td>
-            <td data-label="CLI">Por comando</td>
+            <td class="what">Booleana <code>AND</code>/<code>OR</code>/<code>NOT</code> + parênteses</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Sim (ao vivo)</b></td>
+            <td data-label="FSearch">Sim (sobre nomes)</td>
+            <td data-label="Recoll">Sim (sobre o índice)</td>
+            <td data-label="Catfish">Não documentado</td>
+            <td data-label="KFind">Não documentado</td>
           </tr>
           <tr>
-            <td class="what">Avisa resultado incompleto</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Canal único (GUI + exit 2)</b></td>
-            <td data-label="Indexados">Depende do índice em dia</td>
-            <td data-label="GUI clássica">Sem canal unificado</td>
-            <td data-label="CLI">Código de saída, sem resumo</td>
+            <td class="what">Um processo por disco mecânico / SMR</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Sim, automático</b></td>
+            <td data-label="FSearch">Não documentado</td>
+            <td data-label="Recoll">Não documentado</td>
+            <td data-label="Catfish">Não documentado</td>
+            <td data-label="KFind">Não documentado</td>
           </tr>
           <tr>
-            <td class="what">Nunca move nem apaga seus arquivos</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Por princípio</b></td>
-            <td data-label="Indexados">Inclui ações de arquivo</td>
-            <td data-label="GUI clássica">Inclui ações de arquivo</td>
-            <td data-label="CLI">Só busca</td>
+            <td class="what">Avisa quando a busca ficou incompleta</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Sim, GUI e CLI (saída 2)</b></td>
+            <td data-label="FSearch">Não documentado</td>
+            <td data-label="Recoll">Parcial (pula falhas)</td>
+            <td data-label="Catfish">Não documentado</td>
+            <td data-label="KFind">Não documentado</td>
+          </tr>
+          <tr>
+            <td class="what">Apaga ou renomeia arquivos na interface</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Não (só copia)</b></td>
+            <td data-label="FSearch">Não documentado</td>
+            <td data-label="Recoll">Não</td>
+            <td data-label="Catfish">Sim (Delete / F2)</td>
+            <td data-label="KFind">Não documentado</td>
           </tr>
         </tbody>
       </table>
     </div>
+    <p class="muted cmp-note">Conferido na documentação oficial em 23/11/2026 (FSearch 0.3.2, Recoll 1.46.0, Catfish 4.20.1, KFind 26.08.3). “Não documentado” significa que as páginas oficiais não informam — não afirma que o recurso não exista. Na linha de comando, o <code>rg</code> sai com código 2 em erro (sem resumo unificado) e buscar documentos exige configurar o <code>rga</code> à parte.</p>
   </div>
 </section>
 

@@ -169,64 +169,80 @@
   <div class="wrap">
     <div class="eyebrow">Where it fits</div>
     <h2>Why another Linux file searcher?</h2>
-    <p>Indexed tools are great when you only want names and already keep a database warm. Sombrero is built for live sweeps across many disks, document contents and honest answers.</p>
+    <p>Each tool below solves part of the problem well. Sombrero is built for the combination that was missing: <strong>live (no index) + inside documents + full boolean</strong>, plus disk-aware scheduling and honest incomplete-search reporting.</p>
     <div class="tbl cmp-tbl">
       <table>
         <thead>
           <tr>
             <th>Capability</th>
             <th class="cmp-col-sfs">Sombrero</th>
-            <th>Indexed (FSearch, Recoll)</th>
-            <th>Classic GUI (Catfish, KFind)</th>
-            <th>CLI (<code>rg</code> / <code>fd</code>)</th>
+            <th>FSearch</th>
+            <th>Recoll</th>
+            <th>Catfish</th>
+            <th>KFind</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td class="what">No background index</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Live by default</b></td>
-            <td data-label="Indexed">Uses a database</td>
-            <td data-label="Classic GUI">Mixed</td>
-            <td data-label="CLI">Live</td>
+            <td class="what">Index-free (live search)</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes, live</b></td>
+            <td data-label="FSearch">No (in-memory DB)</td>
+            <td data-label="Recoll">No (requires index)</td>
+            <td data-label="Catfish">Partial (locate + walk)</td>
+            <td data-label="KFind">Yes (locate optional)</td>
           </tr>
           <tr>
-            <td class="what">Content + PDF / docx / odt / epub</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Bundled (<code>rga</code>)</b></td>
-            <td data-label="Indexed">Recoll (indexed)</td>
-            <td data-label="Classic GUI">Basic text / limited</td>
-            <td data-label="CLI">Needs <code>rga</code> setup</td>
+            <td class="what">Text inside files</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes</b></td>
+            <td data-label="FSearch">Not documented</td>
+            <td data-label="Recoll">Yes</td>
+            <td data-label="Catfish">Yes</td>
+            <td data-label="KFind">Yes</td>
           </tr>
           <tr>
-            <td class="what">Boolean expressions (<code>AND</code>/<code>OR</code>/<code>NOT</code>)</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Live, with parentheses</b></td>
-            <td data-label="Indexed">Against index</td>
-            <td data-label="Classic GUI">Basic / none</td>
-            <td data-label="CLI">Manual pipelines</td>
+            <td class="what">Inside PDF / docx / odt / epub</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes, bundled</b></td>
+            <td data-label="FSearch">Not documented</td>
+            <td data-label="Recoll">Yes (PDF via external tool)</td>
+            <td data-label="Catfish">PDF &amp; zip; rest not documented</td>
+            <td data-label="KFind">ODT/Calligra; PDF/docx not documented</td>
           </tr>
           <tr>
-            <td class="what">Disk-aware live sweeps (HDD / SMR)</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>1 process per physical disk</b></td>
-            <td data-label="Indexed">Queries index instead</td>
-            <td data-label="Classic GUI">Single walk</td>
-            <td data-label="CLI">Per-command</td>
+            <td class="what">Boolean <code>AND</code>/<code>OR</code>/<code>NOT</code> + parentheses</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes (live)</b></td>
+            <td data-label="FSearch">Yes (on names)</td>
+            <td data-label="Recoll">Yes (on index)</td>
+            <td data-label="Catfish">Not documented</td>
+            <td data-label="KFind">Not documented</td>
+          </tr>
+          <tr>
+            <td class="what">One process per mechanical / SMR disk</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes, automatic</b></td>
+            <td data-label="FSearch">Not documented</td>
+            <td data-label="Recoll">Not documented</td>
+            <td data-label="Catfish">Not documented</td>
+            <td data-label="KFind">Not documented</td>
           </tr>
           <tr>
             <td class="what">Reports incomplete results</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Single funnel (GUI + exit 2)</b></td>
-            <td data-label="Indexed">Depends on index freshness</td>
-            <td data-label="Classic GUI">No unified channel</td>
-            <td data-label="CLI">Exit code, no summary</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes, GUI &amp; CLI (exit 2)</b></td>
+            <td data-label="FSearch">Not documented</td>
+            <td data-label="Recoll">Partial (skips failed files)</td>
+            <td data-label="Catfish">Not documented</td>
+            <td data-label="KFind">Not documented</td>
           </tr>
           <tr>
-            <td class="what">Never moves or deletes your files</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>By design</b></td>
-            <td data-label="Indexed">Includes file actions</td>
-            <td data-label="Classic GUI">Includes file actions</td>
-            <td data-label="CLI">Search only</td>
+            <td class="what">Deletes or renames files in the UI</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>No (copy only)</b></td>
+            <td data-label="FSearch">Not documented</td>
+            <td data-label="Recoll">No</td>
+            <td data-label="Catfish">Yes (Delete / F2)</td>
+            <td data-label="KFind">Not documented</td>
           </tr>
         </tbody>
       </table>
     </div>
+    <p class="muted cmp-note">Checked against official docs on 2026-11-23 (FSearch 0.3.2, Recoll 1.46.0, Catfish 4.20.1, KFind 26.08.3). “Not documented” means the official documentation did not state it — not that it is impossible. On the CLI, <code>rg</code> exits with code 2 on errors (without a unified summary) and searching documents needs <code>rga</code> configured separately.</p>
   </div>
 </section>
 

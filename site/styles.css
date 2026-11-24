@@ -172,9 +172,11 @@ td b { color: var(--teal) }
 
 /* Compare */
 .compare { background: linear-gradient(180deg, var(--space-2) 0%, var(--space) 100%); border-top: 1px solid var(--line) }
+.cmp-tbl table { font-size: .88rem }
 .cmp-tbl th.cmp-col-sfs, .cmp-tbl td.cmp-sfs { background: rgba(70,214,217,.06) }
 .cmp-tbl th.cmp-col-sfs { color: var(--teal) }
 .cmp-tbl td:not(.what):not(.cmp-sfs) { color: var(--muted) }
+.cmp-note { margin-top: 14px; font-size: .84rem; max-width: 78ch }
 
 /* Install */
 /* Install grid: 2×2 (the commands need the width), 1 column on phones */
@@ -277,7 +279,7 @@ footer a { color: var(--muted) }
   .tbl td.n { font-size: 1.05rem; align-self: end }
   .tbl:not(.cmp-tbl) td:last-child { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--line); font-size: .88rem; color: var(--muted) }
   .cmp-tbl tr { grid-template-columns: repeat(2, minmax(0, 1fr)) }
-  .cmp-tbl td.cmp-sfs { background: transparent }
+  .cmp-tbl td.cmp-sfs { grid-column: 1 / -1; background: rgba(70,214,217,.08); padding: 8px 10px; border-radius: 8px }
 }
 
 /* Foldables, book-style (Galaxy Z Fold): the unfolded inner screen is almost square, with the crease
