@@ -79,6 +79,9 @@ code, pre, kbd { font-family: var(--f-mono) }
 .btn-ghost { border-color: var(--line); color: var(--fg); background: rgba(11,23,32,.6) }
 .btn-ghost:hover { border-color: var(--teal); color: var(--fg) }
 .btn small { font: 500 .78rem var(--f-mono); opacity: .75 }
+.btn small:empty { display: none }
+.btn-sm { padding: 9px 15px; font-size: .9rem; border-radius: 8px }
+.btn-win.is-win { border-color: var(--teal); background: rgba(70,214,217,.12) }
 .cta-note { width: 100%; font-size: .88rem; color: var(--muted); margin: 4px 0 0 }
 
 /* Sections */
@@ -94,19 +97,25 @@ p { margin: 0 0 14px; max-width: 64ch }
 /* Demo */
 .demo { padding-top: 24px }
 .demo figure { margin: 0 auto; max-width: 1180px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--space-2); box-shadow: 0 30px 80px rgba(0,0,0,.5) }
-.demo video { display: block; width: 100%; height: auto }
+.demo video { display: block; width: 100%; height: auto; cursor: zoom-in }
 /* 29/10/2026: two videos side by side, same height — the wide one (1280×800) and the tall one
    (720×1280). Column widths follow the aspect ratios (1.6 : 0.5625), so both end at the same line. */
 .demo-pair { display: grid; grid-template-columns: 1.6fr .5625fr; gap: 1px; background: var(--line) }
 .demo-item { background: var(--space-2); min-width: 0; display: flex; flex-direction: column }
-.demo-label { display: block; padding: 7px 12px; font: 600 .72rem var(--f-mono); letter-spacing: .06em; color: var(--teal); border-top: 1px solid var(--line) }
+.demo-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 6px 12px; border-top: 1px solid var(--line) }
+.demo-label { display: block; font: 600 .72rem var(--f-mono); letter-spacing: .06em; color: var(--teal) }
+.demo-ctrl { display: flex; gap: 6px; align-items: center; margin-left: auto }
+.demo-btn {
+  cursor: pointer; font: 600 .7rem var(--f-mono); letter-spacing: .03em; color: var(--muted);
+  background: var(--space-3); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px;
+}
+.demo-btn:hover { color: var(--fg); border-color: var(--teal-deep) }
 @media (max-width: 640px) {
   .demo-pair { grid-template-columns: minmax(0, 1fr) }
   .demo-tall video { width: auto; max-width: 100%; max-height: 78vh; margin: 0 auto }
 }
 .tap-hint { display: none }
 @media (max-width: 640px) {
-  .demo video { cursor: zoom-in }
   .tap-hint { display: block; margin-top: 4px; font: 600 .74rem var(--f-mono); letter-spacing: .04em; color: var(--teal) }
 }
 .demo figcaption { padding: 12px 18px; font-size: .9rem; color: var(--muted); border-top: 1px solid var(--line) }
@@ -161,6 +170,12 @@ td b { color: var(--teal) }
 .feat .tag { font: 600 .72rem var(--f-mono); color: var(--teal); letter-spacing: .1em; text-transform: uppercase; display: block; margin-bottom: 10px }
 .feat p { font-size: .95rem; color: var(--muted); margin: 0 }
 
+/* Compare */
+.compare { background: linear-gradient(180deg, var(--space-2) 0%, var(--space) 100%); border-top: 1px solid var(--line) }
+.cmp-tbl th.cmp-col-sfs, .cmp-tbl td.cmp-sfs { background: rgba(70,214,217,.06) }
+.cmp-tbl th.cmp-col-sfs { color: var(--teal) }
+.cmp-tbl td:not(.what):not(.cmp-sfs) { color: var(--muted) }
+
 /* Install */
 /* Install grid: 2×2 (the commands need the width), 1 column on phones */
 .installs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 28px }
@@ -169,7 +184,14 @@ td b { color: var(--teal) }
 .inst h3 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px }
 .inst h3 small { font: 500 .74rem var(--f-mono); color: var(--muted) }
 .inst p { font-size: .93rem; color: var(--muted); margin: 0 }
-.inst pre { margin: auto 0 0; background: #02070a; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: .78rem; overflow-x: auto; color: #cfe2e5 }
+.inst .inst-cta { margin-top: 2px }
+.inst pre, .verify-box pre { margin: auto 0 0; background: #02070a; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: .78rem; overflow-x: auto; color: #cfe2e5; white-space: pre-wrap; overflow-wrap: anywhere }
+.verify-box {
+  margin-top: 14px; border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; background: var(--space-2);
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 14px 24px; align-items: center;
+}
+.verify-box p { font-size: .92rem; margin: 0 }
+@media (max-width: 760px) { .verify-box { grid-template-columns: minmax(0, 1fr) } }
 .cmd { position: relative; margin-top: auto }
 .cmd pre { margin: 0; padding-right: 64px }
 .copy {
@@ -198,10 +220,11 @@ footer a { color: var(--muted) }
   footer nav a:hover, footer nav a:active { color: var(--fg); border-color: var(--teal-deep) }
 }
 
-/* Phone: keep the brand on one line, show only the language switch */
+/* Phone: keep the brand on one line, show Install + language switch */
 .brand { white-space: nowrap }
 @media (max-width: 640px) {
-  .nav a:not(.lang) { display: none }
+  .nav { gap: 10px }
+  .nav a:not(.lang):not(.nav-install) { display: none }
   .hero { padding-block: 110px 64px }
   section { padding-block: 60px }
 }
@@ -252,7 +275,9 @@ footer a { color: var(--muted) }
     font: 600 .66rem var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); white-space: normal;
   }
   .tbl td.n { font-size: 1.05rem; align-self: end }
-  .tbl td:last-child { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--line); font-size: .88rem; color: var(--muted) }
+  .tbl:not(.cmp-tbl) td:last-child { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--line); font-size: .88rem; color: var(--muted) }
+  .cmp-tbl tr { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .cmp-tbl td.cmp-sfs { background: transparent }
 }
 
 /* Foldables, book-style (Galaxy Z Fold): the unfolded inner screen is almost square, with the crease
@@ -278,7 +303,7 @@ footer a { color: var(--muted) }
   .demo .wrap { height: 100%; padding: 0; display: flex; justify-content: center }
   .demo figure { height: 100%; width: auto; max-width: 100%; display: flex; flex-direction: column; box-shadow: none }
   .demo video, .demo img { height: 100%; width: auto; max-width: 100%; object-fit: contain; cursor: default }
-  .demo figcaption, .tap-hint, .demo-label, .demo-tall { display: none }
+  .demo figcaption, .tap-hint, .demo-bar, .demo-label, .demo-tall { display: none }
   .demo-pair { display: block; height: 100% }
   .demo-item { height: 100% }
   body { padding-top: env(viewport-segment-top 0 1) }

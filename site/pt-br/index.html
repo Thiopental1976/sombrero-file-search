@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Sombrero File Search</title>
-<meta name="description" content="O buscador de arquivos sem índice mais completo do Linux: por nome, por conteúdo, booleana e dentro de documentos. Ao vivo e honesta: quando não conseguiu olhar em algum lugar, ela avisa.">
+<title>Sombrero File Search — Buscador de arquivos e conteúdo ao vivo para Linux</title>
+<meta name="description" content="O buscador de arquivos sem índice mais completo do Linux: por nome, por conteúdo, booleana e dentro de documentos. Ao vivo e honesto: quando não conseguiu olhar em algum lugar, ele avisa.">
 <link rel="canonical" href="https://sombrerofilesearch.com/pt-br/">
 <link rel="alternate" hreflang="en" href="https://sombrerofilesearch.com/">
 <link rel="alternate" hreflang="pt-BR" href="https://sombrerofilesearch.com/pt-br/">
@@ -14,7 +14,7 @@
 <meta property="og:type" content="website">
 <meta property="og:locale" content="pt_BR">
 <meta property="og:url" content="https://sombrerofilesearch.com/pt-br/">
-<meta property="og:title" content="Sombrero File Search">
+<meta property="og:title" content="Sombrero File Search — Buscador de arquivos e conteúdo ao vivo para Linux">
 <meta property="og:description" content="Busca de arquivos para Linux, ao vivo e sem índice: por nome, conteúdo, booleana e dentro de documentos. Nunca diz “0 resultados” sem ter olhado.">
 <meta property="og:image" content="https://sombrerofilesearch.com/assets/social_preview.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -23,6 +23,27 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600;700&display=swap">
 <link rel="stylesheet" href="../styles.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Sombrero File Search",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Linux, Windows",
+  "softwareVersion": "1.5.0",
+  "inLanguage": "pt-BR",
+  "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+  "url": "https://sombrerofilesearch.com/pt-br/",
+  "downloadUrl": "https://github.com/Thiopental1976/sombrero-file-search/releases/latest",
+  "codeRepository": "https://github.com/Thiopental1976/sombrero-file-search",
+  "description": "O buscador de arquivos sem índice mais completo do Linux: por nome, por conteúdo, booleana e dentro de documentos. Ao vivo e honesto: quando não conseguiu olhar em algum lugar, ele avisa.",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "BRL"
+  }
+}
+</script>
 </head>
 <body>
 
@@ -34,7 +55,7 @@
       <a href="#recursos">Recursos</a>
       <a href="#duplicatas">Duplicatas</a>
       <a href="#segura">Segurança</a>
-      <a href="#instalar">Instalar</a>
+      <a class="nav-install" href="#instalar">Instalar</a>
       <a href="#doar" data-donate-link hidden>Doar</a>
       <a href="https://github.com/Thiopental1976/sombrero-file-search">GitHub</a>
       <a class="lang" href="../" hreflang="en" lang="en">English</a>
@@ -47,11 +68,12 @@
   <div class="wrap">
     <img class="hero-icon" src="../assets/icon_256.png" alt="Ícone do Sombrero File Search" width="88" height="88">
     <h1>Ache todo arquivo. Saiba quando não deu.</h1>
-    <p class="lead">O buscador de arquivos sem índice mais completo do Linux: por nome, por conteúdo, booleana e dentro de documentos, sempre ao vivo. <em>Quando não conseguiu olhar em algum lugar, ela avisa.</em></p>
+    <p class="lead">O buscador de arquivos sem índice mais completo do Linux: por nome, por conteúdo, booleana e dentro de documentos, sempre ao vivo. <em>Quando não conseguiu olhar em algum lugar, ele avisa.</em></p>
     <div class="cta">
-      <a class="btn btn-main" data-dl="AppImage" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Baixar AppImage <small data-ver>última</small></a>
-      <a class="btn btn-ghost" data-dl="deb" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">.deb para Debian / Ubuntu / Mint</a>
-      <p class="cta-note">Software livre, GPL-3.0-ou-posterior. O AppImage roda em qualquer distro, sem instalar nada. Versão para Windows em <a href="#instalar">beta</a>.</p>
+      <a class="btn btn-main" data-dl="AppImage" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Baixar AppImage <small data-ver data-size="AppImage">1.5.0</small></a>
+      <a class="btn btn-ghost" data-dl="deb" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">.deb · Debian / Ubuntu / Mint <small data-size="deb"></small></a>
+      <a class="btn btn-ghost btn-win" data-dl="zip" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Windows .zip <span class="badge">Beta</span> <small data-size="zip"></small></a>
+      <p class="cta-note">Software livre, GPL-3.0-ou-posterior. O AppImage roda em qualquer distro Linux, sem instalar nada · <a href="#instalar">comandos de instalação</a> · <a href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">notas da versão</a>.</p>
     </div>
   </div>
 </section>
@@ -65,13 +87,17 @@
             <source src="../assets/demo_wide.mp4" type="video/mp4">
             <img src="../assets/demo.gif" width="960" height="600" alt="Três buscas seguidas em quatro discos: cada disco passa para a busca seguinte assim que termina a anterior; depois a prévia, à direita, mostra uma radiografia, uma foto e um vídeo tocando">
           </video>
-          <span class="demo-label">Janela larga: prévia à direita</span>
+          <div class="demo-bar">
+            <span class="demo-label">Janela larga: prévia à direita</span>
+          </div>
         </div>
         <div class="demo-item demo-tall">
           <video class="demo-video" autoplay muted loop playsinline width="720" height="1280" poster="../assets/demo_tall_poster.jpg" aria-label="As mesmas três buscas numa janela alta: a prévia vai para baixo dos resultados e mantém uma área grande para imagens e vídeo">
             <source src="../assets/demo_tall.mp4" type="video/mp4">
           </video>
-          <span class="demo-label">Janela alta: prévia embaixo</span>
+          <div class="demo-bar">
+            <span class="demo-label">Janela alta: prévia embaixo</span>
+          </div>
         </div>
       </div>
       <figcaption>Três buscas seguidas em <strong>quatro discos</strong>. O disco ainda ocupado mostra por quem está esperando; cada disco passa para a <strong>busca seguinte assim que termina a anterior</strong>, sem esperar os outros. Depois, a prévia: radiografia, fotos, um vídeo tocando. Ao vivo, sem índice. <a href="../assets/demo_credits.txt">Imagens: domínio público</a>.</figcaption>
@@ -141,6 +167,71 @@
   </div>
 </section>
 
+<section id="comparar" class="compare">
+  <div class="wrap">
+    <div class="eyebrow">Onde ele entra</div>
+    <h2>Por que mais um buscador no Linux?</h2>
+    <p>Ferramentas indexadas são ótimas para nomes quando o banco já está atualizado. O Sombrero foi feito para varrer discos ao vivo, entrar no texto de documentos e dizer a verdade quando algo falhou.</p>
+    <div class="tbl cmp-tbl">
+      <table>
+        <thead>
+          <tr>
+            <th>Capacidade</th>
+            <th class="cmp-col-sfs">Sombrero</th>
+            <th>Indexados (FSearch, Recoll)</th>
+            <th>GUI clássica (Catfish, KFind)</th>
+            <th>CLI (<code>rg</code> / <code>fd</code>)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="what">Sem índice em segundo plano</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Ao vivo por padrão</b></td>
+            <td data-label="Indexados">Depende de índice</td>
+            <td data-label="GUI clássica">Depende</td>
+            <td data-label="CLI">Ao vivo</td>
+          </tr>
+          <tr>
+            <td class="what">Conteúdo + PDF / docx / odt / epub</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Embutido (<code>rga</code>)</b></td>
+            <td data-label="Indexados">Só Recoll</td>
+            <td data-label="GUI clássica">Parcial</td>
+            <td data-label="CLI">Exige <code>rga</code> à parte</td>
+          </tr>
+          <tr>
+            <td class="what">Expressão booleana (<code>AND</code>/<code>OR</code>/<code>NOT</code>)</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Completa + parênteses</b></td>
+            <td data-label="Indexados">Parcial</td>
+            <td data-label="GUI clássica">Básica / não</td>
+            <td data-label="CLI">Pipelines manuais</td>
+          </tr>
+          <tr>
+            <td class="what">Um processo por HD mecânico / SMR</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Automático</b></td>
+            <td data-label="Indexados">Não</td>
+            <td data-label="GUI clássica">Não</td>
+            <td data-label="CLI">Não</td>
+          </tr>
+          <tr>
+            <td class="what">Avisa resultado incompleto (exit 2)</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Canal único (GUI + CLI)</b></td>
+            <td data-label="Indexados">Não</td>
+            <td data-label="GUI clássica">Não</td>
+            <td data-label="CLI">Só stderr parcial</td>
+          </tr>
+          <tr>
+            <td class="what">Só leitura (nunca move / apaga)</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Por princípio</b></td>
+            <td data-label="Indexados">Permite apagar</td>
+            <td data-label="GUI clássica">Permite apagar</td>
+            <td data-label="CLI">Sim</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
 <section id="duplicatas">
   <div class="wrap split">
     <div>
@@ -179,13 +270,16 @@
       <div class="inst">
         <h3>AppImage <small>qualquer distro</small></h3>
         <p>Nada a instalar. Python, PySide6, rg, fd e rga vêm embutidos.</p>
+        <p class="inst-cta"><a class="btn btn-main btn-sm" data-dl="AppImage" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Baixar AppImage <small data-ver data-size="AppImage">1.5.0</small></a></p>
 <pre>chmod +x Sombrero_File_Search-*.AppImage
 ./Sombrero_File_Search-*.AppImage</pre>
       </div>
       <div class="inst">
         <h3>.deb <small>Debian · Ubuntu · Mint</small></h3>
-        <p>Pacote enxuto. O <code>--setup-gui</code> monta o ambiente da interface na sua pasta pessoal.</p>
-<pre>sudo apt install ./sombrero-file-search_*_amd64.deb</pre>
+        <p>Pacote enxuto. O <code>--setup-gui</code> monta o ambiente da interface na sua pasta pessoal uma vez só.</p>
+        <p class="inst-cta"><a class="btn btn-ghost btn-sm" data-dl="deb" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Baixar .deb <small data-size="deb"></small></a></p>
+<pre>sudo apt install ./sombrero-file-search_*_amd64.deb
+sombrero-file-search --setup-gui</pre>
       </div>
       <div class="inst">
         <h3>Pelo código <small>sem root</small></h3>
@@ -196,8 +290,15 @@ cd sombrero-file-search &amp;&amp; ./install.sh</pre>
       <div class="inst">
         <h3>Windows <span class="badge">Beta</span></h3>
         <p>Versão portátil para Windows 10/11 (64 bits): descompactar e usar, sem precisar de administrador. É nova e ainda está em teste; o Linux é a plataforma principal.</p>
-        <p><a class="btn btn-ghost" data-dl="zip" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Baixar .zip para Windows</a></p>
+        <p class="inst-cta"><a class="btn btn-ghost btn-sm" data-dl="zip" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Baixar .zip para Windows <small data-size="zip"></small></a></p>
       </div>
+    </div>
+    <div class="verify-box" data-sha256-box hidden>
+      <div>
+        <h3>Confira a integridade do download</h3>
+        <p class="muted">Baixe <a data-dl="sha256" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest"><code>SHA256SUMS</code></a> para a mesma pasta e valide o arquivo antes de executar.</p>
+      </div>
+<pre>sha256sum -c SHA256SUMS --ignore-missing</pre>
     </div>
     <p class="muted" style="margin-top:22px">Guia completo no <a href="https://github.com/Thiopental1976/sombrero-file-search/blob/main/MANUAL.pt-BR.md">manual</a>. Sem Flatpak de propósito: uma ferramenta que varre o disco inteiro não cabe numa sandbox.</p>
   </div>
