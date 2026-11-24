@@ -8,6 +8,7 @@ Rode:  python3 tests/test_windows_equivalencia_2026_11_24.py
 """
 from __future__ import annotations
 
+import ntpath
 import os
 import shutil
 import stat
@@ -18,8 +19,11 @@ RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 LFS = os.path.join(RAIZ, "lfs")
 sys.path.insert(0, LFS)
 
-import engine  # noqa: E402
-import plat    # noqa: E402
+import disks    # noqa: E402
+import disks_win  # noqa: E402
+import engine   # noqa: E402
+import fileops  # noqa: E402
+import plat     # noqa: E402
 
 falhas: list[str] = []
 
@@ -94,8 +98,73 @@ def test_rga_env_e_which_pacote() -> None:
         shutil.rmtree(T, ignore_errors=True)
 
 
+def test_fileops_raiz_origem_e_fail_closed() -> None:
+    # 1) Nomes relativos para raízes Windows/UNC/POSIX (simulado com ntpath no Linux)
+    n_drv = fileops._root_rel_name("D:\\", _path=ntpath, label_fn=lambda _: None)
+    ok(n_drv == "drive_D", f"raiz D:\\ sem label -> drive_D ({n_drv!r})")
+    n_lbl = fileops._root_rel_name("D:\\", _path=ntpath, label_fn=lambda _: "Dados (D:)")
+    ok(n_lbl == "Dados (D)", f"raiz D:\\ com label -> sem ':' ({n_lbl!r})")
+    n_unc = fileops._root_rel_name("\\\\srv\\share", _path=ntpath, label_fn=lambda _: None)
+    ok(n_unc == "srv_share", f"raiz UNC \\\\srv\\share -> srv_share ({n_unc!r})")
+    n_dir = fileops._root_rel_name("C:\\Fotos\\2026", _path=ntpath, label_fn=lambda _: None)
+    ok(n_dir == "2026", f"pasta normal preserva basename ({n_dir!r})")
+    n_posix = fileops._root_rel_name("/", _path=os.path, label_fn=lambda _: None)
+    ok(n_posix == "root", f"raiz POSIX / -> root ({n_posix!r})")
+
+    # 2) Capacidades Win32: nenhum desses nomes acusa bad_name e ntpath.join fica dentro do destino
+    caps_win = disks.DestCaps(
+        fstype="ntfs", mountpoint="E:\\", namemax=255 * 4, readonly=False,
+        via_gvfs=False, removable=False, link_mbits=None,
+        **disks_win._caps_win("ntfs", disks_win.DRIVE_FIXED),
+    )
+    for src, lbl_fn in (("D:\\", lambda _: None), ("D:\\", lambda _: "Dados (D:)"),
+                        ("\\\\srv\\share", lambda _: None)):
+        rel_base = fileops._root_rel_name(src, _path=ntpath, label_fn=lbl_fn)
+        rel = ntpath.join(rel_base, "doc.txt")
+        dst = ntpath.join("E:\\Backup", rel)
+        ok(caps_win.name_problem(rel_base) is None,
+           f"rel_base de {src!r} ({rel_base!r}) é válido em Win32")
+        ok(fileops._destino_contido("E:\\Backup", rel, dst, _path=ntpath),
+           f"join de {src!r} permanece contido em E:\\Backup ({dst!r})")
+
+    # 3) Guarda fail-closed rejeita escape por caminho absoluto, drive ou '..'
+    ok(not fileops._destino_contido("E:\\Backup", "\\\\srv\\share\\doc.txt",
+                                    "\\\\srv\\share\\doc.txt", _path=ntpath),
+       "guarda bloqueia rel UNC que descartaria dest_abs")
+    ok(not fileops._destino_contido("E:\\Backup", "D:\\doc.txt",
+                                    "D:\\doc.txt", _path=ntpath),
+       "guarda bloqueia rel com drive letter")
+    ok(not fileops._destino_contido("/tmp/dest", "../fora.txt",
+                                    "/tmp/fora.txt", _path=os.path),
+       "guarda bloqueia traversal '..'")
+
+    # 4) Teste real de copy_to() com plano injetado tentando escapar do destino
+    T = tempfile.mkdtemp(prefix="sfs_fileops_guard_")
+    try:
+        src_file = os.path.join(T, "origem.txt")
+        dest_dir = os.path.join(T, "destino")
+        escape_file = os.path.join(T, "nao_tocar.txt")
+        os.makedirs(dest_dir)
+        with open(src_file, "w", encoding="utf-8") as f:
+            f.write("original")
+        pf = fileops.preflight([src_file], dest_dir)
+        # Substitui entradas por tentativas de escape (absoluto e '..')
+        pf.entries = [
+            fileops.Entry(src_file, escape_file, "file", 8),
+            fileops.Entry(src_file, os.path.join("..", "nao_tocar.txt"), "file", 8),
+        ]
+        res = fileops.copy_to([src_file], dest_dir, plan=pf)
+        ok(not os.path.exists(escape_file),
+           "copy_to fail-closed nunca cria arquivo fora de dest_dir")
+        ok(len(res.failed) == 2 and not res.copied,
+           f"copy_to registra as duas tentativas de escape em failed ({res.failed})")
+    finally:
+        shutil.rmtree(T, ignore_errors=True)
+
+
 def main() -> int:
     test_rga_env_e_which_pacote()
+    test_fileops_raiz_origem_e_fail_closed()
     if falhas:
         print(f"\n{len(falhas)} FALHA(S):")
         for f in falhas:

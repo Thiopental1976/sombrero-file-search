@@ -309,6 +309,64 @@ def _walk_entries(src: str, rel_base: str, out: list, errors: list, seen_dirs: s
     # socket/fifo/device: não são acervo, ficam de fora em silêncio
 
 
+def _root_rel_name(src: str, _path=os.path, label_fn=None) -> str:
+    """Nome de pasta relativo no destino para uma origem `src`.
+
+    Para pastas/arquivos normais é o basename. Para raízes de volume/rede
+    (`D:\\`, `\\\\srv\\share`, `/`) o basename é vazio: antes caía em `or s`
+    e devolvia um caminho absoluto/com drive, fazendo `os.path.join(dest, rel)`
+    no Windows descartar `dest` e apontar para a PRÓPRIA origem (ou marcar 100%
+    como bad_name em `D:`). Nunca devolve caminho absoluto, drive nem `..`."""
+    base = _path.basename(src.rstrip("\\/"))
+    if base and base not in (".", ".."):
+        return base
+    drive, _ = _path.splitdrive(src)
+    if drive:
+        dnorm = drive.replace("/", "\\")
+        if dnorm.startswith("\\\\"):
+            partes = [p for p in dnorm.split("\\") if p]
+            nome = "_".join(partes)
+        else:
+            letra = drive.rstrip(":").upper()
+            lbl = ""
+            fn = disks.volume_label if label_fn is None else label_fn
+            try:
+                lbl = fn(src) or ""
+            except Exception:
+                lbl = ""
+            lbl = lbl.replace(":", "")
+            lbl = "".join("_" if c in '*?"<>|\\/' else c for c in lbl).strip(" .")
+            nome = lbl if lbl else (f"drive_{letra}" if letra else "root")
+    else:
+        nome = "root"
+    nome = nome.replace(":", "")
+    nome = "".join("_" if c in '*?"<>|\\/' else c for c in nome).strip(" .")
+    if not nome or nome in (".", ".."):
+        return "root"
+    return nome
+
+
+def _destino_contido(dest_abs: str, rel: str, dst: str, _path=os.path) -> bool:
+    """Guarda fail-closed: garante que `rel` é estritamente relativo e que
+    `dst` permanece dentro de `dest_abs` (nunca escapa para a origem ou fora)."""
+    if not rel:
+        return False
+    if _path.isabs(rel) or _path.splitdrive(rel)[0]:
+        return False
+    if any(p == ".." for p in rel.replace("\\", "/").split("/")):
+        return False
+    if _path is os.path:
+        return plat.same_or_under(dst, dest_abs)
+    a = _path.normcase(_path.normpath(dst))
+    b = _path.normcase(_path.normpath(dest_abs))
+    sep = getattr(_path, "sep", os.sep)
+    if a == b:
+        return True
+    if not b.endswith(sep):
+        b += sep
+    return a.startswith(b)
+
+
 def preflight(sources, dest_dir) -> Preflight:
     """Varre a origem e confronta com o que o destino aceita. Nada é escrito."""
     dest_abs = os.path.abspath(dest_dir)
@@ -333,7 +391,7 @@ def preflight(sources, dest_dir) -> Preflight:
         if plat.same_or_under(dest_abs, s):
             pf.errors.append((s, SKIP_LOOP))
             continue
-        _walk_entries(s, os.path.basename(s.rstrip(os.sep)) or s,
+        _walk_entries(s, _root_rel_name(s),
                       pf.entries, pf.errors, seen_dirs, dest_abs)
 
     caps = pf.caps
@@ -666,6 +724,9 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
             res.skipped.append((e.src, SKIP_BAD_NAME))
             continue
         dst = os.path.join(dest_abs, rel)
+        if not _destino_contido(dest_abs, rel, dst):
+            res.failed.append((e.src, "destination path escapes target folder"))
+            continue
 
         if e.kind == "dir":
             try:
