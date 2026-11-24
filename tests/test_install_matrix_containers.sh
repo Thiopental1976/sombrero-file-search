@@ -9,7 +9,7 @@
 # Não entra na suíte rápida: baixa imagens de container (centenas de MB no
 # total) e leva minutos. Rodar manual: `bash tests/test_install_matrix_containers.sh`.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 REPO="$PWD"
 WORK="$(mktemp -d /tmp/sfs-matrix-containers.XXXX)"
 PASS=0 FAIL=0
@@ -18,7 +18,13 @@ ok()  { printf "  \033[32m✓\033[0m %s\n" "$*"; PASS=$((PASS+1)); }
 bad() { printf "  \033[31m✗\033[0m %s\n" "$*"; FAIL=$((FAIL+1)); }
 sec() { printf "\033[1;36m%s\033[0m\n" "$*"; }
 
-cleanup() { rm -rf "$WORK"; }
+cleanup() {
+  if [ "$FAIL" -eq 0 ]; then
+    rm -rf "$WORK"
+  else
+    echo "Logs preservados em $WORK"
+  fi
+}
 trap cleanup EXIT
 
 if ! command -v podman >/dev/null 2>&1; then
@@ -40,7 +46,7 @@ run_case() {
       for e in rg fd rga pandoc; do test -x ~/.local/bin/\$e || echo \"MOTOR_FALTANDO: \$e\"; done'
   " >"$log" 2>&1
   local rc=$?
-  if [ "$rc" = 0 ] && grep -q '^Sombrero File Search 0\.' "$log" && ! grep -q "MOTOR_FALTANDO" "$log"; then
+  if [ "$rc" = 0 ] && grep -qE '^Sombrero File Search [0-9]+\.' "$log" && ! grep -q "MOTOR_FALTANDO" "$log"; then
     ok "instalou, CLI respondeu e os 4 motores (rg/fd/rga/pandoc) estão presentes (rc=$rc)"
     rm -f "$log"
   else

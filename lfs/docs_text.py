@@ -144,7 +144,12 @@ _BLOCO_ODT = {"p", "h"}
 _TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0"
 
 
-def _odt_parte(raiz) -> str:
+_MAX_PROF_NOTAS = 32
+
+
+def _odt_parte(raiz, _prof: int = 0) -> str:
+    if _prof > _MAX_PROF_NOTAS:
+        raise ErroDocumento(f"ODT note nesting deeper than {_MAX_PROF_NOTAS} levels")
     # No ODF o texto vale só dentro de parágrafo/título (text:p, text:h); fora
     # deles o que há é indentação entre elementos de estrutura. Passo 1: quem
     # está dentro de um bloco, e apagar o .tail de quem está fora.
@@ -185,12 +190,12 @@ def _odt_parte(raiz) -> str:
     def fecha(el):
         return "\n" if _local(el.tag) in _BLOCO_ODT else ""
 
-    texto = _percorre(raiz, abre, fecha, cauda=_espaco_odf)
+    partes = [_percorre(raiz, abre, fecha, cauda=_espaco_odf)]
     for nota in notas:
         for corpo in nota:
             if _local(corpo.tag) == "note-body":
-                texto += _odt_parte(corpo)
-    return texto
+                partes.append(_odt_parte(corpo, _prof + 1))
+    return "".join(partes)
 
 
 def _espaco_odf(s: str) -> str:
@@ -265,14 +270,21 @@ def _epub_ordem(z: zipfile.ZipFile, nomes: set) -> list:
         opf = _xml(_le_membro(z, opf_nome), opf_nome)
         base = posixpath.dirname(opf_nome)
         itens = {e.get("id"): e.get("href") for e in opf.iter() if _local(e.tag) == "item"}
+        from urllib.parse import unquote
         ordem = []
         for e in opf.iter():
             if _local(e.tag) == "itemref":
                 href = itens.get(e.get("idref"))
                 if href:
-                    n = posixpath.normpath(posixpath.join(base, href.split("#")[0]))
-                    if n in nomes and n not in ordem:
-                        ordem.append(n)
+                    bruto = href.split("#")[0]
+                    # href no OPF é URI (espaços como %20, acentos percent-encoded);
+                    # tenta decodificado primeiro e mantém fallback para nome literal.
+                    for cand in (unquote(bruto), bruto):
+                        n = posixpath.normpath(posixpath.join(base, cand))
+                        if n in nomes:
+                            if n not in ordem:
+                                ordem.append(n)
+                            break
         if ordem:
             return ordem
     except (ErroDocumento, KeyError, StopIteration, TypeError):
@@ -319,7 +331,7 @@ def main(argv=None) -> int:
     except ErroDocumento as e:
         print(f"sombrero docs_text: {e}", file=sys.stderr)
         return 1
-    sys.stdout.buffer.write(texto.encode("utf-8", errors="surrogateescape"))
+    sys.stdout.buffer.write(texto.encode("utf-8", errors="replace"))
     return 0
 
 

@@ -15,7 +15,7 @@
 #      pega qualquer imutável futura sem marcador conhecido.
 #   5. Idempotência: rodar 2x no mesmo HOME não deve rebaixar nada.
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 INSTALL="$PWD/install.sh"
 WORK="$(mktemp -d /tmp/sfs-matrix.XXXX)"
 PASS=0 FAIL=0
@@ -24,7 +24,13 @@ ok()  { printf "  \033[32m✓\033[0m %s\n" "$*"; PASS=$((PASS+1)); }
 bad() { printf "  \033[31m✗\033[0m %s\n" "$*"; FAIL=$((FAIL+1)); }
 sec() { printf "\033[1;36m%s\033[0m\n" "$*"; }
 
-cleanup() { rm -rf "$WORK"; }
+cleanup() {
+  if [ "$FAIL" -eq 0 ]; then
+    rm -rf "$WORK"
+  else
+    echo "Logs preservados em $WORK"
+  fi
+}
 trap cleanup EXIT
 
 # ---------------------------------------------------------------- caso 1
