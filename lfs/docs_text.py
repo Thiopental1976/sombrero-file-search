@@ -149,7 +149,7 @@ _MAX_PROF_NOTAS = 32
 
 def _odt_parte(raiz, _prof: int = 0) -> str:
     if _prof > _MAX_PROF_NOTAS:
-        return ""
+        raise ErroDocumento(f"ODT note nesting deeper than {_MAX_PROF_NOTAS} levels")
     # No ODF o texto vale só dentro de parágrafo/título (text:p, text:h); fora
     # deles o que há é indentação entre elementos de estrutura. Passo 1: quem
     # está dentro de um bloco, e apagar o .tail de quem está fora.
@@ -191,11 +191,10 @@ def _odt_parte(raiz, _prof: int = 0) -> str:
         return "\n" if _local(el.tag) in _BLOCO_ODT else ""
 
     partes = [_percorre(raiz, abre, fecha, cauda=_espaco_odf)]
-    if _prof < _MAX_PROF_NOTAS:
-        for nota in notas:
-            for corpo in nota:
-                if _local(corpo.tag) == "note-body":
-                    partes.append(_odt_parte(corpo, _prof + 1))
+    for nota in notas:
+        for corpo in nota:
+            if _local(corpo.tag) == "note-body":
+                partes.append(_odt_parte(corpo, _prof + 1))
     return "".join(partes)
 
 

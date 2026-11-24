@@ -137,9 +137,12 @@ def test_docs_text():
     p.text = "fundo"
     try:
         docs_text._odt_parte(raiz)
-        ok("docs_text: ODT notas aninhadas (1200 níveis) não dá RecursionError", True)
+        ok("docs_text: ODT notas aninhadas (1200 níveis) levanta ErroDocumento (não corta calado)", False,
+           "retornou sem levantar ErroDocumento")
+    except docs_text.ErroDocumento:
+        ok("docs_text: ODT notas aninhadas (1200 níveis) levanta ErroDocumento (não corta calado)", True)
     except RecursionError as e:
-        ok("docs_text: ODT notas aninhadas (1200 níveis) não dá RecursionError", False, str(e))
+        ok("docs_text: ODT notas aninhadas (1200 níveis) levanta ErroDocumento (não corta calado)", False, str(e))
 
     # main() com high-surrogate &#55296; no HTML não estoura UnicodeEncodeError
     proc = subprocess.run([sys.executable, str(ROOT / "lfs" / "docs_text.py"), "epub"],
@@ -187,12 +190,24 @@ def test_dupes_ino_zero_e_ciclo():
 
 # ------------------------------------------------ 5. Windows licenças & matriz containers
 def test_packaging_e_matriz():
-    ps1 = (ROOT / "packaging" / "windows" / "build_windows.ps1").read_text(encoding="utf-8")
+    ps1_bytes = (ROOT / "packaging" / "windows" / "build_windows.ps1").read_bytes()
+    ok("build_windows.ps1: sem BOM UTF-8",
+       not ps1_bytes.startswith(b"\xef\xbb\xbf"), "BOM UTF-8 presente")
+    ps1 = ps1_bytes.decode("utf-8")
     ok("build_windows.ps1: inclui licenses/README.txt com AGPL (rga) e Poppler (GPL)",
-       "licenses" in ps1 and "AGPL-3.0" in ps1 and "Poppler" in ps1,
-       "falta bloco de licenças de terceiros em build_windows.ps1")
+       "licenses" in ps1 and "AGPL-3.0" in ps1 and "Poppler" in ps1 and "if present" not in ps1,
+       "falta bloco obrigatório de licenças em build_windows.ps1")
+    ok("build_windows.ps1: exige env vars de versão (sem defaults duplicados) e licenças obrigatórias",
+       "Variável de ambiente obrigatória" in ps1
+       and "ripgrep-all-LICENSE.md" in ps1 and "poppler-COPYING" in ps1,
+       "faltam checagens obrigatórias em build_windows.ps1")
     ok("build_windows.ps1: copia README-Windows.txt no pacote",
        "README-Windows.txt" in ps1, "README-Windows.txt não copiado")
+
+    yml = (ROOT / ".." if False else ROOT / ".github" / "workflows" / "windows.yml").read_text(encoding="utf-8")
+    ok("windows.yml: falha (throw) se licença de rga ou poppler faltar no zip",
+       "if (-not $rgaLic) { throw" in yml and "if (-not $popLic) { throw" in yml,
+       "cópia de licença no CI não falha quando ausente")
 
     mat = (ROOT / "tests" / "test_install_matrix_containers.sh").read_text(encoding="utf-8")
     ok("test_install_matrix_containers.sh: aceita versão 1.x+ (não travado em 0.)",

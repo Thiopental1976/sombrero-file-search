@@ -1,8 +1,16 @@
-﻿# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Monta o pacote Windows do SFS (F3). Rodar na raiz do repo, com bin\ já preenchido
-# (rg/fd/rga/pdftotext — o passo "motores" do CI) e PySide6 + pyinstaller + pillow.
+# (rg/fd/rga/pdftotext + bin\licenses — o passo "motores" do CI) e PySide6 + pyinstaller + pillow.
+# Requer env vars RGV, FDV, RGAV e POPPLERV (fonte única em .github/workflows/windows.yml).
 # Saída: dist\SombreroFileSearch\ e dist\SombreroFileSearch-<versão>-windows-x64.zip
 $ErrorActionPreference = "Stop"
+
+foreach ($v in "RGV", "FDV", "RGAV", "POPPLERV") {
+  if (-not (Get-Item "Env:$v" -ErrorAction SilentlyContinue).Value) {
+    throw "Variável de ambiente obrigatória ausente: $v"
+  }
+}
+
 New-Item -ItemType Directory -Force dist | Out-Null
 
 # ícone .ico a partir do PNG (vários tamanhos num arquivo só)
@@ -20,38 +28,41 @@ Copy-Item LICENSE, README.md, packaging\windows\README-Windows.txt -Destination 
 
 # Compliance de licenças de terceiros (AGPL-3 para ripgrep-all, GPL-2 para Poppler, etc.)
 New-Item -ItemType Directory -Force "$pkg\licenses" | Out-Null
-if (Test-Path "bin\licenses") {
-  Copy-Item "bin\licenses\*" -Destination "$pkg\licenses" -Recurse -Force
-  Remove-Item "$pkg\bin\licenses" -Recurse -Force -ErrorAction SilentlyContinue
+if (-not (Test-Path "bin\licenses")) {
+  throw "bin\licenses ausente: os textos de licença dos motores são obrigatórios"
 }
-$rgv = if ($env:RGV) { $env:RGV } else { "15.2.0" }
-$fdv = if ($env:FDV) { $env:FDV } else { "v10.4.2" }
-$rgav = if ($env:RGAV) { $env:RGAV } else { "v0.10.9" }
-$popv = if ($env:POPPLERV) { $env:POPPLERV } else { "26.09.0-0" }
+Copy-Item "bin\licenses\*" -Destination "$pkg\licenses" -Recurse -Force
+Remove-Item "$pkg\bin\licenses" -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($reqLic in "ripgrep-all-LICENSE.md", "poppler-COPYING") {
+  if (-not (Test-Path "$pkg\licenses\$reqLic")) {
+    throw "Licença obrigatória ausente no pacote: $reqLic"
+  }
+}
+
 $licReadme = @"
 Third-party components bundled in this Windows package
 ======================================================
 
 1. ripgrep-all (bin\rga.exe, bin\rga-preproc.exe)
-   Version : $rgav (unmodified upstream release binaries)
-   License : AGPL-3.0-or-later (see ripgrep-all-LICENSE.md alongside, if present)
-   Source  : https://github.com/phiresky/ripgrep-all/tree/$rgav
+   Version : $($env:RGAV) (unmodified upstream release binaries)
+   License : AGPL-3.0-or-later (full text in ripgrep-all-LICENSE.md)
+   Source  : https://github.com/phiresky/ripgrep-all/tree/$($env:RGAV)
 
 2. Poppler (bin\pdftotext.exe and Poppler DLLs)
-   Version : $popv (poppler-windows upstream release)
-   License : GPL-2.0-or-later (see poppler-COPYING alongside, if present)
-   Source  : https://github.com/oschwartz10612/poppler-windows/releases/tag/v$popv
+   Version : $($env:POPPLERV) (poppler-windows upstream release)
+   License : GPL-2.0-or-later (full text in poppler-COPYING)
+   Source  : https://github.com/oschwartz10612/poppler-windows/releases/tag/v$($env:POPPLERV)
              https://poppler.freedesktop.org/
 
 3. ripgrep (bin\rg.exe)
-   Version : $rgv
+   Version : $($env:RGV)
    License : MIT / Unlicense
-   Source  : https://github.com/BurntSushi/ripgrep/tree/$rgv
+   Source  : https://github.com/BurntSushi/ripgrep/tree/$($env:RGV)
 
 4. fd (bin\fd.exe)
-   Version : $fdv
+   Version : $($env:FDV)
    License : MIT / Apache-2.0
-   Source  : https://github.com/sharkdp/fd/tree/$fdv
+   Source  : https://github.com/sharkdp/fd/tree/$($env:FDV)
 
 5. PySide6 / Qt6 (LGPL-3.0) and CPython (PSF-2.0)
    Sources : https://code.qt.io/cgit/pyside/pyside-setup.git/
