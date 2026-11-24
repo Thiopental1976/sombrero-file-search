@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Sombrero File Search</title>
+<title>Sombrero File Search — Live, index-free file &amp; content search for Linux</title>
 <meta name="description" content="The most complete index-free file search for Linux: by name, by content, boolean and inside documents. Live and honest: when it could not look somewhere, it says so.">
 <link rel="canonical" href="https://sombrerofilesearch.com/">
 <link rel="alternate" hreflang="en" href="https://sombrerofilesearch.com/">
@@ -13,7 +13,7 @@
 <link rel="icon" href="assets/icon_128.png" type="image/png">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://sombrerofilesearch.com/">
-<meta property="og:title" content="Sombrero File Search">
+<meta property="og:title" content="Sombrero File Search — Live, index-free file &amp; content search for Linux">
 <meta property="og:description" content="Live, index-free file search for Linux, by name, content, boolean and inside documents. It never says “0 results” when it did not look.">
 <meta property="og:image" content="https://sombrerofilesearch.com/assets/social_preview.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -22,6 +22,27 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600;700&display=swap">
 <link rel="stylesheet" href="styles.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Sombrero File Search",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Linux, Windows",
+  "softwareVersion": "1.5.0",
+  "inLanguage": "en",
+  "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+  "url": "https://sombrerofilesearch.com/",
+  "downloadUrl": "https://github.com/Thiopental1976/sombrero-file-search/releases/latest",
+  "codeRepository": "https://github.com/Thiopental1976/sombrero-file-search",
+  "description": "The most complete index-free file search for Linux: by name, by content, boolean and inside documents. Live and honest: when it could not look somewhere, it says so.",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }
+}
+</script>
 </head>
 <body>
 
@@ -33,7 +54,7 @@
       <a href="#features">Features</a>
       <a href="#duplicates">Duplicates</a>
       <a href="#safe">Safety</a>
-      <a href="#install">Install</a>
+      <a class="nav-install" href="#install">Install</a>
       <a href="#donate" data-donate-link hidden>Donate</a>
       <a href="https://github.com/Thiopental1976/sombrero-file-search">GitHub</a>
       <a class="lang" href="pt-br/" hreflang="pt-BR" lang="pt-BR">Português</a>
@@ -48,9 +69,10 @@
     <h1>Find every file. Know when you can’t.</h1>
     <p class="lead">The most complete index-free file search for Linux: by name, by content, boolean and inside documents, always live. <em>When it could not look somewhere, it says so.</em></p>
     <div class="cta">
-      <a class="btn btn-main" data-dl="AppImage" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Download AppImage <small data-ver>latest</small></a>
-      <a class="btn btn-ghost" data-dl="deb" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">.deb for Debian / Ubuntu / Mint</a>
-      <p class="cta-note">Free software, GPL-3.0-or-later. AppImage runs on any distro with nothing to install. Windows build in <a href="#install">beta</a>.</p>
+      <a class="btn btn-main" data-dl="AppImage" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Download AppImage <small data-ver data-size="AppImage">1.5.0</small></a>
+      <a class="btn btn-ghost" data-dl="deb" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">.deb · Debian / Ubuntu / Mint <small data-size="deb"></small></a>
+      <a class="btn btn-ghost btn-win" data-dl="zip" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Windows .zip <span class="badge">Beta</span> <small data-size="zip"></small></a>
+      <p class="cta-note">Free software, GPL-3.0-or-later. AppImage runs on any Linux distro with nothing to install · <a href="#install">install commands</a> · <a href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">release notes</a>.</p>
     </div>
   </div>
 </section>
@@ -64,13 +86,17 @@
             <source src="assets/demo_wide.mp4" type="video/mp4">
             <img src="assets/demo.gif" width="960" height="600" alt="Three searches in a row across four disks: each disk moves on to the next search as soon as it finishes the previous one; then the preview, on the right, shows an X-ray, a photo and a video playing">
           </video>
-          <span class="demo-label">Wide window: preview on the right</span>
+          <div class="demo-bar">
+            <span class="demo-label">Wide window: preview on the right</span>
+          </div>
         </div>
         <div class="demo-item demo-tall">
           <video class="demo-video" autoplay muted loop playsinline width="720" height="1280" poster="assets/demo_tall_poster.jpg" aria-label="The same three searches in a tall window: the preview moves below the results and keeps a large area for images and video">
             <source src="assets/demo_tall.mp4" type="video/mp4">
           </video>
-          <span class="demo-label">Tall window: preview below</span>
+          <div class="demo-bar">
+            <span class="demo-label">Tall window: preview below</span>
+          </div>
         </div>
       </div>
       <figcaption>Three searches in a row over <strong>four disks</strong>. A disk that is still busy shows who it is waiting for; each disk moves on to the <strong>next search the moment it finishes the previous one</strong>, without waiting for the others. Then the preview: X-ray, photos, a video playing. Live, no index. <a href="assets/demo_credits.txt">Images: public domain</a>.</figcaption>
@@ -139,6 +165,87 @@
   </div>
 </section>
 
+<section id="compare" class="compare">
+  <div class="wrap">
+    <div class="eyebrow">Where it fits</div>
+    <h2>Why another Linux file searcher?</h2>
+    <p>Each tool below solves part of the problem well. Sombrero is built for the combination that was missing: <strong>live (no index) + inside documents + full boolean</strong>, plus disk-aware scheduling and honest incomplete-search reporting.</p>
+    <div class="tbl cmp-tbl">
+      <table>
+        <thead>
+          <tr>
+            <th>Capability</th>
+            <th class="cmp-col-sfs">Sombrero</th>
+            <th>FSearch</th>
+            <th>Recoll</th>
+            <th>Catfish</th>
+            <th>KFind</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="what">Index-free (live search)</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes, live</b></td>
+            <td data-label="FSearch">No (in-memory DB)</td>
+            <td data-label="Recoll">No (requires index)</td>
+            <td data-label="Catfish">Partial (locate + walk)</td>
+            <td data-label="KFind">Yes (locate optional)</td>
+          </tr>
+          <tr>
+            <td class="what">Text inside files</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes</b></td>
+            <td data-label="FSearch">Not documented</td>
+            <td data-label="Recoll">Yes</td>
+            <td data-label="Catfish">Yes</td>
+            <td data-label="KFind">Yes</td>
+          </tr>
+          <tr>
+            <td class="what">Inside PDF / docx / odt / epub</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes, bundled</b></td>
+            <td data-label="FSearch">Not documented</td>
+            <td data-label="Recoll">Yes (PDF via external tool)</td>
+            <td data-label="Catfish">PDF &amp; zip; rest not documented</td>
+            <td data-label="KFind">ODT/Calligra; PDF/docx not documented</td>
+          </tr>
+          <tr>
+            <td class="what">Boolean <code>AND</code>/<code>OR</code>/<code>NOT</code> + parentheses</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes (live)</b></td>
+            <td data-label="FSearch">Yes (on names)</td>
+            <td data-label="Recoll">Yes (on index)</td>
+            <td data-label="Catfish">Not documented</td>
+            <td data-label="KFind">Not documented</td>
+          </tr>
+          <tr>
+            <td class="what">One process per mechanical / SMR disk</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes, automatic</b></td>
+            <td data-label="FSearch">Not documented</td>
+            <td data-label="Recoll">Not documented</td>
+            <td data-label="Catfish">Not documented</td>
+            <td data-label="KFind">Not documented</td>
+          </tr>
+          <tr>
+            <td class="what">Reports incomplete results</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Yes, GUI &amp; CLI (exit 2)</b></td>
+            <td data-label="FSearch">Not documented</td>
+            <td data-label="Recoll">Partial (skips failed files)</td>
+            <td data-label="Catfish">Not documented</td>
+            <td data-label="KFind">Not documented</td>
+          </tr>
+          <tr>
+            <td class="what">Deletes or renames files in the UI</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>No (copy only)</b></td>
+            <td data-label="FSearch">Not documented</td>
+            <td data-label="Recoll">No</td>
+            <td data-label="Catfish">Yes (Delete / F2)</td>
+            <td data-label="KFind">Not documented</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted cmp-note">Checked against official docs on 2026-11-23 (FSearch 0.3.2, Recoll 1.46.0, Catfish 4.20.1, KFind 26.08.3). “Not documented” means the official documentation did not state it — not that it is impossible. On the CLI, <code>rg</code> exits with code 2 on errors (without a unified summary) and searching documents needs <code>rga</code> configured separately.</p>
+  </div>
+</section>
+
 <section id="duplicates">
   <div class="wrap split">
     <div>
@@ -177,13 +284,16 @@
       <div class="inst">
         <h3>AppImage <small>any distro</small></h3>
         <p>Nothing to install. Python, PySide6, rg, fd and rga are bundled.</p>
+        <p class="inst-cta"><a class="btn btn-main btn-sm" data-dl="AppImage" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Download AppImage <small data-ver data-size="AppImage">1.5.0</small></a></p>
 <pre>chmod +x Sombrero_File_Search-*.AppImage
 ./Sombrero_File_Search-*.AppImage</pre>
       </div>
       <div class="inst">
         <h3>.deb <small>Debian · Ubuntu · Mint</small></h3>
-        <p>Thin package. <code>--setup-gui</code> builds the GUI environment in your home.</p>
-<pre>sudo apt install ./sombrero-file-search_*_amd64.deb</pre>
+        <p>Thin package. <code>--setup-gui</code> builds the GUI environment in your home once.</p>
+        <p class="inst-cta"><a class="btn btn-ghost btn-sm" data-dl="deb" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Download .deb <small data-size="deb"></small></a></p>
+<pre>sudo apt install ./sombrero-file-search_*_amd64.deb
+sombrero-file-search --setup-gui</pre>
       </div>
       <div class="inst">
         <h3>From source <small>no root</small></h3>
@@ -194,8 +304,15 @@ cd sombrero-file-search &amp;&amp; ./install.sh</pre>
       <div class="inst">
         <h3>Windows <span class="badge">Beta</span></h3>
         <p>Portable build for Windows 10/11 (64-bit): unzip and run, no administrator rights needed. New and still being tested; Linux is the primary platform.</p>
-        <p><a class="btn btn-ghost" data-dl="zip" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Download .zip for Windows</a></p>
+        <p class="inst-cta"><a class="btn btn-ghost btn-sm" data-dl="zip" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest">Download .zip for Windows <small data-size="zip"></small></a></p>
       </div>
+    </div>
+    <div class="verify-box" data-sha256-box hidden>
+      <div>
+        <h3>Verify your download</h3>
+        <p class="muted">Download <a data-dl="sha256" href="https://github.com/Thiopental1976/sombrero-file-search/releases/latest"><code>SHA256SUMS</code></a> into the same folder and check the file before running it.</p>
+      </div>
+<pre>sha256sum -c SHA256SUMS --ignore-missing</pre>
     </div>
     <p class="muted" style="margin-top:22px">Full guide in the <a href="https://github.com/Thiopental1976/sombrero-file-search/blob/main/MANUAL.md">manual</a>. No Flatpak on purpose: a tool that sweeps the whole disk does not belong in a sandbox.</p>
   </div>
