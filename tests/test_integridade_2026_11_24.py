@@ -142,9 +142,61 @@ def test_verify_pacote_falso() -> None:
         shutil.rmtree(T, ignore_errors=True)
 
 
+def test_checagem_rapida_arranque_bin() -> None:
+    import plat
+    T = tempfile.mkdtemp(prefix="sfs_verify_fast_")
+    is_win_orig = plat.IS_WIN
+    try:
+        pkg = os.path.join(T, "pkg_win")
+        os.makedirs(pkg)
+        _faz_pacote_falso(pkg, {
+            "SombreroFileSearch.exe": b"gui-grande-nao-tocado",
+            "_internal/Qt6Core.dll": b"qt-dll-grande",
+            "bin/rg.exe": b"rg-bytes",
+            "bin/fd.exe": b"fd-bytes",
+            "bin/rga.exe": b"rga-bytes",
+            "bin/pdftotext.exe": b"pdf-bytes",
+            "bin/poppler.dll": b"dll-nao-exe",
+        })
+        # Simula Windows: só bin/*.exe entram na checagem rápida do arranque
+        plat.IS_WIN = True
+        # Altera arquivo fora de bin/ e coloca extra fora de bin/: checagem rápida ignora
+        with open(os.path.join(pkg, "_internal", "Qt6Core.dll"), "wb") as f:
+            f.write(b"mudado-fora-de-bin")
+        with open(os.path.join(pkg, "extra_fora.txt"), "wb") as f:
+            f.write(b"extra")
+
+        res_ok = integridade.verify_bundled_bins(pkg, budget_s=1.5)
+        ok(res_ok["ok"] and res_ok["checked"] == 4 and res_ok["total"] == 4,
+           f"checagem rápida só confere os 4 .exe de bin/ ({res_ok['checked']}/{res_ok['total']})")
+
+        # Altera 1 byte em bin/rg.exe -> checagem rápida acusa modified
+        with open(os.path.join(pkg, "bin", "rg.exe"), "wb") as f:
+            f.write(b"rg-byteX")
+        res_bad = integridade.verify_bundled_bins(pkg, budget_s=1.5)
+        ok(not res_bad["ok"] and res_bad["modified"] == ["bin/rg.exe"],
+           f"checagem rápida detecta bin/rg.exe alterado ({res_bad['modified']})")
+
+        # Teto de tempo (budget_s): garante que para cedo e marca timed_out sem travar
+        import time
+        real_mono = time.monotonic
+        ticks = iter([100.0, 100.0, 102.0, 102.0, 102.0])
+        time.monotonic = lambda: next(ticks, 102.0)  # type: ignore[assignment]
+        try:
+            res_to = integridade.verify_bundled_bins(pkg, budget_s=1.0)
+        finally:
+            time.monotonic = real_mono
+        ok(res_to["timed_out"] and not res_to["ok"] and res_to["checked"] < 4,
+           f"checagem rápida respeita budget_s e encerra cedo (timed_out={res_to['timed_out']}, checked={res_to['checked']})")
+    finally:
+        plat.IS_WIN = is_win_orig
+        shutil.rmtree(T, ignore_errors=True)
+
+
 def main() -> int:
     test_build_windows_ps1_manifest()
     test_verify_pacote_falso()
+    test_checagem_rapida_arranque_bin()
     if falhas:
         print(f"\n{len(falhas)} FALHA(S):")
         for f in falhas:
