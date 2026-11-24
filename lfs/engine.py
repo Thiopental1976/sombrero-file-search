@@ -63,16 +63,26 @@ _APP_BINS = [
     os.path.expanduser("~/.local/share/sombrero-file-search/bin"),
 ]
 
+def _which_in_app_bins(name):
+    for d in _APP_BINS:                    # binário empacotado
+        for arq in plat.exe_candidates(name):   # Windows: rg.exe (os.access não completa)
+            cand = os.path.join(d, arq)
+            if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                return cand
+    return None
+
+
 def _which(*names):
     for n in names:
-        p = shutil.which(n)
+        if plat.frozen():
+            # Build congelado (Windows PyInstaller): o bin\ do próprio pacote
+            # tem prioridade sobre o PATH do sistema (evita hijacking e garante
+            # que rg.exe + rga.exe + pdftotext.exe venham do mesmo conjunto).
+            p = _which_in_app_bins(n) or shutil.which(n)
+        else:
+            p = shutil.which(n) or _which_in_app_bins(n)
         if p:
             return p
-        for d in _APP_BINS:                # fallback: binário empacotado
-            for arq in plat.exe_candidates(n):   # Windows: rg.exe (os.access não completa)
-                cand = os.path.join(d, arq)
-                if os.path.isfile(cand) and os.access(cand, os.X_OK):
-                    return cand
     return None
 
 RG = _which("rg")                    # ripgrep
@@ -214,18 +224,43 @@ def rga_args() -> list:
 
 
 def rga_env() -> Optional[dict]:
-    """Ambiente para rodar o rga. Medido: o rga procura o `rg` no PATH, e só
-    nele — com o rg empacotado fora do PATH (install.sh numa sessão que ainda
-    não tem ~/.local/bin, rg embutido no .deb), o rga saía com "Could not find
-    executable rg" e o modo documentos inteiro morria. None = herdar o atual."""
-    if not RG:
-        return None
-    pasta = os.path.dirname(RG)
+    """Ambiente para rodar o rga. Medido: o rga procura o `rg` e o `pdftotext`
+    no PATH, e só nele — com os binários empacotados fora do PATH (install.sh,
+    .deb, pacote Windows onde o usuário já tem um rg no PATH do sistema), o rga
+    saía com "Could not find executable rg/pdftotext" e quebrava documentos/PDFs.
+    None = herdar o atual."""
     atual = os.environ.get("PATH", "")
-    if pasta in atual.split(os.pathsep):
+    ja_no_path = [p for p in atual.split(os.pathsep) if p]
+    vistos = set(os.path.normcase(p) for p in ja_no_path) if plat.IS_WIN else set(ja_no_path)
+    extras = []
+
+    def _add(pasta):
+        if not pasta:
+            return
+        chave = os.path.normcase(pasta) if plat.IS_WIN else pasta
+        if chave not in vistos:
+            vistos.add(chave)
+            extras.append(pasta)
+
+    # Pasta do rga e pastas bin/ empacotadas existentes (ex.: pdftotext.exe no
+    # pacote Windows mesmo quando RG veio do PATH do sistema) + pasta do rg.
+    if RGA:
+        _add(os.path.dirname(RGA))
+    for d in _APP_BINS:
+        if os.path.isdir(d):
+            _add(d)
+    if RG:
+        _add(os.path.dirname(RG))
+    if not extras:
         return None
     env = dict(os.environ)
-    env["PATH"] = atual + os.pathsep + pasta if atual else pasta
+    if plat.frozen():
+        # Congelado: bin\ empacotado na FRENTE para não ser sombreado por
+        # versões antigas ou externas no PATH do sistema.
+        partes = extras + ([atual] if atual else [])
+    else:
+        partes = ([atual] if atual else []) + extras
+    env["PATH"] = os.pathsep.join(partes)
     return env
 
 # H1 (Fable 5.1, 08/09/2026): o fd ENGOLE "Permission denied" a menos que receba
