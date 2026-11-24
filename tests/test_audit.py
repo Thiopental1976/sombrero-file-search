@@ -1856,6 +1856,8 @@ def test_cli_emits_bytes_for_hostile_names():
     matava a CLI inteira com UnicodeEncodeError na primeira linha — os resultados
     seguintes se perdiam. Nome de arquivo é sequência de BYTES; a saída tem que
     sair como bytes, senão `lfs ... -0 | xargs -0` não é confiável."""
+    if os.name == "nt":            # NTFS guarda nome em UTF-16: nome não-UTF-8 não existe lá
+        print("~pula test_cli_emits_bytes_for_hostile_names (so-POSIX)"); return
     src = tempfile.mkdtemp(prefix="lfs_cli_")
     try:
         # Windows: o mesmo str é um nome UTF-16 inválido (substituto solitário),

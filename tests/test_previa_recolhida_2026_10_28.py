@@ -27,8 +27,15 @@ CFGQPA = os.path.join(TMP, "tela.json")
 json.dump({"screens": [{"name": "t", "x": 0, "y": 0, "width": 2400, "height": 1400,
                         "logicalDpi": 96, "logicalWidth": 2400, "logicalHeight": 1400}]},
           open(CFGQPA, "w"))
-os.environ["QT_QPA_PLATFORM"] = "offscreen:configfile=" + CFGQPA
 RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+if os.name == "nt":
+    # CI 24/11/2026: no Windows o caminho tem "C:" e os argumentos do plugin QPA são
+    # separados por ":"; o processo morria (0xC0000409) antes do primeiro print.
+    # Hipótese a confirmar no próximo run: nome relativo, com o cwd na pasta dele.
+    os.chdir(TMP)
+    os.environ["QT_QPA_PLATFORM"] = "offscreen:configfile=tela.json"
+else:
+    os.environ["QT_QPA_PLATFORM"] = "offscreen:configfile=" + CFGQPA
 sys.path.insert(0, os.path.join(RAIZ, "lfs"))
 
 falhas = []

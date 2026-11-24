@@ -65,7 +65,7 @@ res = {}
 th = threading.Thread(target=lambda: res.setdefault("r", B.search_boolean(q, EXPR, achados.append, dono="aba1")))
 th.start(); th.join(5)
 ok(not th.is_alive(), "termina em < 5 s (sem ciclo vez↔Event)")
-nomes = sorted(os.path.relpath(m.path, base) for m in achados)
+nomes = sorted(os.path.relpath(m.path, base).replace(os.sep, "/") for m in achados)   # Windows: "\\"
 ok(nomes == ["hd/x1.txt", "hd/x3.txt", "ssd/x1.txt", "ssd/x3.txt"], "resultado certo (%s)" % nomes)
 ok(achados and all(m.lines for m in achados), "linhas de exibição presentes (P3b, por grupo)")
 ok(pedidos == [("aba1", ["sdz"])], "1 aquisição de vez por grupo de HD, nenhuma no SSD (%s)" % pedidos)
