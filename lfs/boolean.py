@@ -21,7 +21,7 @@ Estratégia (casada com o desenho do Fable):
 Sem Qt aqui. O motor devolve Matches iguais aos de engine.py (a GUI/CLI reaproveitam).
 """
 from __future__ import annotations
-import os, re, json, stat, subprocess, threading, tempfile
+import os, re, json, stat, subprocess, threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
@@ -272,12 +272,6 @@ def _fatiar_lotes(caminhos, base_cmd, max_n: int = _BATCH, max_chars: int | None
     return lotes
 
 
-def _errf():
-    """Stderr do rg em UTF-8 tolerante: caminho com byte legado não pode zerar
-    a contabilidade de erros via UnicodeDecodeError no _reap."""
-    return tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
-
-
 def _sem_oculto_win(caminhos, q):
     """Windows: tira o oculto por ATRIBUTO que o --glob do rg deixou passar
     (engine.filtro_oculto_win). Fora do Windows, ou sem filtro de nome, nada."""
@@ -307,7 +301,7 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
         if cancel(): break
         if not roots: continue
         cmd = base + ["--"] + roots
-        errf = _errf()  # N2: captura stderr p/ contar denied sem quebrar em byte não-UTF-8
+        errf = engine._arquivo_de_erros()  # N2: captura stderr p/ contar denied sem quebrar em byte não-UTF-8
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
                                     env=_env_do_motor(cmd), **engine.plat.popen_flags())
@@ -367,7 +361,7 @@ def _universe(q: engine.Query, cancel, stats=None) -> set[str]:
         # os que CONTÊM o termo, que agora entram nos conjuntos positivos.
         # matching=False remove --word-regexp (quebraria o padrão vazio).
         cmd = _rg_base(q, matching=False) + ["-l", "--null", "-e", "", "--"] + q.paths
-        errf = _errf()  # N2: captura stderr sem quebrar em byte não-UTF-8
+        errf = engine._arquivo_de_erros()  # N2: captura stderr sem quebrar em byte não-UTF-8
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
                                     env=_env_do_motor(cmd), **engine.plat.popen_flags())
@@ -836,7 +830,7 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
     for lote in _fatiar_lotes(files, base):
         if cancel(): break
         cmd = base + ["--"] + lote
-        errf = _errf()  # N2: captura stderr sem quebrar em byte não-UTF-8
+        errf = engine._arquivo_de_erros()  # N2: captura stderr sem quebrar em byte não-UTF-8
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                     stderr=errf, text=True, errors="replace",
