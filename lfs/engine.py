@@ -1783,6 +1783,9 @@ def filtro_oculto_win(q: Query):
     visto = {}
 
     def oculto(path):
+        # rg --json devolve caminho relativo quando q.paths tem "." ou "sub";
+        # `raizes` já foi normalizada com abspath acima.
+        path = os.path.abspath(path)
         raiz = _raiz_mais_especifica(path, raizes)
         if raiz is None:
             return False

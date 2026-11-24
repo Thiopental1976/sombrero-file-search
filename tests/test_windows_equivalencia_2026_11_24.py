@@ -378,12 +378,47 @@ def test_rga_args_trava_limpeza_e_corrida() -> None:
         shutil.rmtree(T, ignore_errors=True)
 
 
+def test_filtro_oculto_win_caminho_relativo() -> None:
+    T = tempfile.mkdtemp(prefix="sfs_oculto_rel_")
+    is_win_orig = plat.IS_WIN
+    oculto_orig = engine._oculto
+    cwd_orig = os.getcwd()
+    try:
+        sub = os.path.join(T, "pasta_oculta")
+        os.makedirs(sub)
+        f1 = os.path.join(T, "rotina.txt")
+        f2 = os.path.join(sub, "visivel.txt")
+        for fp in (f1, f2):
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write("ok")
+
+        plat.IS_WIN = True
+        engine._oculto = lambda pasta, nome: nome in ("rotina.txt", "pasta_oculta")
+        os.chdir(T)
+        q = engine.Query(paths=["."], name_patterns=["*.txt"], content="ok")
+        fora = engine.filtro_oculto_win(q)
+        ok(fora is not None, "filtro_oculto_win ativo no Windows com glob de nome")
+        if fora is not None:
+            ok(fora("./rotina.txt") and fora("rotina.txt"),
+               "filtro_oculto_win detecta arquivo oculto passado com caminho relativo")
+            ok(fora("./pasta_oculta/visivel.txt"),
+               "filtro_oculto_win detecta pasta pai oculta passada com caminho relativo")
+            ok(not fora("./normal.txt"),
+               "filtro_oculto_win permite arquivo visível passado com caminho relativo")
+    finally:
+        os.chdir(cwd_orig)
+        plat.IS_WIN = is_win_orig
+        engine._oculto = oculto_orig
+        shutil.rmtree(T, ignore_errors=True)
+
+
 def main() -> int:
     test_rga_env_e_which_pacote()
     test_fileops_raiz_origem_e_fail_closed()
     test_resultfilter_datas_antigas_windows()
     test_fallback_python_encoding_utf8_sob_cp1252()
     test_rga_args_trava_limpeza_e_corrida()
+    test_filtro_oculto_win_caminho_relativo()
     if falhas:
         print(f"\n{len(falhas)} FALHA(S):")
         for f in falhas:
