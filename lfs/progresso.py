@@ -214,7 +214,7 @@ def _fd_eh_pasta(base, pid, fd, alvo) -> bool:
     """O fd do motor é de pasta? Responde pelo fdinfo do /proc (flags de abertura),
     SEM tocar o disco: um os.path.isdir() no caminho pendura em montagem morta, e
     esta função roda dentro da sonda, com o lock dela (auditoria de 23/11/2026).
-    Sem fdinfo legível (teste com /proc falso), cai no isdir."""
+    Só num /proc falso de teste (base diferente) é que cai no isdir."""
     try:
         with open(f"{base}/{pid}/fdinfo/{fd}") as f:
             for linha in f:
@@ -222,6 +222,10 @@ def _fd_eh_pasta(base, pid, fd, alvo) -> bool:
                     return bool(int(linha.split()[1], 8) & _O_DIRECTORY)
     except (OSError, ValueError, IndexError):
         pass
+    if base == "/proc":
+        # o motor fechou o fd entre o readlink e o fdinfo: sem resposta. Tratar
+        # como arquivo (mostra a pasta de cima) é só cosmético; tocar o disco não.
+        return False
     return os.path.isdir(alvo)
 
 

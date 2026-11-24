@@ -123,5 +123,21 @@ with tempfile.TemporaryDirectory() as d:
         filho.kill(); filho.wait()
     ok(achou == sub, "pasta atual sai do fdinfo, sem isdir no disco (arquivo aberto -> a pasta dele): %s" % achou)
 
+# revisão da Vega (23/11): a marca de grave omitido atravessa a fusão como marca,
+# e fd fechado na corrida não leva a sonda ao disco
+dst = {}
+E._funde_stats(dst, {"incompleto_grave_omitido": True}); E._funde_stats(dst, {"incompleto_grave_omitido": True})
+ok(dst.get("incompleto_grave_omitido") is True and E.resumo_incompleto(dst)[0],
+   "fusão de workers: incompleto_grave_omitido continua True (não vira contador) e a busca é grave")
+real = os.path.isdir
+os.path.isdir = lambda c: (_ for _ in ()).throw(AssertionError("isdir tocou o disco"))
+try:
+    r = P._fd_eh_pasta("/proc", os.getpid(), 987654, "/mnt/qualquer")
+except AssertionError as ex:
+    r = str(ex)
+finally:
+    os.path.isdir = real
+ok(r is False, "fd já fechado (fdinfo sumiu): sem isdir no disco (%r)" % (r,))
+
 print("\n" + ("TUDO OK" if not falhas else "%d FALHA(S)" % len(falhas)))
 sys.exit(1 if falhas else 0)

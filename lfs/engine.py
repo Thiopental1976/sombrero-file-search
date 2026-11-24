@@ -3514,6 +3514,9 @@ def _funde_stats(dst, src):
                                  args=e.get("args"),   # sem isto o particionado
                                  grave=e.get("grave"))
                                                        # mostrava "{rc}: {msg}" cru
+        elif k == "incompleto_grave_omitido":
+            if v:                              # marca, não contador (bool é int em Python)
+                dst[k] = True
         elif isinstance(v, list):
             dst.setdefault(k, []).extend(v)
         elif isinstance(v, (int, float)):
