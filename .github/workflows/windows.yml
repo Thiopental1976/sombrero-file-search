@@ -159,6 +159,8 @@ jobs:
       # com cada falha Windows-only pinada em LACUNAS_CONHECIDAS.
       - name: auditoria e demais suítes (informativo)
         continue-on-error: true
+        env:
+          PYTHONFAULTHANDLER: "1"    # queda nativa (0xC0000409) deixa a pilha Python no log
         run: |
           $falhas = @()
           Get-ChildItem tests -Filter test_*.py | Sort-Object Name | ForEach-Object {
@@ -170,3 +172,13 @@ jobs:
           "--- suítes com falha no Windows: $($falhas.Count)"
           $falhas
           if ($falhas.Count) { exit 1 }
+
+      # 24/11/2026: o log do passo acima só mostra a 1ª linha de cada falha; os
+      # logs inteiros sumiam com o runner. Guardados para diagnosticar sem Windows.
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: logs-suites-windows
+          path: _dl/test_*.log
+          if-no-files-found: warn
+          retention-days: 14
