@@ -178,6 +178,23 @@ jobs:
           if ($LASTEXITCODE -ne 2) { throw "sem manifesto: --verify saiu $LASTEXITCODE (esperado 2)" }
           exit 0
 
+      # 24/11/2026: caminho longo MEDIDO, não simulado. Política desligada, raiz curta,
+      # árvore > 300 caracteres. Informativo até a primeira medição (depois vira obrigatório).
+      - name: aceite — caminho longo com LongPathsEnabled=0 (informativo)
+        continue-on-error: true
+        run: |
+          $key = "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem"
+          $orig = (Get-ItemProperty $key).LongPathsEnabled
+          "LongPathsEnabled original: $orig"
+          Set-ItemProperty $key LongPathsEnabled 0
+          try {
+            python tests\aceite_caminho_longo_win.py "dist\SombreroFileSearch\sfs.exe"
+            $rc = $LASTEXITCODE
+          } finally {
+            Set-ItemProperty $key LongPathsEnabled $orig
+          }
+          exit $rc
+
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
