@@ -37,14 +37,22 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force bin, _dl | Out-Null
-          function Baixa($url, $zip) {
+          # 24/11/2026 (pedido do Rodrigo): SHA256 FIXADO de cada download. Arquivo
+          # corrompido ou trocado na origem para a montagem, em vez de ir para o pacote.
+          # Ao subir uma versão (RGV/FDV/RGAV/POPPLERV), atualizar o hash junto.
+          # rg, fd e poppler conferem com o digest publicado pelo GitHub; o rga 0.10.9
+          # é anterior aos digests: hash medido em 24/11/2026.
+          function Baixa($url, $zip, $sha) {
             Invoke-WebRequest -Uri $url -OutFile "_dl\$zip"
+            $h = (Get-FileHash "_dl\$zip" -Algorithm SHA256).Hash.ToLower()
+            if ($h -ne $sha) { throw "SHA256 de $zip nao confere: veio $h, esperado $sha" }
+            "sha256 ok  $zip"
             Expand-Archive "_dl\$zip" -DestinationPath "_dl\$($zip -replace '\.zip$','')" -Force
           }
-          Baixa "https://github.com/BurntSushi/ripgrep/releases/download/$env:RGV/ripgrep-$env:RGV-x86_64-pc-windows-msvc.zip" rg.zip
-          Baixa "https://github.com/sharkdp/fd/releases/download/$env:FDV/fd-$env:FDV-x86_64-pc-windows-msvc.zip" fd.zip
-          Baixa "https://github.com/phiresky/ripgrep-all/releases/download/$env:RGAV/ripgrep_all-$env:RGAV-x86_64-pc-windows-msvc.zip" rga.zip
-          Baixa "https://github.com/oschwartz10612/poppler-windows/releases/download/v$env:POPPLERV/Release-$env:POPPLERV.zip" poppler.zip
+          Baixa "https://github.com/BurntSushi/ripgrep/releases/download/$env:RGV/ripgrep-$env:RGV-x86_64-pc-windows-msvc.zip" rg.zip 71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5
+          Baixa "https://github.com/sharkdp/fd/releases/download/$env:FDV/fd-$env:FDV-x86_64-pc-windows-msvc.zip" fd.zip b2816e506390a89941c63c9187d58a3cc10e9a55f2ef0685f9ea0eccaf7c98c8
+          Baixa "https://github.com/phiresky/ripgrep-all/releases/download/$env:RGAV/ripgrep_all-$env:RGAV-x86_64-pc-windows-msvc.zip" rga.zip da03e969ac01839443739c547ca8eb521e648e712251d61a98d34a1521b9f43b
+          Baixa "https://github.com/oschwartz10612/poppler-windows/releases/download/v$env:POPPLERV/Release-$env:POPPLERV.zip" poppler.zip 7a6f256a0ddf7536182246a5733331bf4677cbcc34f4663774947ad34556c8d0
           Get-ChildItem _dl -Recurse -Include rg.exe, fd.exe, rga.exe, rga-preproc.exe | Copy-Item -Destination bin
           # pdftotext + as DLLs do poppler juntos: o rga acha o pdftotext pelo
           # PATH, e rga_env() põe a pasta do rg (bin\) no PATH dele
