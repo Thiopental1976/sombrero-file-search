@@ -245,7 +245,37 @@ def _le_caminhos_nul(proc, cancel) -> set:
     return out
 
 
-_BATCH = 400   # caminhos por invocação do rg (evita estourar ARG_MAX — B4 e opt#1)
+_BATCH = 400            # teto de caminhos por invocação do rg (B4 e opt#1)
+_BATCH_CHARS_WIN = 24_000   # margem segura abaixo de 32.767 chars do CreateProcessW
+_BATCH_CHARS_POSIX = 120_000
+
+
+def _fatiar_lotes(caminhos, base_cmd, max_n: int = _BATCH, max_chars: int | None = None):
+    """Divide `caminhos` em lotes que respeitam tanto a contagem (`max_n`)
+    quanto o comprimento acumulado da linha de comando (`max_chars`).
+    No Windows, 400 caminhos de ~100 chars ultrapassam os 32 KiB de CreateProcessW
+    (WinError 206); fatiar por tamanho evita `batch_failed` em ANDs grandes.
+    Sempre coloca ao menos 1 caminho por lote (não trava em caminho gigante)."""
+    if max_chars is None:
+        max_chars = _BATCH_CHARS_WIN if engine.plat.IS_WIN else _BATCH_CHARS_POSIX
+    base_len = sum(len(a) + 3 for a in base_cmd) + 4   # folga p/ '--', aspas e espaços
+    lotes, atual, tam = [], [], base_len
+    for p in caminhos:
+        custo = len(p) + 3
+        if atual and (len(atual) >= max_n or tam + custo > max_chars):
+            lotes.append(atual)
+            atual, tam = [], base_len
+        atual.append(p)
+        tam += custo
+    if atual:
+        lotes.append(atual)
+    return lotes
+
+
+def _errf():
+    """Stderr do rg em UTF-8 tolerante: caminho com byte legado não pode zerar
+    a contabilidade de erros via UnicodeDecodeError no _reap."""
+    return tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
 
 
 def _sem_oculto_win(caminhos, q):
@@ -271,14 +301,13 @@ def _files_with_term(term: str, q: engine.Query, cancel, restrict=None, stats=No
     if restrict is None:
         batches = [list(q.paths)]                 # varredura da árvore toda
     else:
-        rl = list(restrict)
-        batches = [rl[i:i + _BATCH] for i in range(0, len(rl), _BATCH)]
+        batches = _fatiar_lotes(list(restrict), base)
     out = set()
     for roots in batches:
         if cancel(): break
         if not roots: continue
         cmd = base + ["--"] + roots
-        errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr p/ contar denied
+        errf = _errf()  # N2: captura stderr p/ contar denied sem quebrar em byte não-UTF-8
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
                                     env=_env_do_motor(cmd), **engine.plat.popen_flags())
@@ -338,7 +367,7 @@ def _universe(q: engine.Query, cancel, stats=None) -> set[str]:
         # os que CONTÊM o termo, que agora entram nos conjuntos positivos.
         # matching=False remove --word-regexp (quebraria o padrão vazio).
         cmd = _rg_base(q, matching=False) + ["-l", "--null", "-e", "", "--"] + q.paths
-        errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr
+        errf = _errf()  # N2: captura stderr sem quebrar em byte não-UTF-8
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
                                     env=_env_do_motor(cmd), **engine.plat.popen_flags())
@@ -804,10 +833,10 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
     base = _rg_base(q) + ["--json"]
     base += engine.rg_padroes(pos_terms, q)       # B6 + variantes legadas (22/09/2026)
     res: dict = {}
-    for i in range(0, len(files), _BATCH):
+    for lote in _fatiar_lotes(files, base):
         if cancel(): break
-        cmd = base + ["--"] + files[i:i + _BATCH]
-        errf = tempfile.TemporaryFile(mode="w+")  # N2: captura stderr
+        cmd = base + ["--"] + lote
+        errf = _errf()  # N2: captura stderr sem quebrar em byte não-UTF-8
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                     stderr=errf, text=True, errors="replace",
@@ -818,7 +847,7 @@ def _display_lines(pos_terms, files, q: engine.Query, cancel, stats=None) -> dic
             # o usuário veria "0 linhas" e concluiria que o termo não está lá
             _anota(stats, "batch_failed", onde="(display lines)",
                    detalhe="{n} file(s) were left without their lines",
-                   args={"n": len(files[i:i + _BATCH])})
+                   args={"n": len(lote)})
             continue
         vigia = engine._vigia_cancel(proc, cancel)
         try:
