@@ -636,20 +636,57 @@ _LOCALE_VARS = ("SFS_LANG", "LFS_LANG", "LC_ALL", "LC_MESSAGES", "LANG", "LANGUA
 
 
 def _normalize(value: str) -> str:
-    """'pt_BR.UTF-8' / 'pt_BR:en' -> 'pt'; unsupported -> 'en'."""
-    code = value.split(":")[0].split(".")[0].split("_")[0].strip().lower()
+    """'pt_BR.UTF-8' / 'pt_BR:en' / 'Portuguese_Brazil' -> 'pt'; unsupported -> 'en'."""
+    code = value.split(":")[0].split(".")[0].split("_")[0].split("-")[0].strip().lower()
     if not code:
         return ""
+    if code in ("pt", "portuguese"):
+        return "pt"
     return code if code in _SUPPORTED else "en"
 
 
-def _detect() -> str:
+def _win_lcid_sistema():
+    """Retorna o LANGID da interface do usuário no Windows, ou None fora dele."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        return int(ctypes.windll.kernel32.GetUserDefaultUILanguage())
+    except Exception:
+        return None
+
+
+def _win_lang(lcid) -> str:
+    """Primary language ID (bits 0..9): 0x16 = LANG_PORTUGUESE (pt-BR/pt-PT)."""
+    if lcid is None:
+        return ""
+    return "pt" if (int(lcid) & 0x3FF) == 0x16 else "en"
+
+
+def _sys_locale_atual():
+    try:
+        import locale
+        return locale.getlocale()[0]
+    except Exception:
+        return None
+
+
+def _detect(env=None, win_lcid=_win_lcid_sistema, sys_locale=_sys_locale_atual) -> str:
+    fonte = os.environ if env is None else env
     for var in _LOCALE_VARS:
-        raw = os.environ.get(var)
+        raw = fonte.get(var)
         if raw:
             code = _normalize(raw)
             if code:
                 return code
+    lcid = win_lcid() if win_lcid is not None else None
+    if lcid is not None:
+        return _win_lang(lcid)
+    loc = sys_locale() if sys_locale is not None else None
+    if loc:
+        code = _normalize(loc)
+        if code:
+            return code
     return "en"
 
 
