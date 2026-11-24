@@ -80,7 +80,7 @@ try:
        "conteudo pelo caminho Python acha o arquivo fundo, sem prefixo (%r)" % (mc[:2],))
     ok(not st.get("incompleto") and not st.get("denied"), "conteudo Python: nada incompleto nem negado (%r)" % st)
 
-    st = {}
+    st = dupes.new_stats()
     grupos = dupes.find_duplicates([base], stats=st)
     caminhos = sorted(p for g in grupos for c in g.members for p in c.paths)
     ok([nc(c) for c in caminhos] == [nc(fundo + "\\copia1.bin"), nc(fundo + "\\copia2.bin")]
