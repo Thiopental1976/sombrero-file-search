@@ -460,7 +460,14 @@ def _cancela_io(tid):
     síncrono sem resposta (a thread sai com erro e não fica pendurada)."""
     try:
         import ctypes
-        k = ctypes.windll.kernel32
+        from ctypes import wintypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.OpenThread.restype = wintypes.HANDLE
+        k.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k.CancelSynchronousIo.restype = wintypes.BOOL
+        k.CancelSynchronousIo.argtypes = [wintypes.HANDLE]
+        k.CloseHandle.restype = wintypes.BOOL
+        k.CloseHandle.argtypes = [wintypes.HANDLE]
         h = k.OpenThread(0x0001, False, tid)          # THREAD_TERMINATE
         if h:
             k.CancelSynchronousIo(h)
@@ -472,17 +479,27 @@ def _cancela_io(tid):
 def mount_status(mp, timeout=3.0, _stat=os.stat, _statvfs=shutil.disk_usage, _porta=None):
     """'alive' | 'no_response' | 'broken_mount' (mesmo contrato do Linux).
 
-    Sem fork no Windows: (1) caminho de rede → a 445 do servidor responde no
-    prazo? (2) stat + disk_usage numa thread; passou o prazo, CancelSynchronousIo
-    nela e 'no_response'. `_stat`/`_statvfs`/`_porta` injetáveis (teste)."""
+    Sem fork no Windows (decisão de 24/11/2026, opção C):
+      (1) Caminho de rede: testa a porta TCP 445 por no máximo metade do
+          `timeout` — NÃO é veredito. Se a 445 não abrir (\\wsl.localhost,
+          WebDAV, SSHFS-Win, SMB over QUIC…), segue para a etapa (2) sem
+          condenar o caminho nem depender de lista fixa de exceções.
+      (2) `stat` + `disk_usage` numa thread daemon com o restante do prazo
+          total (o total nunca excede `timeout`); estourando o prazo, chama
+          `CancelSynchronousIo` nela e devolve `'no_response'`.
+
+    Nota: o comportamento real de `CancelSynchronousIo` contra um servidor SMB
+    morto/travado só pode ser medido em uma máquina Windows com rede que caia
+    (o CI do GitHub não mede). `_stat`/`_statvfs`/`_porta` injetáveis (teste)."""
+    prazo_fim = time.monotonic() + timeout
     unc = _unc_raiz(mp)
     if not unc:
         ent = _mount_entry(mp)
         unc = getattr(ent, "unc", "") if getattr(ent, "drive_type", None) == DRIVE_REMOTE else ""
     if unc:
         servidor = unc[2:].split("\\", 1)[0]
-        if not (_porta or _porta_smb)(servidor, timeout):
-            return "no_response"
+        # 445 gasta no máximo metade do prazo; se fechada, segue para a etapa 2.
+        (_porta or _porta_smb)(servidor, max(0.01, timeout / 2.0))
     res = {}
 
     def _morto(e, conjunto_posix):
@@ -508,7 +525,8 @@ def mount_status(mp, timeout=3.0, _stat=os.stat, _statvfs=shutil.disk_usage, _po
 
     t = threading.Thread(target=sonda, daemon=True, name="sfs-sonda")
     t.start()
-    t.join(timeout)
+    restante = max(0.01, prazo_fim - time.monotonic())
+    t.join(restante)
     if t.is_alive():
         tid = getattr(t, "native_id", None)
         if tid:

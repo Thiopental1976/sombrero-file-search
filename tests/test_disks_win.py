@@ -111,20 +111,49 @@ ok(c.net and c.name_problem("x?.txt") == "charset", "destino de rede: net=True e
 ok(W._caps_win("CDFS", W.DRIVE_CDROM).get("readonly"), "CD é somente leitura")
 
 # ------------------------------------------------------------ sonda (injetada)
+import time as _time
 def morto(_p):
     e = OSError(64, "The specified network name is no longer available")
     e.winerror = 64
     raise e
-ok(W.mount_status("\\\\nas\\fotos", _stat=morto, _porta=lambda s, t: True) == "broken_mount",
-   "winerror 64 (share sumiu) -> broken_mount")
-ok(W.mount_status("\\\\nas\\fotos", _porta=lambda s, t: False) == "no_response",
-   "servidor não atende na 445 -> no_response, sem tocar o FS")
 def lento(_p):
-    import time; time.sleep(5)
-ok(W.mount_status("\\\\nas\\fotos", timeout=0.3, _stat=lento, _porta=lambda s, t: True) == "no_response",
-   "stat que não volta no prazo -> no_response")
+    _time.sleep(5)
 def negado(_p):
     e = PermissionError(13, "Access is denied"); e.winerror = 5; raise e
+
+# (a) 445 fechada + stat responde -> alive (WSL, WebDAV, SSHFS-Win, SMB over QUIC)
+ok(W.mount_status("\\\\wsl.localhost\\Ubuntu", _stat=lambda p: None, _statvfs=lambda p: None,
+                  _porta=lambda s, t: False) == "alive",
+   "445 fechada + stat responde -> alive (UNC nao-SMB)")
+
+# (b) 445 fechada (gasta no maximo timeout/2) + stat lento -> no_response no prazo + cancela_io
+porta_timeouts = []
+def _porta_drop(srv, to):
+    porta_timeouts.append(to)
+    _time.sleep(to)
+    return False
+cancelados = []
+_orig_cancela = W._cancela_io
+W._cancela_io = lambda tid: cancelados.append(tid)
+try:
+    t0 = _time.monotonic()
+    r_slow = W.mount_status("\\\\nas\\morto", timeout=0.4, _stat=lento, _porta=_porta_drop)
+    dt_slow = _time.monotonic() - t0
+finally:
+    W._cancela_io = _orig_cancela
+ok(r_slow == "no_response" and dt_slow < 0.75 and len(cancelados) == 1
+   and len(porta_timeouts) == 1 and abs(porta_timeouts[0] - 0.2) < 1e-6,
+   f"445 fechada + stat lento -> no_response no prazo total + _cancela_io (dt={dt_slow:.2f}s, cancel={len(cancelados)})")
+
+# (c) 445 fechada + stat com erro de montagem morta -> broken_mount
+ok(W.mount_status("\\\\webdav\\share", _stat=morto, _porta=lambda s, t: False) == "broken_mount",
+   "445 fechada + winerror 64 -> broken_mount")
+
+# (d) 445 aberta: tudo como antes
+ok(W.mount_status("\\\\nas\\fotos", _stat=morto, _porta=lambda s, t: True) == "broken_mount",
+   "winerror 64 (share sumiu) -> broken_mount")
+ok(W.mount_status("\\\\nas\\fotos", timeout=0.3, _stat=lento, _porta=lambda s, t: True) == "no_response",
+   "stat que não volta no prazo -> no_response")
 ok(W.mount_status("\\\\nas\\fotos", _stat=negado, _porta=lambda s, t: True) == "alive",
    "acesso negado: o share RESPONDEU -> alive")
 ok(W.mount_status("\\\\nas\\fotos", _stat=lambda p: None, _statvfs=lambda p: None,
