@@ -125,7 +125,7 @@ def _walk(roots, min_size, include_zero, follow_symlinks, cancel, stats):
     for root in roots:
         if cancel():
             break
-        for dirpath, dirs, files in os.walk(_L(root), onerror=on_err,
+        for dirpath, dirs, files in os.walk(_L(root, force=True), onerror=on_err,
                                             followlinks=follow_symlinks):
             if cancel():
                 break
