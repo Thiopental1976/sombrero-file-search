@@ -412,6 +412,39 @@ def test_filtro_oculto_win_caminho_relativo() -> None:
         shutil.rmtree(T, ignore_errors=True)
 
 
+def test_longpath_relativo() -> None:
+    is_win_orig = plat.IS_WIN
+    abspath_orig = os.path.abspath
+    try:
+        plat.IS_WIN = True
+        # 1) Caminho relativo curto num diretório de trabalho fundo (>240 chars)
+        fundo = "C:\\" + ("pasta_muito_longa\\" * 15) + "arq.txt"
+        assert len(fundo) > 260
+        os.path.abspath = lambda p: fundo if p == "arq.txt" else abspath_orig(p)
+        lp = plat.longpath("arq.txt")
+        ok(lp == "\\\\?\\" + fundo,
+           f"plat.longpath aplica \\\\?\\ em caminho relativo cuja forma absoluta passa de 240 ({lp[:40]!r})")
+
+        # 2) Caminho relativo num share UNC fundo (>240 chars)
+        fundo_unc = "\\\\srv\\share\\" + ("pasta_muito_longa\\" * 15) + "arq.txt"
+        os.path.abspath = lambda p: fundo_unc if p == "arq.txt" else abspath_orig(p)
+        lp_unc = plat.longpath("arq.txt")
+        ok(lp_unc == "\\\\?\\UNC\\" + fundo_unc[2:],
+           f"plat.longpath aplica \\\\?\\UNC\\ em caminho relativo UNC fundo ({lp_unc[:40]!r})")
+
+        # 3) Caminho relativo realmente curto continua inalterado
+        os.path.abspath = lambda p: "C:\\curto\\a.txt" if p == "a.txt" else abspath_orig(p)
+        ok(plat.longpath("a.txt") == "a.txt",
+           "plat.longpath preserva caminho relativo curto sem prefixo")
+
+        # 4) Caminho vazio e já prefixado não são alterados
+        ok(plat.longpath("") == "" and plat.longpath("\\\\?\\C:\\x") == "\\\\?\\C:\\x",
+           "plat.longpath preserva vazio e já prefixado")
+    finally:
+        plat.IS_WIN = is_win_orig
+        os.path.abspath = abspath_orig
+
+
 def main() -> int:
     test_rga_env_e_which_pacote()
     test_fileops_raiz_origem_e_fail_closed()
@@ -419,6 +452,7 @@ def main() -> int:
     test_fallback_python_encoding_utf8_sob_cp1252()
     test_rga_args_trava_limpeza_e_corrida()
     test_filtro_oculto_win_caminho_relativo()
+    test_longpath_relativo()
     if falhas:
         print(f"\n{len(falhas)} FALHA(S):")
         for f in falhas:

@@ -125,13 +125,17 @@ _LONG = 240          # margem abaixo de MAX_PATH (260) para o nome do .part
 
 def longpath(p: str) -> str:
     """Prefixo \\\\?\\ para I/O em caminho longo no Windows (independe da
-    política LongPathsEnabled). Identidade no Linux e em caminho curto."""
-    if not IS_WIN or len(p) <= _LONG or p.startswith("\\\\?\\"):
+    política LongPathsEnabled). Identidade no Linux e em caminho curto.
+    Mede o comprimento da forma ABSOLUTA: um caminho relativo curto num CWD
+    fundo (> 240 chars) também excede MAX_PATH na API Win32."""
+    if not IS_WIN or not p or p.startswith("\\\\?\\"):
         return p
-    p = os.path.abspath(p)
-    if p.startswith("\\\\"):                       # UNC: \\srv\share -> \\?\UNC\srv\share
-        return "\\\\?\\UNC\\" + p[2:]
-    return "\\\\?\\" + p
+    ap = os.path.abspath(p)
+    if len(ap) <= _LONG:
+        return p
+    if ap.startswith("\\\\"):                      # UNC: \\srv\share -> \\?\UNC\srv\share
+        return "\\\\?\\UNC\\" + ap[2:]
+    return "\\\\?\\" + ap
 
 
 def displaypath(p: str) -> str:
