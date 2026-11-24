@@ -8,6 +8,7 @@ Rode:  python3 tests/test_windows_equivalencia_2026_11_24.py
 """
 from __future__ import annotations
 
+import datetime
 import ntpath
 import os
 import shutil
@@ -19,11 +20,12 @@ RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 LFS = os.path.join(RAIZ, "lfs")
 sys.path.insert(0, LFS)
 
-import disks    # noqa: E402
-import disks_win  # noqa: E402
-import engine   # noqa: E402
-import fileops  # noqa: E402
-import plat     # noqa: E402
+import disks         # noqa: E402
+import disks_win     # noqa: E402
+import engine        # noqa: E402
+import fileops       # noqa: E402
+import plat          # noqa: E402
+import resultfilter  # noqa: E402
 
 falhas: list[str] = []
 
@@ -162,9 +164,65 @@ def test_fileops_raiz_origem_e_fail_closed() -> None:
         shutil.rmtree(T, ignore_errors=True)
 
 
+def test_resultfilter_datas_antigas_windows() -> None:
+    # Simula CRT do Windows: timestamp() levanta OSError(22) para < 1970 e
+    # OverflowError para > 3001.
+    class _WinDatetime(datetime.datetime):
+        def timestamp(self) -> float:
+            if self.year < 1970:
+                raise OSError(22, "Invalid argument")
+            if self.year > 3001:
+                raise OverflowError("timestamp out of range")
+            return super().timestamp()
+
+    dt_mod_orig = resultfilter.datetime
+
+    class _FakeDtMod:
+        datetime = _WinDatetime
+        timedelta = dt_mod_orig.timedelta
+
+    resultfilter.datetime = _FakeDtMod  # type: ignore[assignment]
+    try:
+        # <1969 não dá crash e realmente filtra por epoch negativo
+        pred_old = resultfilter.compile_filter("<1969")
+        mt_1965 = (datetime.datetime(1965, 6, 1) - datetime.datetime(1970, 1, 1)).total_seconds()
+        mt_2020 = datetime.datetime(2020, 6, 1).timestamp()
+        ok(pred_old("a.txt", "/a.txt", mt_1965),
+           "resultfilter <1969 casa mtime de 1965 sob CRT Windows simulado")
+        ok(not pred_old("a.txt", "/a.txt", mt_2020),
+           "resultfilter <1969 rejeita mtime de 2020 sob CRT Windows simulado")
+
+        # >3500 (OverflowError no Windows) também não dá crash
+        pred_far = resultfilter.compile_filter("<3500")
+        ok(pred_far("a.txt", "/a.txt", mt_2020),
+           "resultfilter <3500 não estoura OverflowError e casa 2020")
+
+        # >9999 (year + 1 == 10000 -> ValueError) cai silenciosamente em substring
+        pred_9999 = resultfilter.compile_filter(">9999")
+        ok(not pred_9999("a.txt", "/a.txt", mt_2020),
+           "resultfilter >9999 não levanta ValueError")
+    finally:
+        resultfilter.datetime = dt_mod_orig
+
+    # Além disso, se _period_bounds levantar OSError/OverflowError direto,
+    # _compile_token ainda cai em substring sem derrubar a GUI.
+    orig_pb = resultfilter._period_bounds
+    try:
+        for exc in (OSError(22, "Invalid argument"), OverflowError("range")):
+            def _boom(*_a, _e=exc):
+                raise _e
+            resultfilter._period_bounds = _boom
+            p = resultfilter.compile_filter("<1969")
+            ok(not p("a.txt", "/a.txt", 0.0),
+               f"_compile_token captura {type(exc).__name__} sem derrubar a GUI")
+    finally:
+        resultfilter._period_bounds = orig_pb
+
+
 def main() -> int:
     test_rga_env_e_which_pacote()
     test_fileops_raiz_origem_e_fail_closed()
+    test_resultfilter_datas_antigas_windows()
     if falhas:
         print(f"\n{len(falhas)} FALHA(S):")
         for f in falhas:

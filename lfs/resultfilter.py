@@ -31,6 +31,19 @@ _DATE_RE = re.compile(r"^([<>])(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$")
 Predicate = Callable[[str, str, Optional[float]], bool]
 
 
+_EPOCH_NAIVE = datetime.datetime(1970, 1, 1)
+
+
+def _to_epoch(dt: datetime.datetime) -> float:
+    """Converte datetime local para epoch. No Windows, mktime() do CRT levanta
+    OSError (Errno 22) para datas < 1970-01-01 e OverflowError para anos > 3001;
+    caímos em aritmética pura de timedelta, mantendo o filtro funcional sem crash."""
+    try:
+        return dt.timestamp()
+    except (OSError, OverflowError):
+        return (dt - _EPOCH_NAIVE).total_seconds()
+
+
 def _period_bounds(year: int, month: Optional[int], day: Optional[int]):
     """(lo, hi) em epoch para o período nomeado. hi é o instante logo APÓS ele.
     Levanta ValueError se a data for inválida (mês 13, dia 32…)."""
@@ -44,7 +57,7 @@ def _period_bounds(year: int, month: Optional[int], day: Optional[int]):
     else:
         lo = datetime.datetime(year, month, day)
         hi = lo + datetime.timedelta(days=1)
-    return lo.timestamp(), hi.timestamp()
+    return _to_epoch(lo), _to_epoch(hi)
 
 
 def _date_term(op: str, lo: float, hi: float) -> Predicate:
@@ -71,8 +84,8 @@ def _compile_token(tok: str) -> Predicate:
             lo, hi = _period_bounds(y, int(mo) if mo else None,
                                     int(d) if d else None)
             return _date_term(op, lo, hi)
-        except ValueError:
-            pass                          # data inválida → cai para substring
+        except (ValueError, OSError, OverflowError):
+            pass                          # data inválida / fora da faixa → cai para substring
     m = _EXT_RE.match(tok)
     if m:
         return _ext_term(m.group(1))
