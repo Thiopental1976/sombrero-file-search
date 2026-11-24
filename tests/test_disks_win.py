@@ -37,8 +37,8 @@ sem_par = sorted(n for n in publicas_linux & set(W.EXPORTS) if not callable(geta
 ok(not sem_par, f"toda função trocada continua função ({sem_par})")
 
 # ------------------------------------------------------------ _mount_entry
-ok(W._mount_entry("C:\\Users\\luca\\doc.txt", PC)[1] == "C:\\", "arquivo em C: -> volume C:\\")
-ok(W._mount_entry("c:/users/LUCA", PC)[1] == "C:\\", "caixa e barra '/' não importam (NTFS)")
+ok(W._mount_entry("C:\\Users\\user\\doc.txt", PC)[1] == "C:\\", "arquivo em C: -> volume C:\\")
+ok(W._mount_entry("c:/users/USER", PC)[1] == "C:\\", "caixa e barra '/' não importam (NTFS)")
 ok(W._mount_entry("D:\\", PC)[0] == "\\\\.\\D:", "a própria raiz casa")
 ok(W._mount_entry("Q:\\x", PC) == ("", "", ""), "letra que não existe -> vazio")
 e = W._mount_entry("\\\\nas\\fotos\\2026\\a.jpg", PC)

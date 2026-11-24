@@ -77,7 +77,7 @@ jobs:
       - name: paridade rg ↔ Python (test_parity_rg_python)
         run: python tests\test_parity_rg_python.py
 
-      # F3: o pacote que vai no pendrive do Luca. Monta com PyInstaller (onedir,
+      # F3: o pacote portátil (vai num pendrive). Monta com PyInstaller (onedir,
       # SombreroFileSearch.exe + sfs.exe) e prova o EXECUTÁVEL, não o código-fonte: nome, conteúdo
       # e documento (.docx pelo rga -> sfs.exe --docs-adapter).
       - name: pacote Windows (F3)

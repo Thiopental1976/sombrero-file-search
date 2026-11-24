@@ -22,4 +22,4 @@ Não precisa de administrador nem de instalar nada além disso.
 Para atualizar: apague a pasta antiga e extraia a nova no mesmo lugar.
 Suas buscas salvas ficam guardadas à parte e não se perdem.
 
-Dúvidas: fale com o seu pai :)
+Dúvidas: veja o README-Windows.txt, que acompanha este pacote.

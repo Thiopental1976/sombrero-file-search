@@ -49,13 +49,13 @@ with como_windows():
     ok(P.exe_candidates("rg") == ["rg.exe", "rg"] and P.exe_candidates("rg.exe") == ["rg.exe"],
        "Windows: _which tenta rg.exe antes de rg")
     antes = {k: os.environ.get(k) for k in ("APPDATA", "LOCALAPPDATA")}
-    os.environ["APPDATA"] = r"C:\Users\luca\AppData\Roaming"
-    os.environ["LOCALAPPDATA"] = r"C:\Users\luca\AppData\Local"
-    ok(P.config_dir() == os.path.join(r"C:\Users\luca\AppData\Roaming", "Sombrero File Search"),
+    os.environ["APPDATA"] = r"C:\Users\user\AppData\Roaming"
+    os.environ["LOCALAPPDATA"] = r"C:\Users\user\AppData\Local"
+    ok(P.config_dir() == os.path.join(r"C:\Users\user\AppData\Roaming", "Sombrero File Search"),
        f"Windows: config em %APPDATA% ({P.config_dir()})")
-    ok(P.cache_dir() == os.path.join(r"C:\Users\luca\AppData\Local", "Sombrero File Search"),
+    ok(P.cache_dir() == os.path.join(r"C:\Users\user\AppData\Local", "Sombrero File Search"),
        "Windows: cache em %LOCALAPPDATA%")
-    ok(P.rga_user_config() == os.path.join(r"C:\Users\luca\AppData\Roaming", "ripgrep-all", "config.jsonc"),
+    ok(P.rga_user_config() == os.path.join(r"C:\Users\user\AppData\Roaming", "ripgrep-all", "config.jsonc"),
        "Windows: config do rga em %APPDATA%\\ripgrep-all")
     for k, v in antes.items():
         if v is None: os.environ.pop(k, None)

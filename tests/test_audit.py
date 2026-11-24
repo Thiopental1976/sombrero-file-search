@@ -405,7 +405,7 @@ def test_user_mounts_parsing():
 
 
 def test_user_mounts_sem_acesso_fica_fora():
-    """03/10/2026, campo: o SSD do Luca montado TAMBÉM em /home/luca/Jogos, fechado
+    """03/10/2026, campo: o SSD de outro usuário montado TAMBÉM em /home/<outro>/Jogos, fechado
     por ACL, entrava no "Todos os discos" e deixava toda busca "incompleta".
     Montagem que o usuário não abre não é candidata. (os.access simulado: rodando
     como root, chmod 000 não fecharia nada.)"""

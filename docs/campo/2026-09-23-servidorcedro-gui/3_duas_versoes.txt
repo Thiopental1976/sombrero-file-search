@@ -35,7 +35,7 @@ The X root is 1920x1080 right now; the monitor's native mode is 3440x1440
 (see 2_tela_e_janelas.txt). A window placed while the screen was wider is left
 outside the visible area when the mode shrinks — live proof in the same listing:
 
-  0x08600003  0 3240 0    300  490  ServidorCedro 186469951 - RustDesk
+  0x08600003  0 3240 0    300  490  ServidorCedro <peer id> - RustDesk
                 ^^^^ x = 3240 on a 1920-wide root: mapped, alive, invisible.
 
 The user switches the RustDesk session to a lower resolution on purpose, to save

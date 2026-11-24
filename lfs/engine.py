@@ -362,8 +362,8 @@ def user_mounts(lines=None, so_acessiveis=None):
     MULTIDISCOS na GUI ("Discos ▾" e "Todos os discos"). `lines` injetável p/ teste.
 
     03/10/2026 (teste de campo no ServidorCedro): a montagem que o usuário NÃO
-    consegue abrir fica fora. Lá o SSD do Luca é montado também em
-    /home/luca/Jogos, fechado por ACL; "Todos os discos" o incluía, e toda busca
+    consegue abrir fica fora. Lá o SSD de outro usuário é montado também em
+    /home/<outro>/Jogos, fechado por ACL; "Todos os discos" o incluía, e toda busca
     multidisco terminava "incompleta" por um disco que nunca seria lido. Só vale
     para a leitura real (`so_acessiveis` = lines is None): a tabela injetada nos
     testes tem pontos de montagem que não existem nesta máquina."""

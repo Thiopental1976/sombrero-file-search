@@ -78,9 +78,9 @@ try:
 
     # -------------------------------------------- motor: raiz × achado
     if REAL_WIN:
-        ok(E._sob(r"C:\Users\luca\a.txt", r"c:\users") and E._sob_ou_igual(r"c:\USERS", "C:\\Users\\"),
+        ok(E._sob(r"C:\Users\user\a.txt", r"c:\users") and E._sob_ou_igual(r"c:\USERS", "C:\\Users\\"),
            "Windows: motor atribui achado à raiz sem ligar para caixa")
-        ok(E._sob("C:/Users/luca/a.txt", r"C:\Users"), "Windows: motor aceita '/' na raiz digitada")
+        ok(E._sob("C:/Users/user/a.txt", r"C:\Users"), "Windows: motor aceita '/' na raiz digitada")
     else:
         ok(E._sob("/home/x/a", "/home") and not E._sob("/Home/x/a", "/home"),
            "Linux: _sob segue sensível a caixa")
@@ -125,7 +125,7 @@ try:
         A = None
         print("~skip URI: sem PySide6 aqui (roda no CI)")
     if A is not None and REAL_WIN:
-        casos = [(r"C:\Users\Luca\Fotos 1\á#.jpg", "file:///C:/Users/Luca/Fotos%201/%C3%A1%23.jpg"),
+        casos = [(r"C:\Users\User\Fotos 1\á#.jpg", "file:///C:/Users/User/Fotos%201/%C3%A1%23.jpg"),
                  (r"\\nas\share\x y.txt", "file://nas/share/x%20y.txt")]
         for cam, uri in casos:
             ok(A.path_to_uri(cam) == uri, f"Windows: path_to_uri({cam!r}) = {A.path_to_uri(cam)}")
