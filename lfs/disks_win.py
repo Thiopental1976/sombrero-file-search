@@ -20,7 +20,7 @@ não passa por GetVolumeInformation (um share morto pendura ali), e o "está
 vivo?" é só da sonda (mount_status), com prazo.
 """
 from __future__ import annotations
-import errno, ntpath, os, shutil, socket, threading, time
+import errno, ntpath, os, shutil, threading, time
 
 try:                                  # pacote (GUI) e flat (cli.py/testes)
     from . import disks as _L         # o disks.py genérico (DestCaps, IOProfile, …)
@@ -446,15 +446,6 @@ _DEAD_WINERRORS = frozenset({
 })
 
 
-def _porta_smb(servidor, timeout):
-    """O servidor atende na 445? Barato e com prazo — antes de tocar o FS."""
-    try:
-        with socket.create_connection((servidor, 445), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
 def _cancela_io(tid):
     """CancelSynchronousIo na thread presa: o que o Windows oferece para I/O
     síncrono sem resposta (a thread sai com erro e não fica pendurada)."""
@@ -479,27 +470,20 @@ def _cancela_io(tid):
 def mount_status(mp, timeout=3.0, _stat=os.stat, _statvfs=shutil.disk_usage, _porta=None):
     """'alive' | 'no_response' | 'broken_mount' (mesmo contrato do Linux).
 
-    Sem fork no Windows (decisão de 24/11/2026, opção C):
-      (1) Caminho de rede: testa a porta TCP 445 por no máximo metade do
-          `timeout` — NÃO é veredito. Se a 445 não abrir (\\wsl.localhost,
-          WebDAV, SSHFS-Win, SMB over QUIC…), segue para a etapa (2) sem
-          condenar o caminho nem depender de lista fixa de exceções.
-      (2) `stat` + `disk_usage` numa thread daemon com o restante do prazo
-          total (o total nunca excede `timeout`); estourando o prazo, chama
-          `CancelSynchronousIo` nela e devolve `'no_response'`.
+    Sem fork no Windows: `stat` + `disk_usage` numa thread daemon com o prazo
+    inteiro; estourando, `CancelSynchronousIo` nela e `'no_response'`.
 
-    Nota: o comportamento real de `CancelSynchronousIo` contra um servidor SMB
-    morto/travado só pode ser medido em uma máquina Windows com rede que caia
-    (o CI do GitHub não mede). `_stat`/`_statvfs`/`_porta` injetáveis (teste)."""
+    Decisão do Rodrigo em 24/11/2026 (opção C): a porta TCP 445 NÃO é mais
+    sondada. Antes ela era veredito e condenava todo caminho de rede que não
+    fosse SMB (\\wsl.localhost, WebDAV, SSHFS-Win, pasta do VirtualBox). Mantê-la
+    só como "dica" gastaria metade do prazo justamente nessas redes, que são as
+    mais lentas no primeiro `stat`. Vale só a consulta real, com prazo.
+
+    NÃO MEDIDO: se o `CancelSynchronousIo` solta mesmo a thread diante de um
+    servidor SMB morto. Só se mede numa máquina Windows com rede que caia; o CI
+    do GitHub não mede. `_stat`/`_statvfs` injetáveis (teste); `_porta` é aceito
+    e ignorado (compatibilidade de chamada)."""
     prazo_fim = time.monotonic() + timeout
-    unc = _unc_raiz(mp)
-    if not unc:
-        ent = _mount_entry(mp)
-        unc = getattr(ent, "unc", "") if getattr(ent, "drive_type", None) == DRIVE_REMOTE else ""
-    if unc:
-        servidor = unc[2:].split("\\", 1)[0]
-        # 445 gasta no máximo metade do prazo; se fechada, segue para a etapa 2.
-        (_porta or _porta_smb)(servidor, max(0.01, timeout / 2.0))
     res = {}
 
     def _morto(e, conjunto_posix):

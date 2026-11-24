@@ -126,24 +126,30 @@ ok(W.mount_status("\\\\wsl.localhost\\Ubuntu", _stat=lambda p: None, _statvfs=la
                   _porta=lambda s, t: False) == "alive",
    "445 fechada + stat responde -> alive (UNC nao-SMB)")
 
-# (b) 445 fechada (gasta no maximo timeout/2) + stat lento -> no_response no prazo + cancela_io
-porta_timeouts = []
-def _porta_drop(srv, to):
-    porta_timeouts.append(to)
-    _time.sleep(to)
+# (b) stat lento -> no_response dentro do prazo + cancela_io; a 445 NUNCA e sondada
+porta_chamadas = []
+def _porta_espia(srv, to):
+    porta_chamadas.append(to)
     return False
 cancelados = []
 _orig_cancela = W._cancela_io
 W._cancela_io = lambda tid: cancelados.append(tid)
 try:
     t0 = _time.monotonic()
-    r_slow = W.mount_status("\\\\nas\\morto", timeout=0.4, _stat=lento, _porta=_porta_drop)
+    r_slow = W.mount_status("\\\\nas\\morto", timeout=0.4, _stat=lento, _porta=_porta_espia)
     dt_slow = _time.monotonic() - t0
 finally:
     W._cancela_io = _orig_cancela
-ok(r_slow == "no_response" and dt_slow < 0.75 and len(cancelados) == 1
-   and len(porta_timeouts) == 1 and abs(porta_timeouts[0] - 0.2) < 1e-6,
-   f"445 fechada + stat lento -> no_response no prazo total + _cancela_io (dt={dt_slow:.2f}s, cancel={len(cancelados)})")
+ok(r_slow == "no_response" and dt_slow < 0.6 and len(cancelados) == 1,
+   f"stat lento -> no_response no prazo + _cancela_io (dt={dt_slow:.2f}s, cancel={len(cancelados)})")
+ok(porta_chamadas == [], "opcao C: a porta 445 nao e sondada (nem como dica)")
+
+# (b2) rede lenta mas viva: o stat fica com o prazo INTEIRO (0,25 s em 0,4 s -> alive)
+def _devagar(_p):
+    _time.sleep(0.25)
+ok(W.mount_status("\\\\webdav\\longe", timeout=0.4, _stat=_devagar, _statvfs=lambda p: None,
+                  _porta=_porta_espia) == "alive",
+   "rede nao-SMB lenta responde em 0,25 s de 0,4 s -> alive (prazo inteiro para a consulta real)")
 
 # (c) 445 fechada + stat com erro de montagem morta -> broken_mount
 ok(W.mount_status("\\\\webdav\\share", _stat=morto, _porta=lambda s, t: False) == "broken_mount",
