@@ -106,6 +106,7 @@ RGA = _which("rga", "ripgrep-all")   # ripgrep-all: busca DENTRO de PDF/docx/epu
 # configuração de alguém.
 _RGA_ADAPTADOR = "sombrero_docs"
 _rga_args_cache: Optional[list] = None
+_rga_args_lock = threading.Lock()
 
 
 def _sem_comentarios_jsonc(s: str) -> str:
@@ -195,20 +196,22 @@ def rga_args() -> list:
     SFS abertos (um .deb e um AppImage, por exemplo) geram configs diferentes —
     o caminho do Python muda — e nenhum sobrescreve o do outro."""
     global _rga_args_cache
-    # Cache por processo — mas se o arquivo sumiu (limpador de ~/.cache numa
-    # sessão longa da GUI), recria: um --rga-config-file apontando para o nada
-    # derrubaria TODA busca em documentos até reabrir o programa.
-    if _rga_args_cache is not None and all(
-            os.path.isfile(a.split("=", 1)[1]) for a in _rga_args_cache):
-        return list(_rga_args_cache)
-    args = []
-    cfg = rga_config()
-    if cfg is not None:
+    with _rga_args_lock:
+        # Cache por processo — mas se o arquivo sumiu (limpador de ~/.cache numa
+        # sessão longa da GUI), recria: um --rga-config-file apontando para o nada
+        # derrubaria TODA busca em documentos até reabrir o programa.
+        if _rga_args_cache is not None and _rga_args_cache and all(
+                os.path.isfile(a.split("=", 1)[1]) for a in _rga_args_cache):
+            return list(_rga_args_cache)
+        cfg = rga_config()
+        if cfg is None:
+            return []
         import hashlib
         dados = json.dumps(cfg, ensure_ascii=False, indent=1, sort_keys=True)
         nome = "config-" + hashlib.sha256(dados.encode()).hexdigest()[:16] + ".json"
         pasta = os.path.join(plat.cache_dir(), "rga")
         path = os.path.join(pasta, nome)
+        tmp = None
         try:
             if not os.path.isfile(path):
                 os.makedirs(pasta, exist_ok=True)
@@ -216,11 +219,23 @@ def rga_args() -> list:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(dados)
                 os.replace(tmp, path)
+                tmp = None
             args = ["--rga-config-file=" + path]
+            _rga_args_cache = args
+            return list(args)
         except OSError:
-            args = []                  # HOME só-leitura: rga como veio (com pandoc)
-    _rga_args_cache = args
-    return list(args)
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+            # Windows: corrida entre dois processos gerando o mesmo hash —
+            # se o destino já existe, ele tem exatamente o mesmo conteúdo.
+            if os.path.isfile(path):
+                args = ["--rga-config-file=" + path]
+                _rga_args_cache = args
+                return list(args)
+            return []                  # falha transitória/HOME só-leitura: não envenena cache
 
 
 def rga_env() -> Optional[dict]:

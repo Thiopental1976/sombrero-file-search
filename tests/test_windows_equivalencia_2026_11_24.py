@@ -16,6 +16,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import threading
 
 RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 LFS = os.path.join(RAIZ, "lfs")
@@ -262,11 +263,92 @@ def test_fallback_python_encoding_utf8_sob_cp1252() -> None:
         shutil.rmtree(T, ignore_errors=True)
 
 
+def test_rga_args_trava_limpeza_e_corrida() -> None:
+    T = tempfile.mkdtemp(prefix="sfs_rga_args_")
+    cache_env = "LOCALAPPDATA" if plat.IS_WIN else "XDG_CACHE_HOME"
+    old_cache = os.environ.get(cache_env)
+    old_replace = os.replace
+    os.environ[cache_env] = T
+    engine._rga_args_cache = None
+    try:
+        # 1) 8 threads concorrentes na 1ª chamada -> todas obtêm o mesmo arquivo, sem .config-* órfão
+        barreira = threading.Barrier(8)
+        res = []
+        lock = threading.Lock()
+
+        def _worker():
+            barreira.wait()
+            a = engine.rga_args()
+            with lock:
+                res.append(a)
+
+        ts = [threading.Thread(target=_worker) for _ in range(8)]
+        for th in ts:
+            th.start()
+        for th in ts:
+            th.join()
+        ok(len(res) == 8 and all(len(a) == 1 for a in res) and len({a[0] for a in res}) == 1,
+           f"rga_args concorrente (8 threads) converge no mesmo config ({res[:2]})")
+        cfg_path = res[0][0].split("=", 1)[1]
+        rga_dir = os.path.dirname(cfg_path)
+        sobras = [f for f in os.listdir(rga_dir) if f.startswith(".config-")]
+        ok(not sobras, f"sem temporários .config-* órfãos após corrida ({sobras})")
+
+        # 2) Corrida Windows inter-processo: os.replace falha com PermissionError
+        #    quando outro processo criou `path` entre isfile() e replace().
+        os.remove(cfg_path)
+        engine._rga_args_cache = None
+
+        def _replace_corrida(src, dst):
+            # Simula outro processo criando `dst` antes e travando o replace
+            with open(dst, "w", encoding="utf-8") as f:
+                f.write("{}")
+            raise PermissionError(13, "WinError 5 simulated")
+
+        os.replace = _replace_corrida
+        try:
+            a_race = engine.rga_args()
+        finally:
+            os.replace = old_replace
+        ok(a_race == ["--rga-config-file=" + cfg_path],
+           f"rga_args reaproveita config existente quando os.replace dá PermissionError ({a_race})")
+        sobras = [f for f in os.listdir(rga_dir) if f.startswith(".config-")]
+        ok(not sobras, f"temporário .config-* limpo após PermissionError com destino existente ({sobras})")
+
+        # 3) Falha transitória sem destino existir: devolve [], limpa tmp e NÃO envenena cache
+        os.remove(cfg_path)
+        engine._rga_args_cache = None
+
+        def _replace_falha(src, dst):
+            raise PermissionError(13, "transient failure")
+
+        os.replace = _replace_falha
+        try:
+            a_fail = engine.rga_args()
+        finally:
+            os.replace = old_replace
+        ok(a_fail == [], f"rga_args devolve [] em falha transitória ({a_fail})")
+        sobras = [f for f in os.listdir(rga_dir) if f.startswith(".config-")]
+        ok(not sobras, f"temporário .config-* limpo em falha transitória ({sobras})")
+        a_rec = engine.rga_args()
+        ok(a_rec == ["--rga-config-file=" + cfg_path] and os.path.isfile(cfg_path),
+           f"rga_args se recupera na chamada seguinte (cache não envenenado: {a_rec})")
+    finally:
+        os.replace = old_replace
+        engine._rga_args_cache = None
+        if old_cache is None:
+            os.environ.pop(cache_env, None)
+        else:
+            os.environ[cache_env] = old_cache
+        shutil.rmtree(T, ignore_errors=True)
+
+
 def main() -> int:
     test_rga_env_e_which_pacote()
     test_fileops_raiz_origem_e_fail_closed()
     test_resultfilter_datas_antigas_windows()
     test_fallback_python_encoding_utf8_sob_cp1252()
+    test_rga_args_trava_limpeza_e_corrida()
     if falhas:
         print(f"\n{len(falhas)} FALHA(S):")
         for f in falhas:
