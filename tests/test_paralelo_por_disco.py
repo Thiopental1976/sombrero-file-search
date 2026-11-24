@@ -37,7 +37,7 @@ def test_grupos():
 
 def test_grupos_discos_reais():
     reais = [d for d in ("/mnt/DiscoQ", "/mnt/DiscoL", "/media/rodrigo/4TB-Portable")
-             if os.path.isdir(d)]
+             if os.path.ismount(d)]          # pasta vazia de disco desmontado não conta
     if len(reais) < 2:
         print("~pula grupos_discos_reais (montagens ausentes)"); return
     ok(len(E._grupos_por_disco(reais)) == len(reais),

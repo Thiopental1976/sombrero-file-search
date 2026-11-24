@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A vez do disco no MOTOR (desenho do Fable 29/10/2026, P2).
 
-Topologia fictícia: discos A (HD, 1 s por busca), B (HD, 3 s), C (SSD, 0,1 s);
+Topologia fictícia: discos A (HD, 1 s por busca), B (HD, 3 s), C (SSD, 0,4 s);
 o walker Python é trocado por um que dorme e grava [início, fim] por (busca, disco).
 Contratos:
   3. três buscas simultâneas nos três discos: em cada HD os intervalos não se
@@ -23,7 +23,7 @@ def ok(cond, nome):
     print(("ok    " if cond else "FALHA ") + nome)
     if not cond: falhas.append(nome)
 
-DUR = {"/A": 1.0, "/B": 3.0, "/C": 0.1}
+DUR = {"/A": 1.0, "/B": 3.0, "/C": 0.4}   # C > 2 largadas de 0,05 s: a sobreposição não depende de sorte
 CHAVE = {"/A": ("disco", frozenset({"sda"})), "/B": ("disco", frozenset({"sdb"})),
          "/C": ("disco", frozenset({"nvme0n1"}))}
 def perfil(r):
