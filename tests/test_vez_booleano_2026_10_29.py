@@ -18,6 +18,7 @@ def ok(cond, nome):
     print(("ok    " if cond else "FALHA ") + nome)
     if not cond: falhas.append(nome)
 
+os.makedirs(os.path.expanduser("~/.cache"), exist_ok=True)      # não existe no Windows (CI 24/11/2026)
 base = os.path.realpath(tempfile.mkdtemp(prefix="vez_bool_", dir=os.path.expanduser("~/.cache")))
 HD, SSD = os.path.join(base, "hd"), os.path.join(base, "ssd")
 for d in (HD, SSD):

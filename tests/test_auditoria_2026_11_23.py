@@ -103,25 +103,28 @@ fim.set()
 
 # 4b. a sonda descobre "é pasta?" pelo /proc, sem tocar o disco
 import progresso as P, subprocess, tempfile
-with tempfile.TemporaryDirectory() as d:
-    sub = os.path.join(d, "a", "b"); os.makedirs(sub)
-    arq = os.path.join(sub, "f.txt"); open(arq, "w").write("x")
-    filho = subprocess.Popen([sys.executable, "-c",
-        "import os,sys,time; os.open(sys.argv[1], os.O_RDONLY|os.O_DIRECTORY); f=open(sys.argv[2]); print('ok', flush=True); time.sleep(20)",
-        os.path.join(d, "a"), arq], stdout=subprocess.PIPE)
-    filho.stdout.readline()
-    real = os.path.isdir
-    def proibido(c):
-        raise AssertionError("isdir tocou o disco: " + c)
-    os.path.isdir = proibido
-    try:
-        achou = P.pasta_atual_linux(filho.pid, [d])
-    except AssertionError as ex:
-        achou = str(ex)
-    finally:
-        os.path.isdir = real
-        filho.kill(); filho.wait()
-    ok(achou == sub, "pasta atual sai do fdinfo, sem isdir no disco (arquivo aberto -> a pasta dele): %s" % achou)
+if not sys.platform.startswith("linux"):
+    print("~pula 4b: /proc/<pid>/fdinfo e O_DIRECTORY so existem no Linux")
+else:
+  with tempfile.TemporaryDirectory() as d:
+      sub = os.path.join(d, "a", "b"); os.makedirs(sub)
+      arq = os.path.join(sub, "f.txt"); open(arq, "w").write("x")
+      filho = subprocess.Popen([sys.executable, "-c",
+          "import os,sys,time; os.open(sys.argv[1], os.O_RDONLY|os.O_DIRECTORY); f=open(sys.argv[2]); print('ok', flush=True); time.sleep(20)",
+          os.path.join(d, "a"), arq], stdout=subprocess.PIPE)
+      filho.stdout.readline()
+      real = os.path.isdir
+      def proibido(c):
+          raise AssertionError("isdir tocou o disco: " + c)
+      os.path.isdir = proibido
+      try:
+          achou = P.pasta_atual_linux(filho.pid, [d])
+      except AssertionError as ex:
+          achou = str(ex)
+      finally:
+          os.path.isdir = real
+          filho.kill(); filho.wait()
+      ok(achou == sub, "pasta atual sai do fdinfo, sem isdir no disco (arquivo aberto -> a pasta dele): %s" % achou)
 
 # revisão da Vega (23/11): a marca de grave omitido atravessa a fusão como marca,
 # e fd fechado na corrida não leva a sonda ao disco
@@ -137,7 +140,8 @@ except AssertionError as ex:
     r = str(ex)
 finally:
     os.path.isdir = real
-ok(r is False, "fd já fechado (fdinfo sumiu): sem isdir no disco (%r)" % (r,))
+if sys.platform.startswith("linux"):          # a sonda por /proc é só-Linux
+    ok(r is False, "fd já fechado (fdinfo sumiu): sem isdir no disco (%r)" % (r,))
 
 print("\n" + ("TUDO OK" if not falhas else "%d FALHA(S)" % len(falhas)))
 sys.exit(1 if falhas else 0)

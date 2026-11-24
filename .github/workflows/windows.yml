@@ -191,6 +191,7 @@ jobs:
         continue-on-error: true
         env:
           PYTHONFAULTHANDLER: "1"    # queda nativa (0xC0000409) deixa a pilha Python no log
+          PYTHONUNBUFFERED: "1"      # ...e o que já tinha sido impresso não morre no buffer
         run: |
           $falhas = @()
           Get-ChildItem tests -Filter test_*.py | Sort-Object Name | ForEach-Object {

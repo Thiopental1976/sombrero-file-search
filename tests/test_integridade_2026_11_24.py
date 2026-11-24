@@ -100,15 +100,15 @@ def test_verify_pacote_falso() -> None:
         with open(alvo, "wb") as f:
             f.write(b"fake-pdf")
 
-        # 4) Arquivo extra -> exit 1, EXTRA (e arquivo extra NÃO é apagado!)
+        # 4) Arquivo extra -> AVISO com exit 0 (decisão do Rodrigo 24/11), listado e NÃO apagado
         extra = os.path.join(pkg, "bin", "velho.dll")
         with open(extra, "wb") as f:
             f.write(b"dll antiga")
         res_ext = integridade.verify_package(pkg)
         code_ext, txt_ext = integridade.format_report(res_ext)
-        ok(not res_ext["ok"] and code_ext == 1 and res_ext["extra"] == ["bin/velho.dll"]
-           and "EXTRA: bin/velho.dll" in txt_ext and os.path.isfile(extra),
-           f"arquivo extra detectado sem apagar -> exit 1 ({res_ext['extra']})")
+        ok(res_ext["ok"] and code_ext == 0 and res_ext["extra"] == ["bin/velho.dll"]
+           and "WARNING" in txt_ext and "EXTRA: bin/velho.dll" in txt_ext and os.path.isfile(extra),
+           f"arquivo extra: aviso, exit 0, sem apagar ({res_ext['extra']})")
         os.remove(extra)
 
         # 5) Manifesto ausente (dev/.deb/venv) -> exit 2, mensagem clara sem fingir ok

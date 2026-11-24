@@ -209,8 +209,7 @@ def verify_package(
         and not res["missing"]
         and not res["modified"]
         and not res["unreadable"]
-        and not res["extra"]
-        and not res["invalid"]
+        and not res["invalid"]        # arquivo a MAIS é aviso, não erro (Rodrigo, 24/11/2026)
     )
     return res
 
@@ -254,10 +253,15 @@ def format_report(res: dict) -> tuple[int, str]:
             "(source checkouts, venv/pip and .deb installs are verified by git or the system package manager)."
         )
     if res["ok"]:
-        return 0, (
-            f"OK: {res['checked']} files verified against {res['manifest']} "
-            f"({res['elapsed_s']:.2f}s)."
-        )
+        texto = (f"OK: {res['checked']} files verified against {res['manifest']} "
+                 f"({res['elapsed_s']:.2f}s).")
+        if res["extra"]:
+            # Rodrigo, 24/11/2026: arquivo a mais na pasta (nota do usuário, desktop.ini,
+            # sobra de uma versão anterior) não é corrupção: avisa e segue íntegro.
+            texto += (f"\nWARNING: {len(res['extra'])} file(s) in the folder are not part of "
+                      "this package (left over from another version, or added later):")
+            texto += "".join(f"\n  EXTRA: {item}" for item in res["extra"])
+        return 0, texto
     lines = [f"FAILED: integrity check found problems in {res['root']}:"]
     for item in res["missing"]:
         lines.append(f"  MISSING: {item}")

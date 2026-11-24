@@ -184,8 +184,15 @@ try:
         env = engine.rga_env()
         ok(env is not None and env["PATH"].split(os.pathsep)[-1] == os.path.join(T, "fora_do_path"),
            "rg fora do PATH: a pasta dele entra no FIM do PATH do rga")
-        engine.RG = shutil.which("sh")
-        ok(engine.rga_env() is None, "rg já no PATH: ambiente herdado sem mudança")
+        # 24/11/2026: rga_env passou a incluir também a pasta do RGA e os bin/ do
+        # pacote; "sem mudança" só vale quando NADA disso está fora do PATH.
+        engine.RG = shutil.which("sh") or shutil.which("cmd")
+        bins_orig, rga_orig = engine._APP_BINS[:], engine.RGA
+        engine._APP_BINS[:] = []; engine.RGA = None
+        try:
+            ok(engine.rga_env() is None, "rg já no PATH: ambiente herdado sem mudança")
+        finally:
+            engine._APP_BINS[:] = bins_orig; engine.RGA = rga_orig
     finally:
         engine.RG = rg_orig
 
