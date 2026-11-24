@@ -1830,21 +1830,23 @@ def _iter_names_python_(q, stats, cancel, sonda):
     seen_dirs = set() if q.follow_symlinks else None   # E4: corta laço de symlink
     for root in q.paths:
         root = os.path.abspath(os.path.expanduser(root))
-        base_depth = _nivel(root)
+        root_io = plat.longpath(root)
+        base_depth = _nivel(root_io)
         root_dev = None
         if q.one_file_system:                       # B9: não cruzar mounts no fallback
-            try: root_dev = os.stat(root).st_dev
+            try: root_dev = os.stat(root_io).st_dev
             except OSError: root_dev = None
-        for dp, dns, fns in os.walk(root, followlinks=q.follow_symlinks,
+        for dp, dns, fns in os.walk(root_io, followlinks=q.follow_symlinks,
                                     onerror=_walk_onerror(stats)):
             if cancel and cancel():                 # E10: honra cancelamento no fallback
                 return
             if sonda is not None:
                 sonda.soma(len(dns) + len(fns))
             depth = _nivel(dp) - base_depth
+            dp_disp = plat.displaypath(dp)
             if seen_dirs is not None:               # E4: não revisita dir já visto (ciclo)
                 try:
-                    st_dp = os.stat(dp)
+                    st_dp = os.stat(plat.longpath(dp))
                     key = (st_dp.st_dev, st_dp.st_ino)
                     if key in seen_dirs:
                         dns[:] = []
@@ -1853,20 +1855,20 @@ def _iter_names_python_(q, stats, cancel, sonda):
                 except OSError:
                     pass
             if not q.include_hidden:
-                dns[:] = [d for d in dns if not _oculto(dp, d)]
+                dns[:] = [d for d in dns if not _oculto(dp_disp, d)]
             if q.excluded_paths:                    # F12b: montagem morta: nem stat
-                dns[:] = [d for d in dns if os.path.join(dp, d) not in q.excluded_paths]
+                dns[:] = [d for d in dns if os.path.join(dp_disp, d) not in q.excluded_paths]
             if q.skip_snapshots:                    # F11: poda a arvore de snapshot
                 dns[:] = [d for d in dns           # ANTES de descer nela — filtrar
-                          if not eh_snapshot(os.path.join(dp, d) + "/")]  # depois nao
-                if eh_snapshot(dp + "/"):          # economiza a caminhada, que e o custo
+                          if not eh_snapshot(os.path.join(dp_disp, d) + "/")]  # depois nao
+                if eh_snapshot(dp_disp + "/"):     # economiza a caminhada, que e o custo
                     dns[:] = []
                     continue
             if root_dev is not None:
                 keep = []
                 for d in dns:
                     try:
-                        if os.stat(os.path.join(dp, d)).st_dev == root_dev:
+                        if os.stat(plat.longpath(os.path.join(dp_disp, d))).st_dev == root_dev:
                             keep.append(d)
                     except OSError:
                         pass
@@ -1878,7 +1880,7 @@ def _iter_names_python_(q, stats, cancel, sonda):
                 for d in dns:
                     if not match_name(d):
                         continue
-                    dpp = os.path.join(dp, d)
+                    dpp = os.path.join(dp_disp, d)
                     try:
                         st, ident = _stat_e_ident(dpp)   # E5: symlink quebrado -> lstat
                     except OSError:
@@ -1893,11 +1895,11 @@ def _iter_names_python_(q, stats, cancel, sonda):
                 dns[:] = []
             if emit_here:
                 for f in fns:
-                    if not q.include_hidden and _oculto(dp, f):
+                    if not q.include_hidden and _oculto(dp_disp, f):
                         continue
                     if not match_name(f):
                         continue
-                    fp = os.path.join(dp, f)
+                    fp = os.path.join(dp_disp, f)
                     try:
                         st, ident = _stat_e_ident(fp)    # E5: symlink quebrado -> lstat
                     except OSError:
@@ -2447,7 +2449,7 @@ def _legivel(p) -> bool:
     if not plat.IS_WIN:
         return os.access(p, os.R_OK | os.X_OK)
     try:
-        with os.scandir(p) as it:
+        with os.scandir(plat.longpath(p)) as it:
             next(it, None)
         return True
     except PermissionError:
@@ -2458,7 +2460,7 @@ def _legivel(p) -> bool:
 
 def _vazia(p) -> bool:
     try:
-        with os.scandir(p) as it:
+        with os.scandir(plat.longpath(p)) as it:
             return next(it, None) is None
     except OSError:
         return False                 # sem permissão/erro não é "vazia": outro funil
@@ -2495,10 +2497,11 @@ def _raiz_existe(root, stats, on_event=lambda ev, info: None) -> bool:
     FileNotFoundError, que o _walk_onerror ignora por não ser PermissionError).
     Um lugar só, no gate por onde TODA busca passa (engine.search e
     search_boolean chamam _live_roots)."""
-    if not _existe(root):
+    root_io = plat.longpath(root)
+    if not _existe(root_io):
         detalhe = "path does not exist (disk unmounted? typo?)"
         reason = "invalid_root"
-    elif not _eh_pasta(root):
+    elif not _eh_pasta(root_io):
         # H3b: os backends DIVERGIAM — o rg aceita um arquivo como raiz, o fd
         # recusa ("Search path is not a directory", rc 1, mudo) e o os.walk
         # chama onerror com NotADirectoryError, ignorado. A CLI documenta

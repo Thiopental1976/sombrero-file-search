@@ -39,9 +39,9 @@ import stat as _stat
 from typing import Callable, Dict, List, Optional, Tuple
 
 try:                        # pacote (GUI) e flat (cli.py/testes)
-    from .plat import longpath as _L
+    from .plat import longpath as _L, displaypath as _D
 except ImportError:
-    from plat import longpath as _L     # type: ignore
+    from plat import longpath as _L, displaypath as _D     # type: ignore
 # _L: caminho > 260 no Windows sem LongPathsEnabled (identidade no Linux). Os
 # caminhos guardados e exportados ficam na forma do usuário; só o I/O usa _L.
 
@@ -125,23 +125,24 @@ def _walk(roots, min_size, include_zero, follow_symlinks, cancel, stats):
     for root in roots:
         if cancel():
             break
-        for dirpath, dirs, files in os.walk(root, onerror=on_err,
+        for dirpath, dirs, files in os.walk(_L(root), onerror=on_err,
                                             followlinks=follow_symlinks):
             if cancel():
                 break
+            dp_disp = _D(dirpath)
             if follow_symlinks:
                 # Evita loop infinito em symlinks cíclicos de diretório.
                 try:
                     dst = os.stat(_L(dirpath))
-                    dkey = (dst.st_dev, dst.st_ino) if dst.st_ino else ("real", os.path.realpath(dirpath))
+                    dkey = (dst.st_dev, dst.st_ino) if dst.st_ino else ("real", os.path.realpath(dp_disp))
                 except OSError:
-                    dkey = ("real", os.path.realpath(dirpath))
+                    dkey = ("real", os.path.realpath(dp_disp))
                 if dkey in visited_dirs:
                     dirs[:] = []
                     continue
                 visited_dirs.add(dkey)
             for fn in files:
-                p = os.path.join(dirpath, fn)
+                p = os.path.join(dp_disp, fn)
                 try:
                     st = os.lstat(_L(p))
                 except OSError:

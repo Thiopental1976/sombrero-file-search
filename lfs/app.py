@@ -1125,7 +1125,7 @@ class ConflictDialog(QDialog):
     @staticmethod
     def _desc(p):
         try:
-            st = os.stat(p)
+            st = os.stat(engine.plat.longpath(p))
             return "%s · %s" % (human_size(st.st_size),
                                 time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime)))
         except OSError:
@@ -1279,12 +1279,12 @@ class _DirSizeWorker(QThread):
     def run(self):
         files = total = 0
         last = 0.0
-        for root, dirs, names in os.walk(self.path, onerror=lambda e: None):
+        for root, dirs, names in os.walk(engine.plat.longpath(self.path), onerror=lambda e: None):
             if self._stop:
                 return
             for n in names:
                 try:
-                    total += os.lstat(os.path.join(root, n)).st_size
+                    total += os.lstat(engine.plat.longpath(os.path.join(root, n))).st_size
                     files += 1
                 except OSError:
                     pass
@@ -1316,16 +1316,17 @@ class PropertiesDialog(QDialog):
         self.lbl_size = self._sel("…")
         form.addRow(t("Size:"), self.lbl_size)
         try:
-            st = os.lstat(m.path)
+            io = engine.plat.longpath(m.path)
+            st = os.lstat(io)
             form.addRow(t("Modified:"), self._sel(
                 time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime))))
             form.addRow(t("Accessed:"), self._sel(
                 time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_atime))))
             form.addRow(t("Permissions:"), self._sel(oct(st.st_mode & 0o7777)[2:]))
             form.addRow(t("Owner:"), self._sel("%d:%d" % (st.st_uid, st.st_gid)))
-            if os.path.islink(m.path):
-                form.addRow(t("Symlink to:"), self._sel(engine.nome_exibivel(os.readlink(m.path))))
-            if os.path.isdir(m.path):
+            if os.path.islink(io):
+                form.addRow(t("Symlink to:"), self._sel(engine.nome_exibivel(os.readlink(io))))
+            if os.path.isdir(io):
                 self._sizer = _DirSizeWorker(m.path)
                 self._sizer.tick.connect(self._on_size)
                 self._sizer.start()
@@ -1367,7 +1368,7 @@ class PropertiesDialog(QDialog):
         import hashlib
         h = hashlib.blake2b()
         try:
-            with open(self.path, "rb") as f:
+            with open(engine.plat.longpath(self.path), "rb") as f:
                 while True:
                     b = f.read(1 << 20)
                     if not b:
@@ -1846,7 +1847,7 @@ class DuplicatesPanel(QWidget):
             top.setFirstColumnSpanned(True)
             for p in ng.members:
                 try:
-                    sz = human_size(os.path.getsize(p))
+                    sz = human_size(os.path.getsize(engine.plat.longpath(p)))
                 except OSError:
                     sz = "—"
                 disk = self.main._disk_badge(p)
@@ -4148,8 +4149,9 @@ class MainWindow(QMainWindow):
         self._orig_pixmap = None
         if not path:
             return
+        io = engine.plat.longpath(path)
         try:
-            sz = os.path.getsize(path)
+            sz = os.path.getsize(io)
         except OSError:
             sz = 0
         # N3: teto INCONDICIONAL — setScaledSize só é fast-path real em JPEG; PNG/TIFF
@@ -4158,7 +4160,7 @@ class MainWindow(QMainWindow):
             self.img_label.setPixmap(QPixmap())
             self.img_label.setText(t("image too large —\ndouble-click to open externally"))
             return
-        reader = QImageReader(path)
+        reader = QImageReader(io)
         reader.setAutoTransform(True)
         orig = reader.size()               # lê o cabeçalho, não o raster inteiro
         self._img_orig = orig              # p/ saber se vale reler quando o palco cresce
@@ -4254,11 +4256,12 @@ class MainWindow(QMainWindow):
             (JSON minificado, dump de 500 MB) trazia o arquivo inteiro pra RAM;
           - texto legado (cp1252) sai legível, igual ao preview das linhas casadas.
         """
+        io = engine.plat.longpath(path)
         try:
-            modo = os.stat(path).st_mode
+            modo = os.stat(io).st_mode
             if not stat.S_ISREG(modo) and not stat.S_ISDIR(modo):
                 return t("(binary file — no text preview)")   # FIFO/socket/device
-            with open(path, "rb") as f:      # pasta: o open levanta e a frase é a de sempre
+            with open(io, "rb") as f:        # pasta: o open levanta e a frase é a de sempre
                 data = f.read(self._PEEK_BYTES)
         except OSError as e:
             return t("(no preview: {e})", e=humane.human_error(e))

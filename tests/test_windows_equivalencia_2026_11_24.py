@@ -445,6 +445,68 @@ def test_longpath_relativo() -> None:
         os.path.abspath = abspath_orig
 
 
+def test_longpath_io_engine_dupes_app() -> None:
+    import dupes
+    T = tempfile.mkdtemp(prefix="sfs_lp_io_")
+    try:
+        sub = os.path.join(T, "a" * 80, "b" * 80, "c" * 80)
+        os.makedirs(sub)
+        f1 = os.path.join(sub, "dup1.txt")
+        f2 = os.path.join(sub, "dup2.txt")
+        for fp in (f1, f2):
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write("conteudo identico para teste longpath\n")
+
+        # Espiona chamadas a plat.longpath em engine, dupes e app
+        chamados: set[str] = set()
+        lp_orig = plat.longpath
+        dupes_L_orig = dupes._L
+
+        def _spy_lp(p: str) -> str:
+            chamados.add(p)
+            return lp_orig(p)
+
+        plat.longpath = _spy_lp  # type: ignore[assignment]
+        dupes._L = _spy_lp       # type: ignore[assignment]
+        try:
+            # 1) engine._raiz_existe + _legivel
+            chamados.clear()
+            st_dict: dict = {}
+            ok(engine._raiz_existe(sub, st_dict), "engine._raiz_existe aceita pasta longa")
+            ok(sub in chamados, "engine._raiz_existe passa a raiz por plat.longpath")
+
+            # 2) engine._iter_names_python
+            chamados.clear()
+            ms = list(engine._iter_names_python(engine.Query(paths=[sub])))
+            ok(len(ms) == 2 and all(not m.path.startswith("\\\\?\\") for m in ms),
+               f"engine._iter_names_python acha os 2 arquivos sem vazar \\\\?\\ ({len(ms)})")
+            ok(sub in chamados, "engine._iter_names_python passa root do os.walk por plat.longpath")
+
+            # 3) dupes.find_duplicates
+            chamados.clear()
+            grps = dupes.find_duplicates([sub])
+            ok(len(grps) == 1 and len(grps[0].members) == 2,
+               f"dupes.find_duplicates acha duplicata em pasta longa ({len(grps)})")
+            ok(sub in chamados, "dupes._walk passa root do os.walk por plat.longpath")
+        finally:
+            plat.longpath = lp_orig
+            dupes._L = dupes_L_orig
+
+        # 4) app.py: checagem em código (sem exigir display Qt no Linux/CI)
+        app_src = open(os.path.join(LFS, "app.py"), encoding="utf-8").read()
+        for trecho, desc in (
+            ("os.stat(engine.plat.longpath(p))", "ConflictDialog._desc usa longpath"),
+            ("os.walk(engine.plat.longpath(self.path)", "_DirSizeWorker usa longpath"),
+            ("os.lstat(engine.plat.longpath(", "PropertiesDialog/_DirSizeWorker lstat usa longpath"),
+            ("os.path.getsize(engine.plat.longpath(p))", "DuplicatesPanel._fill_names usa longpath"),
+            ("QImageReader(io)", "_load_image abre QImageReader via longpath"),
+            ("with open(io, \"rb\") as f:", "_peek abre arquivo via longpath"),
+        ):
+            ok(trecho in app_src, f"app.py: {desc}")
+    finally:
+        shutil.rmtree(T, ignore_errors=True)
+
+
 def main() -> int:
     test_rga_env_e_which_pacote()
     test_fileops_raiz_origem_e_fail_closed()
@@ -453,6 +515,7 @@ def main() -> int:
     test_rga_args_trava_limpeza_e_corrida()
     test_filtro_oculto_win_caminho_relativo()
     test_longpath_relativo()
+    test_longpath_io_engine_dupes_app()
     if falhas:
         print(f"\n{len(falhas)} FALHA(S):")
         for f in falhas:
