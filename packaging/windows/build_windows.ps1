@@ -74,6 +74,24 @@ $rel = python -c "import sys; sys.path.insert(0,'lfs'); import version; print(ve
 $commit = (git log -1 --format="%h (%cs)")
 Set-Content -Path "$pkg\VERSION" -Value $commit -Encoding utf8
 
+# Manifesto de integridade contra corrupcao (todos os arquivos menos ele mesmo;
+# formato sha256sum: "<hash>  <caminho/com/barra>", UTF-8 sem BOM, LF).
+$manifestPath = Join-Path $pkg "MANIFEST.sha256"
+if (Test-Path $manifestPath) { Remove-Item $manifestPath }
+$pkgFull = (Resolve-Path $pkg).Path.TrimEnd('\', '/')
+$linhas = Get-ChildItem -Path $pkgFull -Recurse -File |
+  ForEach-Object {
+    $relPath = $_.FullName.Substring($pkgFull.Length + 1).Replace('\', '/')
+    if ($relPath -ne "MANIFEST.sha256") {
+      $hash = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+      [PSCustomObject]@{ Rel = $relPath; Line = "$hash  $relPath" }
+    }
+  } |
+  Sort-Object -Property Rel |
+  ForEach-Object { $_.Line }
+$utf8SemBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($manifestPath, (($linhas -join "`n") + "`n"), $utf8SemBom)
+
 $zip = "dist\SombreroFileSearch-$rel-windows-x64.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path $pkg -DestinationPath $zip
