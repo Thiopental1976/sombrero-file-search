@@ -625,6 +625,13 @@ _PT = {
     "This location was skipped.":
         "Este local foi pulado.",
     "The disk was not ejected.": "O disco não foi ejetado.",
+    "Package integrity warning": "Aviso de integridade do pacote",
+    "Package integrity warning: {n} bundled engine file(s) changed or missing.":
+        "Aviso de integridade do pacote: {n} arquivo(s) de motor embutido alterado(s) ou ausente(s).",
+    "One or more bundled search engines do not match the package manifest (MANIFEST.sha256).":
+        "Um ou mais motores de busca embutidos não batem com o manifesto do pacote (MANIFEST.sha256).",
+    "This may indicate a corrupted download, incomplete extraction, or mixed versions. Run 'sfs --verify' for a full check, or re-extract a fresh package.":
+        "Isso pode indicar download corrompido, extração incompleta ou mistura de versões. Rode 'sfs --verify' para conferência completa, ou extraia um pacote novo.",
 }
 
 # Source is English; only non-English languages need a table.

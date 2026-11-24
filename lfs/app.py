@@ -42,7 +42,7 @@ except ImportError:                     # QtMultimedia opcional (portabilidade)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine, boolean, disks, fileops, xdg, version, searches, humane, resultfilter, dupes, copyjobs, updates
-import componentes
+import componentes, integridade
 from engine import Query, Match
 xdg = engine.plat.shell()       # xdg.py no Linux, shell_win.py no Windows (mesmo contrato)
 from i18n import t
@@ -1945,6 +1945,31 @@ def _anota_na_caixa_preta(onde: str) -> None:
         pass
 
 
+class IntegrityCheckWorker(QObject):
+    """Checagem rápida dos executáveis em `bin/` contra MANIFEST.sha256 no
+    arranque congelado (contra corrupção/extração parcial). Thread daemon
+    somente-leitura com teto de tempo: nunca atrasa nem trava a janela."""
+    problem = Signal(object)             # dict de integridade.verify_bundled_bins()
+
+    def __init__(self, budget_s: float = 1.5):
+        super().__init__()
+        self._budget_s = budget_s
+        self._th: threading.Thread | None = None
+
+    def start(self):
+        self._th = threading.Thread(target=self.run, name="sfs-integrity-check", daemon=True)
+        self._th.start()
+
+    def run(self):
+        try:
+            res = integridade.verify_bundled_bins(budget_s=self._budget_s)
+            if res.get("has_manifest") and (
+                    res.get("missing") or res.get("modified") or res.get("unreadable")):
+                self.problem.emit(res)
+        except Exception:
+            pass
+
+
 class UpdateCheckWorker(QObject):
     """Consulta a última release fora da thread da GUI: rede lenta (ou ausente)
     nunca pode congelar a janela. Mexe só numa CÓPIA do estado; a GUI grava.
@@ -2251,6 +2276,40 @@ class MainWindow(QMainWindow):
         self._upd_worker = None
         self._upd_rel = None
         QTimer.singleShot(3000, lambda: self.check_updates(force=False))
+        # Integridade rápida dos motores em bin/ no pacote congelado (contra
+        # corrupção ou extração incompleta): só avisa, nunca bloqueia nem altera.
+        self._int_worker = None
+        if engine.plat.frozen():
+            QTimer.singleShot(500, self._check_bundled_integrity)
+
+    # ---- integridade do pacote congelado
+    def _check_bundled_integrity(self):
+        w = IntegrityCheckWorker(budget_s=1.5)
+        w.problem.connect(self._on_integrity_warning)
+        self._int_worker = w
+        w.start()
+
+    def _on_integrity_warning(self, res: dict):
+        afetados = list(res.get("modified") or []) + list(res.get("missing") or []) + list(res.get("unreadable") or [])
+        if not afetados:
+            return
+        self.status.setText(t("Package integrity warning: {n} bundled engine file(s) changed or missing.", n=len(afetados)))
+        import html
+        lista = "".join(f"<li><code>{html.escape(a)}</code></li>" for a in afetados[:10])
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(t("Package integrity warning"))
+        box.setTextFormat(Qt.RichText)
+        box.setText(
+            "<p>" + html.escape(t("One or more bundled search engines do not match the package manifest (MANIFEST.sha256).")) + "</p>"
+            f"<ul>{lista}</ul>"
+            "<p>" + html.escape(t("This may indicate a corrupted download, incomplete extraction, or mixed versions. Run 'sfs --verify' for a full check, or re-extract a fresh package.")) + "</p>"
+        )
+        box.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        box.addButton(QMessageBox.Ok)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+        self._dialogo_integridade = box
+        box.open()
 
     # ---- atualizações
     def check_updates(self, force: bool, dialog: "UpdatesDialog | None" = None):

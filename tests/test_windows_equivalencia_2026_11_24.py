@@ -17,6 +17,7 @@ import stat
 import sys
 import tempfile
 import threading
+import time
 
 RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 LFS = os.path.join(RAIZ, "lfs")
@@ -163,6 +164,21 @@ def test_fileops_raiz_origem_e_fail_closed() -> None:
            "copy_to fail-closed nunca cria arquivo fora de dest_dir")
         ok(len(res.failed) == 2 and not res.copied,
            f"copy_to registra as duas tentativas de escape em failed ({res.failed})")
+
+        # 5) _destino_contido em copy_to não chama os.path.realpath por arquivo
+        pf_ok = fileops.preflight([src_file], dest_dir)
+        real_rp = os.path.realpath
+        chamadas = [0]
+        def _conta_rp(p, *a, **kw):
+            chamadas[0] += 1
+            return real_rp(p, *a, **kw)
+        os.path.realpath = _conta_rp  # type: ignore[assignment]
+        try:
+            res_ok = fileops.copy_to([src_file], dest_dir, plan=pf_ok)
+        finally:
+            os.path.realpath = real_rp
+        ok(len(res_ok.copied) == 1 and chamadas[0] == 0,
+           f"copy_to não chama os.path.realpath no loop de arquivos (chamadas={chamadas[0]})")
     finally:
         shutil.rmtree(T, ignore_errors=True)
 
@@ -204,6 +220,25 @@ def test_resultfilter_datas_antigas_windows() -> None:
         pred_9999 = resultfilter.compile_filter(">9999")
         ok(not pred_9999("a.txt", "/a.txt", mt_2020),
            "resultfilter >9999 não levanta ValueError")
+
+        # Fallback respeita fuso local (time.timezone) em TZ fixada (POSIX tzset)
+        if hasattr(time, "tzset"):
+            old_tz = os.environ.get("TZ")
+            try:
+                for tz_name, expected_offset in (("UTC+3", 10800), ("UTC-9", -32400)):
+                    os.environ["TZ"] = tz_name
+                    time.tzset()
+                    lo, hi = resultfilter._period_bounds(1969, 6, 1)
+                    # Em 1969-06-01 00:00 local, UTC é 1969-06-01 00:00 + expected_offset
+                    esperado_lo = (datetime.datetime(1969, 6, 1) - datetime.datetime(1970, 1, 1)).total_seconds() + expected_offset
+                    ok(abs(lo - esperado_lo) < 1e-6 and abs((hi - lo) - 86400.0) < 1e-6,
+                       f"_to_epoch fallback alinha com TZ={tz_name} (lo={lo}, esperado={esperado_lo})")
+            finally:
+                if old_tz is None:
+                    os.environ.pop("TZ", None)
+                else:
+                    os.environ["TZ"] = old_tz
+                time.tzset()
     finally:
         resultfilter.datetime = dt_mod_orig
 

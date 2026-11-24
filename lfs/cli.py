@@ -9,7 +9,7 @@
 from __future__ import annotations
 import argparse, codecs, json, os, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import engine, version, componentes
+import engine, version, componentes, integridade
 from engine import Query
 
 
@@ -75,6 +75,18 @@ class _PrintNotice(argparse.Action):
         parser.exit()
 
 
+class _VerifyPackage(argparse.Action):
+    """`sfs --verify`: confere os arquivos da instalação contra MANIFEST.sha256.
+    Sai 0 íntegro, 1 divergente/corrompido, 2 sem manifesto (dev/.deb/venv)."""
+
+    def __call__(self, parser, ns, values, option_string=None):
+        res = integridade.verify_package()
+        code, texto = integridade.format_report(res)
+        stream = sys.stdout if code == 0 else sys.stderr
+        print(texto, file=stream)
+        parser.exit(code)
+
+
 def main():
     # A CLI fala INGLÊS em qualquer locale (decisão do Rodrigo, 21/09/2026: o
     # programa é de alcance mundial). Não é só estética: o `detail` do --json é
@@ -93,6 +105,9 @@ def main():
     ap.add_argument("path", nargs="+", help="folder(s) to search in")
     ap.add_argument("-V", "--version", action=_PrintNotice, nargs=0,
                     help="show version and license, then exit")
+    ap.add_argument("--verify", action=_VerifyPackage, nargs=0,
+                    help="verify installed package files against MANIFEST.sha256, then exit "
+                         "(0=intact, 1=corrupted/divergent, 2=no manifest)")
     ap.add_argument("-n", "--name", default="",
                     help="name CONTAINS the term ('rotina' finds 'exames de rotina.txt'); "
                          "globs with * or ? match the whole name as typed; brackets alone are "

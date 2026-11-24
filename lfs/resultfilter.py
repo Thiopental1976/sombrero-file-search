@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import time
 from typing import Callable, List, Optional
 
 # extensão: '.odt' ou '*.odt' (só letras/dígitos após o ponto)
@@ -37,11 +38,12 @@ _EPOCH_NAIVE = datetime.datetime(1970, 1, 1)
 def _to_epoch(dt: datetime.datetime) -> float:
     """Converte datetime local para epoch. No Windows, mktime() do CRT levanta
     OSError (Errno 22) para datas < 1970-01-01 e OverflowError para anos > 3001;
-    caímos em aritmética pura de timedelta, mantendo o filtro funcional sem crash."""
+    caímos em aritmética pura de timedelta somada ao deslocamento do fuso local
+    (`time.timezone`), mantendo o filtro funcional e alinhado ao fuso sem crash."""
     try:
         return dt.timestamp()
     except (OSError, OverflowError):
-        return (dt - _EPOCH_NAIVE).total_seconds()
+        return (dt - _EPOCH_NAIVE).total_seconds() + time.timezone
 
 
 def _period_bounds(year: int, month: Optional[int], day: Optional[int]):
