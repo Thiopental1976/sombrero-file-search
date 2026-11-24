@@ -346,19 +346,20 @@ def _root_rel_name(src: str, _path=os.path, label_fn=None) -> str:
     return nome
 
 
-def _destino_contido(dest_abs: str, rel: str, dst: str, _path=os.path) -> bool:
+def _destino_contido(dest_abs: str, rel: str, dst: str, _path=os.path,
+                     dest_norm: str | None = None) -> bool:
     """Guarda fail-closed: garante que `rel` é estritamente relativo e que
-    `dst` permanece dentro de `dest_abs` (nunca escapa para a origem ou fora)."""
+    `dst` permanece dentro de `dest_abs` (nunca escapa para a origem ou fora).
+    Puramente léxica (sem realpath por arquivo: em lotes grandes ou rede no
+    Windows, 2× realpath por entrada custaria caro em um `dst` que nem existe)."""
     if not rel:
         return False
     if _path.isabs(rel) or _path.splitdrive(rel)[0]:
         return False
     if any(p == ".." for p in rel.replace("\\", "/").split("/")):
         return False
-    if _path is os.path:
-        return plat.same_or_under(dst, dest_abs)
     a = _path.normcase(_path.normpath(dst))
-    b = _path.normcase(_path.normpath(dest_abs))
+    b = dest_norm if dest_norm is not None else _path.normcase(_path.normpath(dest_abs))
     sep = getattr(_path, "sep", os.sep)
     if a == b:
         return True
@@ -710,6 +711,7 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
     bad = {p for p, _ in pf.bad_names}
     strategy = pf.strategy or STRAT_ATOMIC     # decidida no preflight (§3.5)
     made_this_op: set[str] = set()             # destinos que ESTA cópia já criou (A3)
+    dest_norm = os.path.normcase(os.path.normpath(dest_abs))
 
     for e in pf.entries:
         if cancel is not None and cancel.is_set():
@@ -724,7 +726,7 @@ def copy_to(sources, dest_dir, on_progress=None, on_conflict=None, cancel=None,
             res.skipped.append((e.src, SKIP_BAD_NAME))
             continue
         dst = os.path.join(dest_abs, rel)
-        if not _destino_contido(dest_abs, rel, dst):
+        if not _destino_contido(dest_abs, rel, dst, dest_norm=dest_norm):
             res.failed.append((e.src, "destination path escapes target folder"))
             continue
 
