@@ -653,8 +653,18 @@ def anota_incompleto(stats, motivo, onde="", detalhe="", n=1, args=None, grave=N
                 e["grave"] = True
             return
     if len(fila) >= _INCOMPLETO_MAX:
-        stats["incompleto_omitidos"] = stats.get("incompleto_omitidos", 0) + n
-        return
+        # O teto existe para um disco que nega 50 mil pastas não virar 50 mil
+        # linhas. Um erro GRAVE não pode cair nessa vala: ele decide o código
+        # de saída. Graves entram até o dobro do teto; além disso fica a marca
+        # (auditoria de 23/11/2026: grave tardio saía como busca completa).
+        eh_grave = grave or motivo in MOTIVOS_GRAVES
+        if not eh_grave:
+            stats["incompleto_omitidos"] = stats.get("incompleto_omitidos", 0) + n
+            return
+        if len(fila) >= 2 * _INCOMPLETO_MAX:
+            stats["incompleto_omitidos"] = stats.get("incompleto_omitidos", 0) + n
+            stats["incompleto_grave_omitido"] = True
+            return
     e = {"motivo": motivo, "onde": onde, "detalhe": (detalhe or "")[:_DETALHE_MAX], "n": n}
     if args:
         e["args"] = dict(args)
@@ -685,7 +695,8 @@ def resumo_incompleto(stats, tr=None):
     usuário; sem ele, EN-US."""
     tr = tr or (lambda s: s)
     fila = (stats or {}).get("incompleto") or []
-    grave = any(e["motivo"] in MOTIVOS_GRAVES or e.get("grave") for e in fila)
+    grave = any(e["motivo"] in MOTIVOS_GRAVES or e.get("grave") for e in fila) \
+        or bool((stats or {}).get("incompleto_grave_omitido"))
     linhas = []
     for e in fila:
         # `onde` é caminho (passa intacto por tr) ou pseudo-local do booleano
@@ -1283,8 +1294,6 @@ def _vigia_cancel(proc, cancel, intervalo: float = 0.2, sonda=None):
     def vigia():
         while not fim.wait(intervalo):
             try:
-                if sonda is not None:
-                    sonda.tick()
                 if proc.poll() is not None:
                     return
                 if cancel():
@@ -1293,8 +1302,34 @@ def _vigia_cancel(proc, cancel, intervalo: float = 0.2, sonda=None):
             except Exception:
                 return
 
+    def vigia_sonda():
+        # A sonda roda em thread PRÓPRIA (auditoria de 23/11/2026): ela vinha
+        # antes do cancel() no mesmo laço, e uma leitura dela que não voltasse
+        # (montagem morta) ou lançasse exceção calava o Cancelar justamente no
+        # disco que parou de responder.
+        while not fim.wait(intervalo):
+            try:
+                if proc.poll() is not None:
+                    return
+                sonda.tick()
+            except Exception:
+                pass
+
+    if sonda is not None:
+        threading.Thread(target=vigia_sonda, daemon=True, name="sfs-vigia-sonda").start()
+
     threading.Thread(target=vigia, daemon=True, name="sfs-vigia-cancel").start()
     return fim
+
+
+def _arquivo_de_erros():
+    """Arquivo temporário que recebe o stderr do motor (rg/fd). O motor escreve
+    BYTES nele; nós lemos texto. Um caminho com byte fora do UTF-8 (nome legado
+    em cp1252) na queixa do motor fazia o readlines() lançar UnicodeDecodeError,
+    o _reap engolia a exceção e TODA a contabilidade de erros daquele processo
+    sumia: a busca saía "completa" sem ter lido as pastas negadas. errors="replace"
+    troca o byte ruim e mantém a linha (auditoria de 23/11/2026)."""
+    return tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
 
 
 def _reap(proc, errf=None, stats=None):
@@ -2018,7 +2053,7 @@ def _iter_names_fd_(q, cancel, stats, jobs, procs, sonda, completo, progresso):
         cmd.append("--print0")                    # E1: saída NUL-delimitada — nome com
                                                   # '\n' não vira 2 registros (perda/fantasma)
         cmd += ["--", pat_val] + q.paths          # B10: '--' encerra as opções
-        errf = tempfile.TemporaryFile(mode="w+")
+        errf = _arquivo_de_erros()
         try:
             # binário (sem text=): lê bytes e decodifica com surrogateescape p/
             # sobreviver a nomes não-UTF-8 (E2) — o str resultante volta pro os.stat.
@@ -2191,7 +2226,7 @@ def _iter_content_rg(q: Query, cancel, stats=None, jobs=None, procs=None, progre
         name_rx = re.compile(q.name_patterns[0], 0 if q.case_sensitive else re.IGNORECASE)
     fora_oculto = filtro_oculto_win(q)      # Windows: oculto por atributo (ver lá)
 
-    errf = tempfile.TemporaryFile(mode="w+")
+    errf = _arquivo_de_erros()
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf,
                                 text=True, errors="replace",

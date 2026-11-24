@@ -102,25 +102,31 @@ def pedir(discos, dono="", cancel=None, on_espera=None,
     with _COND:
         for d in tk.discos:
             _FILA.setdefault(d, deque()).append(tk)
-        while not _pode(tk):
-            if cancel is not None and cancel():
-                tk.solto = True
-                _sai_da_fila(tk)
-                _COND.notify_all()
-                raise Cancelado()
-            if (not avisado and on_espera is not None
-                    and time.time() - tk.t_pedido >= espera_min_s):
-                avisado = True
-                d = next(iter(tk.discos))
-                quem = _DONO.get(d) or next(iter(_FILA.get(d) or ()), None)
-                pos = posicao(tk, d)
-                _COND.release()           # o callback emite sinal Qt: fora do lock
-                try:
-                    on_espera(tk, quem, pos)
-                finally:
-                    _COND.acquire()
-                continue
-            _COND.wait(_sleep)
+        try:
+            while not _pode(tk):
+                if cancel is not None and cancel():
+                    raise Cancelado()
+                if (not avisado and on_espera is not None
+                        and time.time() - tk.t_pedido >= espera_min_s):
+                    avisado = True
+                    d = next(iter(tk.discos))
+                    quem = _DONO.get(d) or next(iter(_FILA.get(d) or ()), None)
+                    pos = posicao(tk, d)
+                    _COND.release()           # o callback emite sinal Qt: fora do lock
+                    try:
+                        on_espera(tk, quem, pos)
+                    finally:
+                        _COND.acquire()
+                    continue
+                _COND.wait(_sleep)
+        except BaseException:
+            # Cancelado, ou exceção do cancel()/on_espera (sinal Qt para objeto
+            # já destruído): em QUALQUER saída o ticket deixa a fila, senão o
+            # disco fica travado para todas as buscas seguintes (auditoria 23/11/2026).
+            tk.solto = True
+            _sai_da_fila(tk)
+            _COND.notify_all()
+            raise
         _sai_da_fila(tk)
         for d in tk.discos:
             _DONO[d] = tk

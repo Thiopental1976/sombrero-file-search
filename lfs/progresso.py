@@ -185,7 +185,7 @@ def le_io_linux(pid, base="/proc"):
 def pasta_atual_linux(pid, roots, base="/proc") -> Optional[str]:
     """O caminho mais fundo, sob uma das raízes, entre os fds abertos do motor:
     é a pasta (ou o arquivo, no rg) que ele está lendo AGORA. Arquivo → a pasta."""
-    melhor = None
+    melhor = melhor_fd = None
     try:
         fds = os.listdir(f"{base}/{pid}/fd")
     except OSError:
@@ -201,10 +201,28 @@ def pasta_atual_linux(pid, roots, base="/proc") -> Optional[str]:
         if not any(alvo == r or alvo.startswith(r if r == "/" else r + "/") for r in raizes):
             continue
         if melhor is None or len(alvo) > len(melhor):
-            melhor = alvo
-    if melhor and not os.path.isdir(melhor):
+            melhor, melhor_fd = alvo, fd
+    if melhor and not _fd_eh_pasta(base, pid, melhor_fd, melhor):
         melhor = os.path.dirname(melhor)
     return melhor
+
+
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0o200000)
+
+
+def _fd_eh_pasta(base, pid, fd, alvo) -> bool:
+    """O fd do motor é de pasta? Responde pelo fdinfo do /proc (flags de abertura),
+    SEM tocar o disco: um os.path.isdir() no caminho pendura em montagem morta, e
+    esta função roda dentro da sonda, com o lock dela (auditoria de 23/11/2026).
+    Sem fdinfo legível (teste com /proc falso), cai no isdir."""
+    try:
+        with open(f"{base}/{pid}/fdinfo/{fd}") as f:
+            for linha in f:
+                if linha.startswith("flags:"):
+                    return bool(int(linha.split()[1], 8) & _O_DIRECTORY)
+    except (OSError, ValueError, IndexError):
+        pass
+    return os.path.isdir(alvo)
 
 
 # Windows: GetProcessTimes / GetProcessIoCounters pelo handle que o Popen já
