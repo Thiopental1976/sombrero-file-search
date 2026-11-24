@@ -123,15 +123,23 @@ def rga_user_config() -> str:
 _LONG = 240          # margem abaixo de MAX_PATH (260) para o nome do .part
 
 
-def longpath(p: str) -> str:
+def longpath(p: str, force: bool = False) -> str:
     """Prefixo \\\\?\\ para I/O em caminho longo no Windows (independe da
     política LongPathsEnabled). Identidade no Linux e em caminho curto.
-    Mede o comprimento da forma ABSOLUTA: um caminho relativo curto num CWD
-    fundo (> 240 chars) também excede MAX_PATH na API Win32."""
+
+    - Caminho absoluto completo e curto (<= 240 chars): retorna direto sem
+      chamar os.path.abspath (caminho quente: milhões de stats).
+    - Caminho relativo: mede o comprimento da forma ABSOLUTA, pois um nome
+      curto num CWD fundo (> 240 chars) também excede MAX_PATH na API Win32.
+    - `force=True`: prefixa SEMPRE no Windows, mesmo em raiz curta — usado na
+      entrada de os.walk para que todo subdiretório descido já herde \\\\?\\."""
     if not IS_WIN or not p or p.startswith("\\\\?\\"):
         return p
+    if not force and len(p) <= _LONG and (
+            p.startswith("\\\\") or (len(p) >= 3 and p[1] == ":" and p[2] in "\\/")):
+        return p
     ap = os.path.abspath(p)
-    if len(ap) <= _LONG:
+    if not force and len(ap) <= _LONG:
         return p
     if ap.startswith("\\\\"):                      # UNC: \\srv\share -> \\?\UNC\srv\share
         return "\\\\?\\UNC\\" + ap[2:]

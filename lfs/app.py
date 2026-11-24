@@ -1279,7 +1279,7 @@ class _DirSizeWorker(QThread):
     def run(self):
         files = total = 0
         last = 0.0
-        for root, dirs, names in os.walk(engine.plat.longpath(self.path), onerror=lambda e: None):
+        for root, dirs, names in os.walk(engine.plat.longpath(self.path, force=True), onerror=lambda e: None):
             if self._stop:
                 return
             for n in names:

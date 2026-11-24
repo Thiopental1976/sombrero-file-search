@@ -1830,7 +1830,9 @@ def _iter_names_python_(q, stats, cancel, sonda):
     seen_dirs = set() if q.follow_symlinks else None   # E4: corta laço de symlink
     for root in q.paths:
         root = os.path.abspath(os.path.expanduser(root))
-        root_io = plat.longpath(root)
+        # force=True: mesmo numa raiz curta (ex. C:\Users\x), todo subdiretório
+        # descido pelo os.walk herda \\?\ e não falha em árvores > 260 chars.
+        root_io = plat.longpath(root, force=True)
         base_depth = _nivel(root_io)
         root_dev = None
         if q.one_file_system:                       # B9: não cruzar mounts no fallback

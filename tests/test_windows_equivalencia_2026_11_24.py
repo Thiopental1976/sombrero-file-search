@@ -440,6 +440,28 @@ def test_longpath_relativo() -> None:
         # 4) Caminho vazio e já prefixado não são alterados
         ok(plat.longpath("") == "" and plat.longpath("\\\\?\\C:\\x") == "\\\\?\\C:\\x",
            "plat.longpath preserva vazio e já prefixado")
+
+        # 5) Fast-path no caminho quente: absoluto curto NÃO chama os.path.abspath
+        abs_chamadas = [0]
+        def _conta_abs(p):
+            abs_chamadas[0] += 1
+            return "C:\\curto\\x" if p == "\\sem_drive\\x" else abspath_orig(p)
+        os.path.abspath = _conta_abs
+        ok(plat.longpath("C:\\curto\\a.txt") == "C:\\curto\\a.txt" and abs_chamadas[0] == 0,
+           f"plat.longpath absoluto curto não chama abspath (chamadas={abs_chamadas[0]})")
+        ok(plat.longpath("\\\\srv\\share\\a.txt") == "\\\\srv\\share\\a.txt" and abs_chamadas[0] == 0,
+           f"plat.longpath UNC curto não chama abspath (chamadas={abs_chamadas[0]})")
+        # Caminho drive-relative (\sem_drive\x) ainda passa por abspath
+        plat.longpath("\\sem_drive\\x")
+        ok(abs_chamadas[0] == 1,
+           f"plat.longpath drive-relative chama abspath (chamadas={abs_chamadas[0]})")
+
+        # 6) force=True prefixa sempre (para os.walk descer em árvore funda a partir de raiz curta)
+        os.path.abspath = lambda p: p
+        ok(plat.longpath("C:\\curto", force=True) == "\\\\?\\C:\\curto",
+           "plat.longpath(force=True) prefixa raiz curta C:\\curto")
+        ok(plat.longpath("\\\\srv\\share", force=True) == "\\\\?\\UNC\\srv\\share",
+           "plat.longpath(force=True) prefixa raiz UNC curta")
     finally:
         plat.IS_WIN = is_win_orig
         os.path.abspath = abspath_orig
@@ -459,35 +481,40 @@ def test_longpath_io_engine_dupes_app() -> None:
 
         # Espiona chamadas a plat.longpath em engine, dupes e app
         chamados: set[str] = set()
+        forcados: set[str] = set()
         lp_orig = plat.longpath
         dupes_L_orig = dupes._L
 
-        def _spy_lp(p: str) -> str:
+        def _spy_lp(p: str, force: bool = False) -> str:
             chamados.add(p)
-            return lp_orig(p)
+            if force:
+                forcados.add(p)
+            return lp_orig(p, force=force)
 
         plat.longpath = _spy_lp  # type: ignore[assignment]
         dupes._L = _spy_lp       # type: ignore[assignment]
         try:
             # 1) engine._raiz_existe + _legivel
-            chamados.clear()
+            chamados.clear(); forcados.clear()
             st_dict: dict = {}
             ok(engine._raiz_existe(sub, st_dict), "engine._raiz_existe aceita pasta longa")
             ok(sub in chamados, "engine._raiz_existe passa a raiz por plat.longpath")
 
-            # 2) engine._iter_names_python
-            chamados.clear()
-            ms = list(engine._iter_names_python(engine.Query(paths=[sub])))
+            # 2) engine._iter_names_python a partir de RAIZ CURTA (T) descendo na árvore funda
+            chamados.clear(); forcados.clear()
+            ms = list(engine._iter_names_python(engine.Query(paths=[T], name_patterns=["*.txt"])))
             ok(len(ms) == 2 and all(not m.path.startswith("\\\\?\\") for m in ms),
-               f"engine._iter_names_python acha os 2 arquivos sem vazar \\\\?\\ ({len(ms)})")
-            ok(sub in chamados, "engine._iter_names_python passa root do os.walk por plat.longpath")
+               f"engine._iter_names_python acha os 2 arquivos a partir de raiz curta sem vazar \\\\?\\ ({len(ms)})")
+            ok(os.path.abspath(T) in forcados,
+               "engine._iter_names_python chama plat.longpath(root, force=True) para raiz curta")
 
-            # 3) dupes.find_duplicates
-            chamados.clear()
-            grps = dupes.find_duplicates([sub])
+            # 3) dupes.find_duplicates a partir de RAIZ CURTA (T) descendo na árvore funda
+            chamados.clear(); forcados.clear()
+            grps = dupes.find_duplicates([T])
             ok(len(grps) == 1 and len(grps[0].members) == 2,
-               f"dupes.find_duplicates acha duplicata em pasta longa ({len(grps)})")
-            ok(sub in chamados, "dupes._walk passa root do os.walk por plat.longpath")
+               f"dupes.find_duplicates acha duplicata em árvore funda a partir de raiz curta ({len(grps)})")
+            ok(T in forcados,
+               "dupes._walk chama plat.longpath(root, force=True) para raiz curta")
         finally:
             plat.longpath = lp_orig
             dupes._L = dupes_L_orig
@@ -496,7 +523,7 @@ def test_longpath_io_engine_dupes_app() -> None:
         app_src = open(os.path.join(LFS, "app.py"), encoding="utf-8").read()
         for trecho, desc in (
             ("os.stat(engine.plat.longpath(p))", "ConflictDialog._desc usa longpath"),
-            ("os.walk(engine.plat.longpath(self.path)", "_DirSizeWorker usa longpath"),
+            ("os.walk(engine.plat.longpath(self.path, force=True)", "_DirSizeWorker usa longpath(force=True)"),
             ("os.lstat(engine.plat.longpath(", "PropertiesDialog/_DirSizeWorker lstat usa longpath"),
             ("os.path.getsize(engine.plat.longpath(p))", "DuplicatesPanel._fill_names usa longpath"),
             ("QImageReader(io)", "_load_image abre QImageReader via longpath"),

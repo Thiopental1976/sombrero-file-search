@@ -188,7 +188,7 @@ def verify_package(
     if include_extras and not res["timed_out"]:
         known = {_key(rel) for rel in entries}
         known.add(_key(MANIFEST_NAME))
-        base_io = plat.longpath(base)
+        base_io = plat.longpath(base, force=True)
         for dp, _dns, fns in os.walk(base_io, followlinks=False):
             if deadline is not None and time.monotonic() >= deadline:
                 res["timed_out"] = True
