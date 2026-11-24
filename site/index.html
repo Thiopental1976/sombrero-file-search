@@ -185,44 +185,44 @@
           <tr>
             <td class="what">No background index</td>
             <td data-label="Sombrero" class="cmp-sfs"><b>Live by default</b></td>
-            <td data-label="Indexed">Depends on index</td>
+            <td data-label="Indexed">Uses a database</td>
             <td data-label="Classic GUI">Mixed</td>
             <td data-label="CLI">Live</td>
           </tr>
           <tr>
             <td class="what">Content + PDF / docx / odt / epub</td>
             <td data-label="Sombrero" class="cmp-sfs"><b>Bundled (<code>rga</code>)</b></td>
-            <td data-label="Indexed">Recoll only</td>
-            <td data-label="Classic GUI">Limited</td>
+            <td data-label="Indexed">Recoll (indexed)</td>
+            <td data-label="Classic GUI">Basic text / limited</td>
             <td data-label="CLI">Needs <code>rga</code> setup</td>
           </tr>
           <tr>
             <td class="what">Boolean expressions (<code>AND</code>/<code>OR</code>/<code>NOT</code>)</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Full + parentheses</b></td>
-            <td data-label="Indexed">Partial</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Live, with parentheses</b></td>
+            <td data-label="Indexed">Against index</td>
             <td data-label="Classic GUI">Basic / none</td>
             <td data-label="CLI">Manual pipelines</td>
           </tr>
           <tr>
-            <td class="what">One process per mechanical / SMR disk</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Automatic</b></td>
-            <td data-label="Indexed">No</td>
-            <td data-label="Classic GUI">No</td>
-            <td data-label="CLI">No</td>
+            <td class="what">Disk-aware live sweeps (HDD / SMR)</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>1 process per physical disk</b></td>
+            <td data-label="Indexed">Queries index instead</td>
+            <td data-label="Classic GUI">Single walk</td>
+            <td data-label="CLI">Per-command</td>
           </tr>
           <tr>
-            <td class="what">Reports incomplete results (exit 2)</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Single funnel (GUI + CLI)</b></td>
-            <td data-label="Indexed">No</td>
-            <td data-label="Classic GUI">No</td>
-            <td data-label="CLI">Stderr only</td>
+            <td class="what">Reports incomplete results</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Single funnel (GUI + exit 2)</b></td>
+            <td data-label="Indexed">Depends on index freshness</td>
+            <td data-label="Classic GUI">No unified channel</td>
+            <td data-label="CLI">Exit code, no summary</td>
           </tr>
           <tr>
-            <td class="what">Read-only (no move / delete)</td>
+            <td class="what">Never moves or deletes your files</td>
             <td data-label="Sombrero" class="cmp-sfs"><b>By design</b></td>
-            <td data-label="Indexed">Can delete / manage</td>
-            <td data-label="Classic GUI">Can delete</td>
-            <td data-label="CLI">Yes</td>
+            <td data-label="Indexed">Includes file actions</td>
+            <td data-label="Classic GUI">Includes file actions</td>
+            <td data-label="CLI">Search only</td>
           </tr>
         </tbody>
       </table>

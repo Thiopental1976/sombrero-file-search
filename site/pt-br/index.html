@@ -187,44 +187,44 @@
           <tr>
             <td class="what">Sem índice em segundo plano</td>
             <td data-label="Sombrero" class="cmp-sfs"><b>Ao vivo por padrão</b></td>
-            <td data-label="Indexados">Depende de índice</td>
+            <td data-label="Indexados">Usa banco de índice</td>
             <td data-label="GUI clássica">Depende</td>
             <td data-label="CLI">Ao vivo</td>
           </tr>
           <tr>
             <td class="what">Conteúdo + PDF / docx / odt / epub</td>
             <td data-label="Sombrero" class="cmp-sfs"><b>Embutido (<code>rga</code>)</b></td>
-            <td data-label="Indexados">Só Recoll</td>
-            <td data-label="GUI clássica">Parcial</td>
+            <td data-label="Indexados">Recoll (indexado)</td>
+            <td data-label="GUI clássica">Texto básico / parcial</td>
             <td data-label="CLI">Exige <code>rga</code> à parte</td>
           </tr>
           <tr>
             <td class="what">Expressão booleana (<code>AND</code>/<code>OR</code>/<code>NOT</code>)</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Completa + parênteses</b></td>
-            <td data-label="Indexados">Parcial</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Ao vivo, com parênteses</b></td>
+            <td data-label="Indexados">Sobre o índice</td>
             <td data-label="GUI clássica">Básica / não</td>
             <td data-label="CLI">Pipelines manuais</td>
           </tr>
           <tr>
-            <td class="what">Um processo por HD mecânico / SMR</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Automático</b></td>
-            <td data-label="Indexados">Não</td>
-            <td data-label="GUI clássica">Não</td>
-            <td data-label="CLI">Não</td>
+            <td class="what">Varredura atenta aos discos (HD / SMR)</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>1 processo por disco físico</b></td>
+            <td data-label="Indexados">Consulta o índice</td>
+            <td data-label="GUI clássica">Varredura única</td>
+            <td data-label="CLI">Por comando</td>
           </tr>
           <tr>
-            <td class="what">Avisa resultado incompleto (exit 2)</td>
-            <td data-label="Sombrero" class="cmp-sfs"><b>Canal único (GUI + CLI)</b></td>
-            <td data-label="Indexados">Não</td>
-            <td data-label="GUI clássica">Não</td>
-            <td data-label="CLI">Só stderr parcial</td>
+            <td class="what">Avisa resultado incompleto</td>
+            <td data-label="Sombrero" class="cmp-sfs"><b>Canal único (GUI + exit 2)</b></td>
+            <td data-label="Indexados">Depende do índice em dia</td>
+            <td data-label="GUI clássica">Sem canal unificado</td>
+            <td data-label="CLI">Código de saída, sem resumo</td>
           </tr>
           <tr>
-            <td class="what">Só leitura (nunca move / apaga)</td>
+            <td class="what">Nunca move nem apaga seus arquivos</td>
             <td data-label="Sombrero" class="cmp-sfs"><b>Por princípio</b></td>
-            <td data-label="Indexados">Permite apagar</td>
-            <td data-label="GUI clássica">Permite apagar</td>
-            <td data-label="CLI">Sim</td>
+            <td data-label="Indexados">Inclui ações de arquivo</td>
+            <td data-label="GUI clássica">Inclui ações de arquivo</td>
+            <td data-label="CLI">Só busca</td>
           </tr>
         </tbody>
       </table>
