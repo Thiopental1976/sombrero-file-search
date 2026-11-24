@@ -2381,7 +2381,8 @@ def _iter_content_python_(q, cancel, stats, sonda):
             anota_incompleto(stats, "stat_failed", onde=m.path)   # H5: o walker listou
             continue                                            # e o arquivo sumiu
         try:
-            with open(plat.longpath(m.path), "r", errors="surrogateescape") as fh:
+            with open(plat.longpath(m.path), "r", encoding="utf-8",
+                      errors="surrogateescape") as fh:
                 hit = None
                 for i, line in enumerate(fh, 1):
                     if "\x00" in line:      # provável binário

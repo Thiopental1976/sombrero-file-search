@@ -8,6 +8,7 @@ Rode:  python3 tests/test_windows_equivalencia_2026_11_24.py
 """
 from __future__ import annotations
 
+import builtins
 import datetime
 import ntpath
 import os
@@ -20,6 +21,7 @@ RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 LFS = os.path.join(RAIZ, "lfs")
 sys.path.insert(0, LFS)
 
+import boolean       # noqa: E402
 import disks         # noqa: E402
 import disks_win     # noqa: E402
 import engine        # noqa: E402
@@ -219,10 +221,52 @@ def test_resultfilter_datas_antigas_windows() -> None:
         resultfilter._period_bounds = orig_pb
 
 
+def test_fallback_python_encoding_utf8_sob_cp1252() -> None:
+    T = tempfile.mkdtemp(prefix="sfs_utf8_cp1252_")
+    real_open = builtins.open
+
+    def _open_default_cp1252(file, mode="r", *args, **kwargs):
+        # Simula Windows congelado sem PYTHONUTF8=1: todo open() em modo texto
+        # sem `encoding=` explícito abre em cp1252.
+        if "b" not in mode and "encoding" not in kwargs and len(args) < 2:
+            kwargs["encoding"] = "cp1252"
+        return real_open(file, mode, *args, **kwargs)
+
+    try:
+        f_utf8 = os.path.join(T, "utf8.txt")
+        f_cp1252 = os.path.join(T, "cp1252.txt")
+        with real_open(f_utf8, "wb") as f:
+            f.write("laudo médico coração\n".encode("utf-8"))
+        with real_open(f_cp1252, "wb") as f:
+            f.write("exame coração antigo\n".encode("cp1252"))
+
+        q = engine.Query(paths=[T], content="coração")
+        builtins.open = _open_default_cp1252  # type: ignore[assignment]
+        try:
+            hits = list(engine._iter_content_python(q, lambda: False))
+            nomes = sorted(os.path.basename(m.path) for m in hits)
+            ok(nomes == ["cp1252.txt", "utf8.txt"],
+               f"engine._iter_content_python acha UTF-8 e cp1252 sob default cp1252 ({nomes})")
+            linhas_utf8 = next((m.lines for m in hits if m.path.endswith("utf8.txt")), [])
+            ok(bool(linhas_utf8) and "coração" in linhas_utf8[0][1],
+               f"engine._iter_content_python preserva acento UTF-8 sem mojibake ({linhas_utf8})")
+
+            disp = boolean._display_lines_py(["coração"], [f_utf8, f_cp1252], q, lambda: False)
+            ok(os.path.abspath(f_utf8) in disp and os.path.abspath(f_cp1252) in disp,
+               f"boolean._display_lines_py acha UTF-8 e cp1252 sob default cp1252 ({list(disp)})")
+            ok("coração" in disp[os.path.abspath(f_utf8)][0][1],
+               f"boolean._display_lines_py preserva acento UTF-8 ({disp[os.path.abspath(f_utf8)]})")
+        finally:
+            builtins.open = real_open
+    finally:
+        shutil.rmtree(T, ignore_errors=True)
+
+
 def main() -> int:
     test_rga_env_e_which_pacote()
     test_fileops_raiz_origem_e_fail_closed()
     test_resultfilter_datas_antigas_windows()
+    test_fallback_python_encoding_utf8_sob_cp1252()
     if falhas:
         print(f"\n{len(falhas)} FALHA(S):")
         for f in falhas:

@@ -879,7 +879,8 @@ def _display_lines_py(pos_terms, files, q: engine.Query, cancel) -> dict:
             if not stat.S_ISREG(os.stat(engine.plat.longpath(fp),
                                         follow_symlinks=q.follow_symlinks).st_mode):
                 continue
-            with open(engine.plat.longpath(fp), "r", errors="surrogateescape") as fh:   # ver engine._linha_py
+            with open(engine.plat.longpath(fp), "r", encoding="utf-8",
+                      errors="surrogateescape") as fh:   # ver engine._linha_py
                 lst: list = []
                 for i, line in enumerate(fh, 1):
                     if "\x00" in line:            # binário: descarta o arquivo inteiro
