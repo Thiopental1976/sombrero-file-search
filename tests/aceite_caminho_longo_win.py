@@ -25,7 +25,9 @@ def ok(cond, msg):
         falhas.append(msg)
 
 # fora do checkout: a limpeza do runner engasga em caminho > 260 com a politica desligada
-base = os.path.join(os.environ.get("RUNNER_TEMP") or os.environ["TEMP"], "sfs_lp_%d" % os.getpid())
+base = os.path.abspath(os.path.join(os.environ.get("RUNNER_TEMP") or os.environ["TEMP"],
+                                    "sfs_lp_%d" % os.getpid()))
+nc = os.path.normcase                                 # d:\ x D:\ não pode dar falso-vermelho
 V = "\\\\?\\"
 fundo = base + ("\\" + "n" * 25) * 12                 # > 300 caracteres
 try:
@@ -53,9 +55,11 @@ try:
 
     def confere(nome, rc, linhas, err, final):
         achou = [l for l in linhas if l.endswith(final)]
-        ok(len(achou) == 1, "%s: achou o arquivo fundo (rc=%s, %d linha(s))" % (nome, rc, len(linhas)))
+        ok(rc == 0, "%s: saiu 0, busca completa (rc=%s)" % (nome, rc))      # 2 = incompleta
+        ok(len(achou) == 1 and nc(achou[0]) == nc(txt),
+           "%s: achou exatamente o arquivo fundo (%d linha(s))" % (nome, len(linhas)))
         ok(not any(l.startswith(V) for l in linhas), "%s: caminho impresso sem o prefixo \\\\?\\" % nome)
-        ok(all(os.path.exists(V + l) for l in achou), "%s: o caminho impresso existe" % nome)
+        ok(bool(achou) and all(os.path.exists(V + l) for l in achou), "%s: o caminho impresso existe" % nome)
         if len(achou) != 1:
             print("   stdout: %r\n   stderr: %s" % (linhas[:5], err[-600:]), flush=True)
 
@@ -65,13 +69,24 @@ try:
     st = {}
     ms = [m.path for m in engine._iter_names_python(
         engine.Query(paths=[base], name_patterns=["a_longo.txt"]), st)]
-    ok(ms == [txt], "walker Python de nomes acha o arquivo fundo, sem prefixo (%r, stats=%r)" % (ms[:2], st))
+    ok([nc(m) for m in ms] == [nc(txt)] and not ms[0].startswith(V),
+       "walker Python de nomes acha o arquivo fundo, sem prefixo (%r)" % (ms[:2],))
+    ok(not st.get("incompleto") and not st.get("denied"), "walker de nomes: nada incompleto nem negado (%r)" % st)
+
+    st = {}
+    mc = [m.path for m in engine._iter_content_python(
+        engine.Query(paths=[base], content="palavra_laudo_longo"), lambda: False, st)]
+    ok([nc(m) for m in mc] == [nc(txt)] and not mc[0].startswith(V),
+       "conteudo pelo caminho Python acha o arquivo fundo, sem prefixo (%r)" % (mc[:2],))
+    ok(not st.get("incompleto") and not st.get("denied"), "conteudo Python: nada incompleto nem negado (%r)" % st)
 
     st = {}
     grupos = dupes.find_duplicates([base], stats=st)
     caminhos = sorted(p for g in grupos for c in g.members for p in c.paths)
-    ok(caminhos == [fundo + "\\copia1.bin", fundo + "\\copia2.bin"],
-       "duplicatas: as 2 copias no fundo formam 1 grupo, sem prefixo (%d grupo(s), stats=%r)" % (len(grupos), st))
+    ok([nc(c) for c in caminhos] == [nc(fundo + "\\copia1.bin"), nc(fundo + "\\copia2.bin")]
+       and not any(c.startswith(V) for c in caminhos),
+       "duplicatas: as 2 copias no fundo formam 1 grupo, sem prefixo (%d grupo(s))" % len(grupos))
+    ok(not st.get("denied"), "duplicatas: nenhum diretorio contado como negado (%r)" % st)
 finally:
     shutil.rmtree(V + base, ignore_errors=True)
 

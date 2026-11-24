@@ -186,12 +186,14 @@ jobs:
           $key = "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem"
           $orig = (Get-ItemProperty $key).LongPathsEnabled
           "LongPathsEnabled original: $orig"
+          $rc = 1
           Set-ItemProperty $key LongPathsEnabled 0
           try {
             python tests\aceite_caminho_longo_win.py "dist\SombreroFileSearch\sfs.exe"
             $rc = $LASTEXITCODE
           } finally {
-            Set-ItemProperty $key LongPathsEnabled $orig
+            if ($null -ne $orig) { Set-ItemProperty $key LongPathsEnabled $orig }
+            else { Remove-ItemProperty $key LongPathsEnabled -ErrorAction SilentlyContinue }
           }
           exit $rc
 
