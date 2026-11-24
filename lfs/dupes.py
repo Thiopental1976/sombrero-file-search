@@ -102,11 +102,22 @@ class DupGroup:
         return [c.path for c in self.members]
 
 
+def _inode_key(st, path: str):
+    """Identidade do arquivo físico para colapsar hardlinks.
+    Quando st_ino == 0 (CIFS noserverino, FAT, FUSE sem inode), não dá para
+    identificar hardlinks: cada caminho precisa de chave própria para não
+    colapsar o volume inteiro num único candidato."""
+    if st.st_ino:
+        return (st.st_dev, st.st_ino)
+    return ("path", path)
+
+
 # ------------------------------------------------------------------ walk
 def _walk(roots, min_size, include_zero, follow_symlinks, cancel, stats):
     """Estágio 0: percorre as raízes e colapsa cada inode num único candidato."""
-    seen: Dict[Tuple[int, int], Candidate] = {}
+    seen: Dict[tuple, Candidate] = {}
     order: List[Candidate] = []
+    visited_dirs = set()
 
     def on_err(_e: OSError):
         stats["denied"] += 1        # pasta ilegível (EACCES): contada, não fatal
@@ -114,10 +125,21 @@ def _walk(roots, min_size, include_zero, follow_symlinks, cancel, stats):
     for root in roots:
         if cancel():
             break
-        for dirpath, _dirs, files in os.walk(root, onerror=on_err,
-                                             followlinks=follow_symlinks):
+        for dirpath, dirs, files in os.walk(root, onerror=on_err,
+                                            followlinks=follow_symlinks):
             if cancel():
                 break
+            if follow_symlinks:
+                # Evita loop infinito em symlinks cíclicos de diretório.
+                try:
+                    dst = os.stat(_L(dirpath))
+                    dkey = (dst.st_dev, dst.st_ino) if dst.st_ino else ("real", os.path.realpath(dirpath))
+                except OSError:
+                    dkey = ("real", os.path.realpath(dirpath))
+                if dkey in visited_dirs:
+                    dirs[:] = []
+                    continue
+                visited_dirs.add(dkey)
             for fn in files:
                 p = os.path.join(dirpath, fn)
                 try:
@@ -136,7 +158,7 @@ def _walk(roots, min_size, include_zero, follow_symlinks, cancel, stats):
                     continue
                 if sz < min_size:
                     continue
-                key = (st.st_dev, st.st_ino)
+                key = _inode_key(st, p)
                 cand = seen.get(key)
                 if cand is None:
                     cand = Candidate(st.st_dev, st.st_ino, sz)
@@ -152,7 +174,7 @@ def _collect(files, min_size, include_zero, follow_symlinks, cancel, stats):
     """Estágio 0 para uma LISTA EXPLÍCITA de arquivos (os resultados de uma busca),
     não uma varredura de pastas. Mesma disciplina do `_walk`: colapsa inode, tira
     symlink/tamanho-0, mas nunca desce em diretório — analisa exatamente o que veio."""
-    seen: Dict[Tuple[int, int], Candidate] = {}
+    seen: Dict[tuple, Candidate] = {}
     order: List[Candidate] = []
     for p in files:
         if cancel():
@@ -181,7 +203,7 @@ def _collect(files, min_size, include_zero, follow_symlinks, cancel, stats):
             continue
         if sz < min_size:
             continue
-        key = (st.st_dev, st.st_ino)
+        key = _inode_key(st, p)
         cand = seen.get(key)
         if cand is None:
             cand = Candidate(st.st_dev, st.st_ino, sz)
@@ -427,7 +449,7 @@ def name_verdicts(files, groups: List[DupGroup]) -> List[NameGroup]:
     for p in files:
         try:
             st = os.lstat(_L(p))
-            inode_of[p] = (st.st_dev, st.st_ino)
+            inode_of[p] = _inode_key(st, p)
         except OSError:
             inode_of[p] = ("?", p)          # não resolvido: trata como único
     rep_of: Dict[Tuple, str] = {}           # inode -> caminho representativo (o mais curto)
