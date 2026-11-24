@@ -50,6 +50,16 @@ jobs:
           # PATH, e rga_env() põe a pasta do rg (bin\) no PATH dele
           $pop = Get-ChildItem _dl\poppler -Recurse -Filter pdftotext.exe | Select-Object -First 1
           Copy-Item "$($pop.DirectoryName)\*" -Destination bin -Recurse
+          # Licenças de terceiros (AGPL-3 do rga, GPL-2 do Poppler, MIT/Apache de rg/fd)
+          New-Item -ItemType Directory -Force bin\licenses | Out-Null
+          $rgaLic = Get-ChildItem _dl\rga -Recurse -Include LICENSE* | Select-Object -First 1
+          if ($rgaLic) { Copy-Item $rgaLic.FullName "bin\licenses\ripgrep-all-LICENSE.md" }
+          $rgLic = Get-ChildItem _dl\rg -Recurse -Include LICENSE*, UNLICENSE* | Select-Object -First 1
+          if ($rgLic) { Copy-Item $rgLic.FullName "bin\licenses\ripgrep-LICENSE" }
+          $fdLic = Get-ChildItem _dl\fd -Recurse -Include LICENSE* | Select-Object -First 1
+          if ($fdLic) { Copy-Item $fdLic.FullName "bin\licenses\fd-LICENSE" }
+          $popLic = Get-ChildItem _dl\poppler -Recurse -Include COPYING*, LICENSE* | Select-Object -First 1
+          if ($popLic) { Copy-Item $popLic.FullName "bin\licenses\poppler-COPYING" }
           foreach ($e in "rg", "fd", "rga") { & "bin\$e.exe" --version | Select-Object -First 1 }
           if (-not (Test-Path bin\pdftotext.exe)) { throw "pdftotext.exe faltando" }
           exit 0          # o último nativo deixaria $LASTEXITCODE do poppler
@@ -117,6 +127,7 @@ jobs:
           }
           [Console]::OutputEncoding = $antes
           # a janela monta de verdade (o console diz o erro que o SombreroFileSearch.exe não teria onde dizer)
+          if (-not (Test-Path "dist\SombreroFileSearch\licenses\README.txt")) { throw "licenses\README.txt faltando no pacote" }
           & $sfs --gui-selftest
           if ($LASTEXITCODE -ne 0) { throw "gui-selftest falhou ($LASTEXITCODE)" }
           # e o SombreroFileSearch.exe de janela sobe e fica de pé — com TODO aviso do Qt
