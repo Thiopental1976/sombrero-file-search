@@ -156,6 +156,28 @@ jobs:
           Stop-Process $p
           exit 0
 
+      # 24/11/2026 (pedido do Rodrigo): integridade da distribuição. Roda DEPOIS do
+      # aceite de propósito: usar o programa não pode sujar a pasta do pacote.
+      - name: integridade — sfs.exe --verify (íntegro 0, 1 byte estragado 1, sem manifesto 2)
+        run: |
+          $pkg = "dist\SombreroFileSearch"
+          if (-not (Test-Path "$pkg\MANIFEST.sha256")) { throw "MANIFEST.sha256 faltando no pacote" }
+          & "$pkg\sfs.exe" --verify
+          if ($LASTEXITCODE -ne 0) { throw "pacote recem-montado: --verify saiu $LASTEXITCODE (esperado 0)" }
+          # numa CÓPIA (o zip e a pasta original ficam como estão)
+          $c = Join-Path $env:RUNNER_TEMP "sfs_integridade"
+          Copy-Item -Recurse $pkg $c
+          $f = Join-Path $c "bin\fd.exe"
+          $b = [IO.File]::ReadAllBytes($f); $b[100] = $b[100] -bxor 0xFF; [IO.File]::WriteAllBytes($f, $b)
+          $out = & "$c\sfs.exe" --verify 2>&1 | Out-String
+          $rc = $LASTEXITCODE; $out
+          if ($rc -ne 1) { throw "1 byte estragado em bin\fd.exe: --verify saiu $rc (esperado 1)" }
+          if ($out -notmatch "MODIFIED: bin/fd\.exe") { throw "o relatorio nao apontou bin/fd.exe" }
+          Remove-Item (Join-Path $c "MANIFEST.sha256")
+          & "$c\sfs.exe" --verify 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 2) { throw "sem manifesto: --verify saiu $LASTEXITCODE (esperado 2)" }
+          exit 0
+
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
