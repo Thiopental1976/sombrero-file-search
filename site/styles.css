@@ -40,8 +40,17 @@ code, pre, kbd { font-family: var(--f-mono) }
   padding-right: max(20px, env(safe-area-inset-right, 0px));
 }
 
+/* Skip link for keyboard and screen-reader users */
+.skip {
+  position: fixed; left: 12px; top: -120px; z-index: 50;
+  padding: 10px 16px; border-radius: 10px;
+  background: var(--teal); color: #032024; font: 600 .92rem var(--f-body);
+  text-decoration: none; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.skip:focus { top: 12px; color: #032024 }
+
 /* Top bar */
-.top { position: absolute; inset: 0 0 auto; z-index: 2 }
+.top { position: absolute; inset: 0 0 auto; z-index: 10 }
 .top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 18px }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--fg); text-decoration: none; font: 600 1rem var(--f-display) }
 .brand img { width: 32px; height: 32px }
@@ -49,6 +58,27 @@ code, pre, kbd { font-family: var(--f-mono) }
 .nav a { color: var(--muted); text-decoration: none; white-space: nowrap }
 .nav a:hover { color: var(--fg) }
 .nav .lang { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; color: var(--fg) }
+.nav-menu { display: none; position: relative }
+.nav-menu summary {
+  list-style: none; cursor: pointer; user-select: none; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px;
+  background: rgba(11,23,32,.75); color: var(--fg); font: 500 .82rem/1 var(--f-body);
+  min-height: 44px;
+}
+.nav-menu summary::-webkit-details-marker { display: none }
+.nav-menu[open] summary { border-color: var(--teal); color: var(--teal) }
+.nav-drop {
+  position: absolute; right: 0; top: calc(100% + 8px); min-width: 210px; z-index: 20;
+  display: flex; flex-direction: column; padding: 6px;
+  background: var(--space-2); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0,0,0,.7);
+}
+.nav-drop a {
+  display: flex; align-items: center; min-height: 44px; padding: 8px 14px;
+  border-radius: 8px; color: var(--fg); font-size: .95rem;
+}
+.nav-drop a:hover, .nav-drop a:active { background: var(--space-3); color: var(--teal) }
 
 /* Hero */
 .hero {
@@ -253,12 +283,16 @@ footer a { color: var(--muted) }
   footer nav a:hover, footer nav a:active { color: var(--fg); border-color: var(--teal-deep) }
 }
 
-/* Phone: keep the brand on one line, show Install + language switch */
+/* Phone: keep the brand on one line, show Menu dropdown + language switch */
 .brand { white-space: nowrap }
 @media (max-width: 640px) {
-  .brand { font-size: .92rem; gap: 8px }
-  .nav { gap: 8px; flex-wrap: nowrap; font-size: .84rem }
-  .nav a:not(.lang):not(.nav-install) { display: none }
+  .top .wrap { gap: 8px }
+  .brand { font-size: .88rem; gap: 7px }
+  .brand img { width: 26px; height: 26px }
+  .nav { gap: 6px; flex-wrap: nowrap; font-size: .82rem }
+  .nav > a:not(.lang) { display: none }
+  .nav-menu { display: block }
+  .nav .lang { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 10px; line-height: 1 }
   .hero { padding-block: 110px 64px }
   section { padding-block: 60px }
 }

@@ -48,6 +48,7 @@
 </script>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 
 <header class="top">
   <div class="wrap">
@@ -60,12 +61,25 @@
       <a class="nav-install" href="#install">Install</a>
       <a href="#donate" data-donate-link hidden>Donate</a>
       <a href="https://github.com/Thiopental1976/sombrero-file-search">GitHub</a>
+      <details class="nav-menu">
+        <summary aria-label="Menu">☰ <span>Menu</span></summary>
+        <div class="nav-drop">
+          <a href="#honest">Why</a>
+          <a href="#features">Features</a>
+          <a href="#compare">Compare</a>
+          <a href="#duplicates">Duplicates</a>
+          <a href="#safe">Safety</a>
+          <a href="#install">Install</a>
+          <a href="#donate" data-donate-link hidden>Donate</a>
+          <a href="https://github.com/Thiopental1976/sombrero-file-search">GitHub</a>
+        </div>
+      </details>
       <a class="lang" href="pt-br/" hreflang="pt-BR" lang="pt-BR">Português</a>
     </nav>
   </div>
 </header>
 
-<main>
+<main id="main">
 <section class="hero">
   <div class="wrap">
     <img class="hero-icon" src="assets/icon_256.png" alt="Sombrero File Search icon" width="88" height="88">
@@ -360,6 +374,7 @@ cd sombrero-file-search &amp;&amp; ./install.sh</pre>
 <script src="release.js" defer></script>
 <script src="copy.js" defer></script>
 <script src="demo.js" defer></script>
+<script src="nav.js" defer></script>
 <script src="vendor/qrcode.min.js" defer></script>
 <script src="donate.js" defer></script>
 </body>
