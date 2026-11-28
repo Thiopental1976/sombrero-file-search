@@ -12,7 +12,7 @@
     let ok = false; try { ok = document.execCommand("copy"); } catch (_) {}
     ta.remove(); return ok;
   };
-  for (const pre of document.querySelectorAll(".inst pre")) {
+  for (const pre of document.querySelectorAll(".inst pre, .verify-box pre")) {
     const box = document.createElement("div"); box.className = "cmd";
     pre.replaceWith(box); box.appendChild(pre);
     const b = document.createElement("button"); b.type = "button"; b.className = "copy"; b.textContent = label;
