@@ -98,8 +98,9 @@
 <section class="demo" aria-label="Demonstração">
   <div class="wrap">
     <figure>
-      <div class="demo-tabs" role="tablist" aria-label="Orientação da demonstração" hidden>
-        <button type="button" class="demo-tab" role="tab" data-demo-tab="wide" aria-selected="true">Paisagem <small>desktop</small></button>
+      <div class="demo-tabs" role="tablist" aria-label="Visualização da demonstração" hidden>
+        <button type="button" class="demo-tab" role="tab" data-demo-tab="wide" aria-selected="true">Paisagem <small>janela inteira</small></button>
+        <button type="button" class="demo-tab" role="tab" data-demo-tab="zoom" aria-selected="false">Zoom: resultados <small>texto 1:1</small></button>
         <button type="button" class="demo-tab" role="tab" data-demo-tab="tall" aria-selected="false">Retrato <small>vertical / celular</small></button>
       </div>
       <div class="demo-pair">
@@ -111,7 +112,19 @@
           <div class="demo-bar">
             <div class="demo-meta">
               <span class="demo-orient">Paisagem</span>
-              <span class="demo-label">janela larga · prévia à direita</span>
+              <span class="demo-label">janela inteira · prévia à direita</span>
+            </div>
+          </div>
+        </div>
+        <div class="demo-item demo-zoom" data-demo-panel="zoom">
+          <video class="demo-video" muted loop playsinline preload="metadata" width="820" height="604" poster="../assets/demo_resultados_poster.jpg" aria-label="Recorte em escala 1:1 das barras por disco e da tabela de resultados durante as mesmas três buscas">
+            <source src="../assets/demo_resultados.mp4" type="video/mp4">
+            <p class="demo-fallback"><a href="../assets/demo_resultados.mp4">Assistir ao recorte dos resultados (MP4)</a>.</p>
+          </video>
+          <div class="demo-bar">
+            <div class="demo-meta">
+              <span class="demo-orient">Zoom: resultados</span>
+              <span class="demo-label">escala 1:1 · barras por disco e tabela</span>
             </div>
           </div>
         </div>

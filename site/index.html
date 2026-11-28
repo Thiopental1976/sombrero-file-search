@@ -97,8 +97,9 @@
 <section class="demo" aria-label="Demo">
   <div class="wrap">
     <figure>
-      <div class="demo-tabs" role="tablist" aria-label="Demo orientation" hidden>
-        <button type="button" class="demo-tab" role="tab" data-demo-tab="wide" aria-selected="true">Landscape <small>desktop</small></button>
+      <div class="demo-tabs" role="tablist" aria-label="Demo view" hidden>
+        <button type="button" class="demo-tab" role="tab" data-demo-tab="wide" aria-selected="true">Landscape <small>full window</small></button>
+        <button type="button" class="demo-tab" role="tab" data-demo-tab="zoom" aria-selected="false">Results zoom <small>1:1 text</small></button>
         <button type="button" class="demo-tab" role="tab" data-demo-tab="tall" aria-selected="false">Portrait <small>vertical / phone</small></button>
       </div>
       <div class="demo-pair">
@@ -110,7 +111,19 @@
           <div class="demo-bar">
             <div class="demo-meta">
               <span class="demo-orient">Landscape</span>
-              <span class="demo-label">wide window · preview on the right</span>
+              <span class="demo-label">full window · preview on the right</span>
+            </div>
+          </div>
+        </div>
+        <div class="demo-item demo-zoom" data-demo-panel="zoom">
+          <video class="demo-video" muted loop playsinline preload="metadata" width="820" height="604" poster="assets/demo_resultados_poster.jpg" aria-label="1:1 close-up of the disk queue bars and search results table during the same three searches">
+            <source src="assets/demo_resultados.mp4" type="video/mp4">
+            <p class="demo-fallback"><a href="assets/demo_resultados.mp4">Watch the results close-up video (MP4)</a>.</p>
+          </video>
+          <div class="demo-bar">
+            <div class="demo-meta">
+              <span class="demo-orient">Results zoom</span>
+              <span class="demo-label">1:1 scale · disk bars and results table</span>
             </div>
           </div>
         </div>
