@@ -49,6 +49,7 @@
 </script>
 </head>
 <body>
+<a class="skip" href="#main">Pular para o conteúdo</a>
 
 <header class="top">
   <div class="wrap">
@@ -61,12 +62,25 @@
       <a class="nav-install" href="#instalar">Instalar</a>
       <a href="#doar" data-donate-link hidden>Doar</a>
       <a href="https://github.com/Thiopental1976/sombrero-file-search">GitHub</a>
+      <details class="nav-menu">
+        <summary aria-label="Menu">☰ <span>Menu</span></summary>
+        <div class="nav-drop">
+          <a href="#honesta">Por quê</a>
+          <a href="#recursos">Recursos</a>
+          <a href="#comparar">Comparar</a>
+          <a href="#duplicatas">Duplicatas</a>
+          <a href="#segura">Segurança</a>
+          <a href="#instalar">Instalar</a>
+          <a href="#doar" data-donate-link hidden>Doar</a>
+          <a href="https://github.com/Thiopental1976/sombrero-file-search">GitHub</a>
+        </div>
+      </details>
       <a class="lang" href="../" hreflang="en" lang="en">English</a>
     </nav>
   </div>
 </header>
 
-<main>
+<main id="main">
 <section class="hero">
   <div class="wrap">
     <img class="hero-icon" src="../assets/icon_256.png" alt="Ícone do Sombrero File Search" width="88" height="88">
@@ -84,22 +98,40 @@
 <section class="demo" aria-label="Demonstração">
   <div class="wrap">
     <figure>
+      <div class="demo-tabs" role="tablist" aria-label="Visualização da demonstração" hidden>
+        <button type="button" class="demo-tab" role="tab" data-demo-tab="wide" aria-selected="true">Paisagem <small>janela inteira</small></button>
+        <button type="button" class="demo-tab" role="tab" data-demo-tab="zoom" aria-selected="false">Zoom: resultados <small>texto 1:1</small></button>
+        <button type="button" class="demo-tab" role="tab" data-demo-tab="tall" aria-selected="false">Retrato <small>vertical / celular</small></button>
+      </div>
       <div class="demo-pair">
-        <div class="demo-item demo-wide">
-          <video class="demo-video" autoplay muted loop playsinline width="1280" height="800" poster="../assets/demo_wide_poster.jpg" aria-label="Três buscas seguidas em quatro discos: cada disco passa para a busca seguinte assim que termina a anterior; depois a prévia, à direita, mostra uma radiografia, uma foto e um vídeo tocando">
+        <div class="demo-item demo-wide" data-demo-panel="wide">
+          <video class="demo-video" autoplay muted loop playsinline preload="metadata" width="1280" height="800" poster="../assets/demo_wide_poster.jpg" aria-label="Três buscas seguidas em quatro discos: cada disco passa para a busca seguinte assim que termina a anterior; depois a prévia, à direita, mostra uma radiografia, uma foto e um vídeo tocando">
             <source src="../assets/demo_wide.mp4" type="video/mp4">
-            <img src="../assets/demo.gif" width="960" height="600" alt="Três buscas seguidas em quatro discos: cada disco passa para a busca seguinte assim que termina a anterior; depois a prévia, à direita, mostra uma radiografia, uma foto e um vídeo tocando">
+            <p class="demo-fallback"><a href="../assets/demo_wide.mp4">Assistir ao vídeo de demonstração em paisagem (MP4)</a>.</p>
           </video>
           <div class="demo-bar">
             <div class="demo-meta">
               <span class="demo-orient">Paisagem</span>
-              <span class="demo-label">janela larga · prévia à direita</span>
+              <span class="demo-label">janela inteira · prévia à direita</span>
             </div>
           </div>
         </div>
-        <div class="demo-item demo-tall">
-          <video class="demo-video" autoplay muted loop playsinline width="720" height="1280" poster="../assets/demo_tall_poster.jpg" aria-label="As mesmas três buscas numa janela alta: a prévia vai para baixo dos resultados e mantém uma área grande para imagens e vídeo">
+        <div class="demo-item demo-zoom" data-demo-panel="zoom">
+          <video class="demo-video" muted loop playsinline preload="metadata" width="820" height="604" poster="../assets/demo_resultados_poster.jpg" aria-label="Recorte em escala 1:1 das barras por disco e da tabela de resultados durante as mesmas três buscas">
+            <source src="../assets/demo_resultados.mp4" type="video/mp4">
+            <p class="demo-fallback"><a href="../assets/demo_resultados.mp4">Assistir ao recorte dos resultados (MP4)</a>.</p>
+          </video>
+          <div class="demo-bar">
+            <div class="demo-meta">
+              <span class="demo-orient">Zoom: resultados</span>
+              <span class="demo-label">escala 1:1 · barras por disco e tabela</span>
+            </div>
+          </div>
+        </div>
+        <div class="demo-item demo-tall" data-demo-panel="tall">
+          <video class="demo-video" muted loop playsinline preload="metadata" width="720" height="1280" poster="../assets/demo_tall_poster.jpg" aria-label="As mesmas três buscas numa janela alta: a prévia vai para baixo dos resultados e mantém uma área grande para imagens e vídeo">
             <source src="../assets/demo_tall.mp4" type="video/mp4">
+            <p class="demo-fallback"><a href="../assets/demo_tall.mp4">Assistir ao vídeo de demonstração em retrato (MP4)</a>.</p>
           </video>
           <div class="demo-bar">
             <div class="demo-meta">
@@ -164,9 +196,9 @@
     <div class="eyebrow">Recursos</div>
     <h2>Busca como o Agent Ransack, nativo do Linux.</h2>
     <div class="feats">
+      <div class="feat feat-lead"><span class="tag">Booleana</span><h3>Expressões booleanas completas, ao vivo</h3><p><code>(nota OR laudo) AND paciente NOT rascunho</code>, com parênteses e frases entre aspas — direto nos arquivos, sem índice.</p></div>
+      <div class="feat feat-lead"><span class="tag">Dentro de documentos</span><h3>PDF, Office, EPUB e arquivos zip</h3><p>Busca dentro de PDF, docx, odt, epub e zip pelo ripgrep-all embutido. Funciona de cara, sem precisar de pandoc.</p></div>
       <div class="feat"><span class="tag">Nome + conteúdo</span><p>Glob ou regex, texto simples ou regex, com destaque na prévia.</p></div>
-      <div class="feat"><span class="tag">Booleana</span><p><code>(nota OR laudo) AND paciente NOT rascunho</code>, com parênteses e frases entre aspas.</p></div>
-      <div class="feat"><span class="tag">Dentro de documentos</span><p>PDF, docx, odt, epub e zip, pelo ripgrep-all embutido. Sem precisar de pandoc.</p></div>
       <div class="feat"><span class="tag">Prévia de mídia</span><p>Imagens e player de áudio e vídeo ao lado dos resultados: à direita numa janela larga, embaixo numa janela alta.</p></div>
       <div class="feat"><span class="tag">Buscas em sequência</span><p>Uma busca por aba. Cada disco passa para a busca seguinte assim que termina a anterior. Buscas salvas, histórico, exportação CSV/JSON.</p></div>
       <div class="feat"><span class="tag">Cópia segura</span><p>Nunca move nem apaga. Confere espaço livre, limites do FAT32 e nomes proibidos antes de gravar.</p></div>
@@ -361,6 +393,7 @@ cd sombrero-file-search &amp;&amp; ./install.sh</pre>
 <script src="../release.js" defer></script>
 <script src="../copy.js" defer></script>
 <script src="../demo.js" defer></script>
+<script src="../nav.js" defer></script>
 <script src="../vendor/qrcode.min.js" defer></script>
 <script src="../donate.js" defer></script>
 </body>
