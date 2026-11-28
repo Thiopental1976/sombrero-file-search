@@ -156,7 +156,7 @@ p { margin: 0 0 14px; max-width: 64ch }
   padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--space-2);
 }
 .demo-tab {
-  cursor: pointer; display: inline-flex; align-items: baseline; gap: 6px;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
   font: 600 .84rem/1 var(--f-body); color: var(--muted);
   background: var(--space); border: 1px solid var(--line); border-radius: 999px;
   padding: 8px 14px; min-height: 36px; white-space: nowrap;
@@ -195,8 +195,13 @@ p { margin: 0 0 14px; max-width: 64ch }
   .demo-btn { padding: 7px 10px; font-size: .74rem }
 }
 @media (max-width: 640px), (pointer: coarse) {
-  .demo-tab { min-height: 44px; padding: 10px 14px }
+  .demo-tab { min-height: 44px; padding: 10px 12px }
   .demo-btn { min-height: 44px; padding: 10px 14px }
+}
+@media (max-width: 640px) {
+  .demo-tabs { gap: 6px; padding: 8px 10px }
+  .demo-tab { font-size: .8rem; padding: 8px 11px }
+  .demo-tab small { display: none }
 }
 .tap-hint { display: block; margin-top: 6px; font: 600 .75rem var(--f-mono); letter-spacing: .03em; color: var(--teal) }
 .demo figcaption { padding: 12px 18px; font-size: .9rem; color: var(--muted); border-top: 1px solid var(--line) }
@@ -349,6 +354,10 @@ footer a { color: var(--muted) }
   .nav .lang { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 10px; line-height: 1 }
   .hero { padding-block: 110px 64px }
   section { padding-block: 60px }
+}
+@media (max-width: 440px) {
+  .nav-menu summary { min-width: 44px; padding: 6px 10px; justify-content: center; font-size: 1.05rem }
+  .nav-menu summary span { display: none }
 }
 
 /* Read-only promise */
