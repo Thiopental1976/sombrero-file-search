@@ -98,25 +98,13 @@
   <div class="wrap">
     <figure>
       <div class="demo-tabs" role="tablist" aria-label="Demo view" hidden>
-        <button type="button" class="demo-tab" role="tab" data-demo-tab="wide" aria-selected="true">Landscape <small>full window</small></button>
-        <button type="button" class="demo-tab" role="tab" data-demo-tab="zoom" aria-selected="false">Results zoom <small>1:1 text</small></button>
+        <button type="button" class="demo-tab" role="tab" data-demo-tab="zoom" aria-selected="true">Results zoom <small>1:1 text</small></button>
+        <button type="button" class="demo-tab" role="tab" data-demo-tab="wide" aria-selected="false">Landscape <small>full window</small></button>
         <button type="button" class="demo-tab" role="tab" data-demo-tab="tall" aria-selected="false">Portrait <small>vertical / phone</small></button>
       </div>
       <div class="demo-pair">
-        <div class="demo-item demo-wide" data-demo-panel="wide">
-          <video class="demo-video" autoplay muted loop playsinline preload="metadata" width="1280" height="800" poster="assets/demo_wide_poster.jpg" aria-label="Three searches in a row across four disks: each disk moves on to the next search as soon as it finishes the previous one; then the preview, on the right, shows an X-ray, a photo and a video playing">
-            <source src="assets/demo_wide.mp4" type="video/mp4">
-            <p class="demo-fallback"><a href="assets/demo_wide.mp4">Watch the landscape demo video (MP4)</a>.</p>
-          </video>
-          <div class="demo-bar">
-            <div class="demo-meta">
-              <span class="demo-orient">Landscape</span>
-              <span class="demo-label">full window · preview on the right</span>
-            </div>
-          </div>
-        </div>
         <div class="demo-item demo-zoom" data-demo-panel="zoom">
-          <video class="demo-video" muted loop playsinline preload="metadata" width="820" height="604" poster="assets/demo_resultados_poster.jpg" aria-label="1:1 close-up of the disk queue bars and search results table during the same three searches">
+          <video class="demo-video" controls muted loop playsinline preload="metadata" width="820" height="604" poster="assets/demo_resultados_poster.jpg" aria-label="1:1 close-up of the disk queue bars and search results table during the same three searches">
             <source src="assets/demo_resultados.mp4" type="video/mp4">
             <p class="demo-fallback"><a href="assets/demo_resultados.mp4">Watch the results close-up video (MP4)</a>.</p>
           </video>
@@ -127,8 +115,20 @@
             </div>
           </div>
         </div>
+        <div class="demo-item demo-wide" data-demo-panel="wide">
+          <video class="demo-video" controls muted loop playsinline preload="metadata" width="1280" height="800" poster="assets/demo_wide_poster.jpg" aria-label="Three searches in a row across four disks: each disk moves on to the next search as soon as it finishes the previous one; then the preview, on the right, shows an X-ray, a photo and a video playing">
+            <source src="assets/demo_wide.mp4" type="video/mp4">
+            <p class="demo-fallback"><a href="assets/demo_wide.mp4">Watch the landscape demo video (MP4)</a>.</p>
+          </video>
+          <div class="demo-bar">
+            <div class="demo-meta">
+              <span class="demo-orient">Landscape</span>
+              <span class="demo-label">full window · preview on the right</span>
+            </div>
+          </div>
+        </div>
         <div class="demo-item demo-tall" data-demo-panel="tall">
-          <video class="demo-video" muted loop playsinline preload="metadata" width="720" height="1280" poster="assets/demo_tall_poster.jpg" aria-label="The same three searches in a tall window: the preview moves below the results and keeps a large area for images and video">
+          <video class="demo-video" controls muted loop playsinline preload="metadata" width="720" height="1280" poster="assets/demo_tall_poster.jpg" aria-label="The same three searches in a tall window: the preview moves below the results and keeps a large area for images and video">
             <source src="assets/demo_tall.mp4" type="video/mp4">
             <p class="demo-fallback"><a href="assets/demo_tall.mp4">Watch the portrait demo video (MP4)</a>.</p>
           </video>
