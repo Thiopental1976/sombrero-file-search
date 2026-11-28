@@ -82,7 +82,30 @@ code, pre, kbd { font-family: var(--f-mono) }
 .btn small:empty { display: none }
 .btn-sm { padding: 9px 15px; font-size: .9rem; border-radius: 8px }
 .btn-win.is-win { border-color: var(--teal); background: rgba(70,214,217,.12) }
+.btn.is-downloading { border-color: var(--ok); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 30%, transparent) }
 .cta-note { width: 100%; font-size: .88rem; color: var(--muted); margin: 4px 0 0 }
+
+/* Download feedback toast */
+.dl-toast {
+  position: fixed; z-index: 30; left: 50%; transform: translateX(-50%);
+  bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  width: min(560px, calc(100vw - 24px));
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px 14px 14px 16px; border-radius: 12px;
+  background: var(--space-2); border: 1px solid color-mix(in srgb, var(--ok) 55%, var(--line));
+  box-shadow: 0 16px 48px rgba(0,0,0,.65);
+}
+.dl-toast-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 }
+.dl-toast-title { font: 600 .95rem/1.3 var(--f-display); color: var(--ok) }
+.dl-toast-file { font: 500 .8rem/1.35 var(--f-mono); color: var(--fg); overflow-wrap: anywhere }
+.dl-toast-hint { font-size: .84rem; line-height: 1.4; color: var(--muted) }
+.dl-toast-close {
+  cursor: pointer; flex: 0 0 auto; min-width: 44px; min-height: 44px;
+  margin: -8px -8px -8px 0; border-radius: 8px;
+  background: transparent; border: 1px solid transparent; color: var(--muted);
+  font: 600 1.25rem/1 var(--f-body); display: inline-flex; align-items: center; justify-content: center;
+}
+.dl-toast-close:hover { color: var(--fg); border-color: var(--line); background: var(--space-3) }
 
 /* Sections */
 section { padding-block: 84px }
