@@ -98,9 +98,13 @@
 <section class="demo" aria-label="Demonstração">
   <div class="wrap">
     <figure>
+      <div class="demo-tabs" role="tablist" aria-label="Orientação da demonstração" hidden>
+        <button type="button" class="demo-tab" role="tab" data-demo-tab="wide" aria-selected="true">Paisagem <small>desktop</small></button>
+        <button type="button" class="demo-tab" role="tab" data-demo-tab="tall" aria-selected="false">Retrato <small>vertical / celular</small></button>
+      </div>
       <div class="demo-pair">
-        <div class="demo-item demo-wide">
-          <video class="demo-video" autoplay muted loop playsinline width="1280" height="800" poster="../assets/demo_wide_poster.jpg" aria-label="Três buscas seguidas em quatro discos: cada disco passa para a busca seguinte assim que termina a anterior; depois a prévia, à direita, mostra uma radiografia, uma foto e um vídeo tocando">
+        <div class="demo-item demo-wide" data-demo-panel="wide">
+          <video class="demo-video" autoplay muted loop playsinline preload="metadata" width="1280" height="800" poster="../assets/demo_wide_poster.jpg" aria-label="Três buscas seguidas em quatro discos: cada disco passa para a busca seguinte assim que termina a anterior; depois a prévia, à direita, mostra uma radiografia, uma foto e um vídeo tocando">
             <source src="../assets/demo_wide.mp4" type="video/mp4">
             <p class="demo-fallback"><a href="../assets/demo_wide.mp4">Assistir ao vídeo de demonstração em paisagem (MP4)</a>.</p>
           </video>
@@ -111,8 +115,8 @@
             </div>
           </div>
         </div>
-        <div class="demo-item demo-tall">
-          <video class="demo-video" autoplay muted loop playsinline width="720" height="1280" poster="../assets/demo_tall_poster.jpg" aria-label="As mesmas três buscas numa janela alta: a prévia vai para baixo dos resultados e mantém uma área grande para imagens e vídeo">
+        <div class="demo-item demo-tall" data-demo-panel="tall">
+          <video class="demo-video" muted loop playsinline preload="metadata" width="720" height="1280" poster="../assets/demo_tall_poster.jpg" aria-label="As mesmas três buscas numa janela alta: a prévia vai para baixo dos resultados e mantém uma área grande para imagens e vídeo">
             <source src="../assets/demo_tall.mp4" type="video/mp4">
             <p class="demo-fallback"><a href="../assets/demo_tall.mp4">Assistir ao vídeo de demonstração em retrato (MP4)</a>.</p>
           </video>
