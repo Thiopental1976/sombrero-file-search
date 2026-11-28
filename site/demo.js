@@ -115,6 +115,9 @@
       v.removeAttribute("autoplay");
       v.pause();
       v.controls = true;
+    } else {
+      v.removeAttribute("controls");
+      v.controls = false;
     }
     const lado = Number(v.getAttribute("height")) > Number(v.getAttribute("width")) ? "portrait" : "landscape";
 
@@ -157,7 +160,8 @@
     });
   }
 
-  // Orientation tabs: desktop starts on Landscape (full figure width); phone starts on Portrait.
+  // View tabs: desktop starts on 1:1 Results zoom (610 KB, sharp text without enlarging);
+  // phone starts on Portrait. Only the active tab plays, avoiding unnecessary downloads.
   const tabBar = figure?.querySelector(".demo-tabs");
   const tabs = [...(figure?.querySelectorAll("[data-demo-tab]") || [])];
   const panels = [...(figure?.querySelectorAll("[data-demo-panel]") || [])];
@@ -182,7 +186,7 @@
     for (const t of tabs) {
       t.addEventListener("click", () => activate(t.dataset.demoTab));
     }
-    activate(phone.matches ? "tall" : "wide");
+    activate(phone.matches ? "tall" : "zoom");
   }
 
   document.addEventListener("fullscreenchange", () => {
