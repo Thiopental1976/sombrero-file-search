@@ -254,15 +254,28 @@ td.n { font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-spa
 td b { color: var(--teal) }
 
 /* Features */
-.feats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-top: 30px }
-.feat { background: var(--space); padding: 24px 22px }
-/* 8 features: 4 across, 2×4 in the middle, 1 on phones, so no row is left with an empty cell */
-@media (max-width: 1000px) { .feats { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
-@media (max-width: 560px) { .feats { grid-template-columns: minmax(0, 1fr) } }
+/* 8 features: 2 key differentiators across the top (span 3 each) + 6 below (span 2 each = 3×2);
+   2×4 on tablets/unfolded Fold, 1 column on phones — zero orphan cells at every width. */
+.feats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-top: 30px }
+.feat { grid-column: span 2; background: var(--space); padding: 22px 22px }
+.feat-lead {
+  grid-column: span 3; background: var(--space-2); padding: 26px 26px;
+  box-shadow: inset 0 2px 0 var(--teal);
+}
+.feat-lead h3 { font-size: 1.22rem; margin: 0 0 8px; color: var(--fg) }
+.feat-lead p { font-size: 1rem; color: #cfe2e5 }
+@media (max-width: 900px) {
+  .feats { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+  .feat, .feat-lead { grid-column: span 1 }
+}
+@media (max-width: 560px) {
+  .feats { grid-template-columns: minmax(0, 1fr) }
+}
 .feat code { white-space: nowrap }
 .feat p > code:only-of-type { white-space: normal }  /* the boolean example is long: let it wrap */
 .feat .tag { font: 600 .75rem var(--f-mono); color: var(--teal); letter-spacing: .1em; text-transform: uppercase; display: block; margin-bottom: 10px }
 .feat p { font-size: .95rem; color: var(--muted); margin: 0 }
+.feat-lead p { color: #cfe2e5 }
 
 /* Compare */
 .compare { background: linear-gradient(180deg, var(--space-2) 0%, var(--space) 100%); border-top: 1px solid var(--line) }
